@@ -1,10 +1,43 @@
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
 
 from transaction import connect_db
 
 app = Flask(__name__)
+
+APP_PASSWORD = os.environ.get("APP_PASSWORD")
+if not APP_PASSWORD:
+    raise RuntimeError(
+        "Chưa đặt biến môi trường APP_PASSWORD. "
+        "Chạy ví dụ: APP_PASSWORD=matma_cua_ban python3 src/web_app.py"
+    )
+
+app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32))
+app.permanent_session_lifetime = timedelta(days=30)
+
+
+@app.before_request
+def require_login():
+    if request.endpoint in ("login", "static"):
+        return
+    if not session.get("authenticated"):
+        if request.path.startswith("/api/"):
+            return jsonify(ok=False, message="Phiên đăng nhập hết hạn, vui lòng tải lại trang."), 401
+        return redirect(url_for("login"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        if request.form.get("password") == APP_PASSWORD:
+            session.permanent = True
+            session["authenticated"] = True
+            return redirect(url_for("index"))
+        error = "Mã không đúng, thử lại."
+    return render_template_string(LOGIN_TEMPLATE, error=error)
 
 
 def build_category_tree(cursor, kind):
@@ -117,6 +150,78 @@ def create_transaction():
     conn.close()
 
     return jsonify(ok=True, message=f"Đã ghi nhận giao dịch: {amount:,} đ")
+
+
+LOGIN_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Đăng nhập — Sổ tài chính</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f4f5f7;
+    color: #1c1c1e;
+  }
+  .card {
+    max-width: 360px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 14px;
+    padding: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    width: 100%;
+  }
+  h1 { font-size: 1.15rem; margin: 0 0 18px; text-align: center; }
+  input[type="password"] {
+    width: 100%;
+    padding: 14px;
+    font-size: 16px;
+    border: 1px solid #d1d1d6;
+    border-radius: 10px;
+  }
+  button {
+    width: 100%;
+    margin-top: 14px;
+    padding: 16px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #fff;
+    background: #007aff;
+    border: none;
+    border-radius: 12px;
+  }
+  .error {
+    margin-top: 12px;
+    padding: 10px;
+    border-radius: 10px;
+    text-align: center;
+    background: #fdecea;
+    color: #c0392b;
+    font-size: 0.9rem;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Nhập mã truy cập</h1>
+  <form method="post">
+    <input type="password" name="password" placeholder="Mã truy cập" autofocus required>
+    <button type="submit">Vào</button>
+  </form>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+</div>
+</body>
+</html>
+"""
 
 
 PAGE_TEMPLATE = """<!doctype html>
@@ -353,4 +458,4 @@ PAGE_TEMPLATE = """<!doctype html>
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=8000, debug=True)

@@ -24,8 +24,10 @@ python3 src/seed_data.py
 python3 src/transaction.py
 
 # Run the web form instead (same feature as "add transaction" in the CLI, browser-based)
-python3 src/web_app.py
-# Serves on http://0.0.0.0:5000 — reachable from other devices (e.g. a phone) on the same LAN.
+# APP_PASSWORD is required — the app raises RuntimeError at import time if it's unset.
+APP_PASSWORD=your_shared_password python3 src/web_app.py
+# Serves on http://0.0.0.0:8000 — reachable from other devices (e.g. a phone) on the same LAN.
+# Port 8000, not 5000: macOS AirPlay Receiver squats on 5000 by default.
 ```
 
 There is no test suite, linter, or build step configured yet.
@@ -47,6 +49,8 @@ Tables described in the design doc but **not yet in schema.sql** (planned for la
 **Balance maintenance**: `transaction.py` updates `accounts.current_balance` manually inside the same transaction as the insert (see `add_transaction`) — there's no trigger. Any new code path that inserts into `transactions` must update the account balance the same way. `web_app.py`'s `POST /api/transactions` handler replicates this same insert-then-update-balance logic.
 
 **Web form** ([src/web_app.py](src/web_app.py)): a Flask alternative to the CLI's "add transaction" flow, for entering transactions from a phone browser instead of the terminal. Single route `/` renders one page (HTML/CSS/JS inlined via `render_template_string` — no `templates/` folder), with accounts and the category tree embedded as JSON at render time. Submission goes through `POST /api/transactions` (JSON in/out) via `fetch()`, so the page never reloads. It imports `connect_db` from `transaction.py` rather than duplicating the connection setup. It does not touch `note`, `is_reviewed` batching, or any other CLI feature beyond adding a transaction — extend `transaction.py` first if a feature needs to exist in both places.
+
+**Auth on the web form**: single shared password, not per-user login (deliberate — see memory `project_web_form_multiuser_phase`: the goal right now is letting many people log transactions with minimal friction, not tracking who entered what). `APP_PASSWORD` is read from the environment and never hardcoded — the app refuses to start without it. A Flask session cookie (`session["authenticated"]`), valid 30 days, gates every route via a `before_request` hook except `/login`; `/api/*` returns 401 JSON instead of a redirect when unauthenticated. `SECRET_KEY` may also be set via env; if omitted it's a random value generated per-process, meaning all sessions invalidate on every restart — acceptable for this use case, don't "fix" it without being asked.
 
 ## Code conventions actually in use
 

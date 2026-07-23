@@ -8,6 +8,7 @@ data/*.db
 # Python
 __pycache__/
 *.pyc
+venv/
 
 # Thông tin bí mật - TUYỆT ĐỐI không đẩy lên GitHub
 .env
