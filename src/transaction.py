@@ -13,21 +13,79 @@ def connect_db():
     return conn
 
 
-def display_accounts(cursor):
-    print("\n-- Tài khoản --")
-    cursor.execute("SELECT id, name, current_balance FROM accounts WHERE is_active = 1")
-    for row in cursor.fetchall():
-        print(f"  {row['id']}. {row['name']}  (số dư: {row['current_balance']:,} đ)")
+# ---------- Core data layer (shared by the CLI below and web_app.py) ----------
+
+def get_active_accounts(cursor):
+    cursor.execute(
+        "SELECT id, name, current_balance FROM accounts WHERE is_active = 1 ORDER BY id"
+    )
+    return cursor.fetchall()
 
 
-def display_categories(cursor, kind):
-    print(f"\n-- Danh mục ({kind}) --")
+def get_categories(cursor, kind):
     cursor.execute(
         """SELECT id, name_vi, parent_id FROM categories
            WHERE kind = ? ORDER BY parent_id IS NOT NULL, parent_id, id""",
         (kind,),
     )
-    for row in cursor.fetchall():
+    return cursor.fetchall()
+
+
+def insert_transaction(cursor, *, occurred_at, amount, direction, account_id,
+                        category_id, description, note=None, source="manual", is_reviewed=1):
+    """Insert a transaction and update the account balance in the same call."""
+    cursor.execute(
+        """INSERT INTO transactions
+           (occurred_at, amount, direction, account_id, category_id,
+            description, note, source, is_reviewed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (occurred_at, amount, direction, account_id, category_id, description, note, source, is_reviewed),
+    )
+    balance_delta = amount if direction == "in" else -amount
+    cursor.execute(
+        "UPDATE accounts SET current_balance = current_balance + ? WHERE id = ?",
+        (balance_delta, account_id),
+    )
+
+
+def get_recent_transactions(cursor, limit=15):
+    cursor.execute(
+        """SELECT t.occurred_at, t.amount, t.direction, t.description,
+                  a.name AS account_name, c.name_vi AS category_name
+           FROM transactions t
+           JOIN accounts a ON t.account_id = a.id
+           LEFT JOIN categories c ON t.category_id = c.id
+           ORDER BY t.occurred_at DESC, t.id DESC
+           LIMIT ?""",
+        (limit,),
+    )
+    return cursor.fetchall()
+
+
+def get_monthly_totals(cursor, month):
+    """Return {"income": ..., "expense": ...} for a 'YYYY-MM' month string."""
+    cursor.execute(
+        """SELECT direction, SUM(amount) AS total
+           FROM transactions
+           WHERE strftime('%Y-%m', occurred_at) = ?
+           GROUP BY direction""",
+        (month,),
+    )
+    totals = {row["direction"]: row["total"] for row in cursor.fetchall()}
+    return {"income": totals.get("in", 0), "expense": totals.get("out", 0)}
+
+
+# ---------- Terminal CLI ----------
+
+def display_accounts(cursor):
+    print("\n-- Tài khoản --")
+    for row in get_active_accounts(cursor):
+        print(f"  {row['id']}. {row['name']}  (số dư: {row['current_balance']:,} đ)")
+
+
+def display_categories(cursor, kind):
+    print(f"\n-- Danh mục ({kind}) --")
+    for row in get_categories(cursor, kind):
         prefix = "    " if row["parent_id"] else "  "
         print(f"{prefix}{row['id']}. {row['name_vi']}")
 
@@ -70,19 +128,15 @@ def add_transaction():
 
     occurred_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    cursor.execute(
-        """INSERT INTO transactions
-           (occurred_at, amount, direction, account_id, category_id,
-            description, note, source, is_reviewed)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', 1)""",
-        (occurred_at, amount, direction, int(account_id), category_id, description, note),
-    )
-
-    # Update the account balance immediately
-    balance_delta = amount if direction == "in" else -amount
-    cursor.execute(
-        "UPDATE accounts SET current_balance = current_balance + ? WHERE id = ?",
-        (balance_delta, int(account_id)),
+    insert_transaction(
+        cursor,
+        occurred_at=occurred_at,
+        amount=amount,
+        direction=direction,
+        account_id=int(account_id),
+        category_id=category_id,
+        description=description,
+        note=note,
     )
 
     conn.commit()
@@ -95,17 +149,7 @@ def list_transactions(limit=15):
     cursor = conn.cursor()
 
     print(f"\n===== {limit} GIAO DỊCH GẦN NHẤT =====")
-    cursor.execute(
-        """SELECT t.occurred_at, t.amount, t.direction, t.description,
-                  a.name AS account_name, c.name_vi AS category_name
-           FROM transactions t
-           JOIN accounts a ON t.account_id = a.id
-           LEFT JOIN categories c ON t.category_id = c.id
-           ORDER BY t.occurred_at DESC
-           LIMIT ?""",
-        (limit,),
-    )
-    rows = cursor.fetchall()
+    rows = get_recent_transactions(cursor, limit)
     if not rows:
         print("Chưa có giao dịch nào.")
     for row in rows:
@@ -122,17 +166,9 @@ def monthly_summary():
     cursor = conn.cursor()
 
     month = input("Xem tháng nào? (định dạng YYYY-MM, vd 2026-07): ").strip()
-
-    cursor.execute(
-        """SELECT direction, SUM(amount) AS total
-           FROM transactions
-           WHERE strftime('%Y-%m', occurred_at) = ?
-           GROUP BY direction""",
-        (month,),
-    )
-    totals = {row["direction"]: row["total"] for row in cursor.fetchall()}
-    income = totals.get("in", 0)
-    expense = totals.get("out", 0)
+    totals = get_monthly_totals(cursor, month)
+    income = totals["income"]
+    expense = totals["expense"]
 
     print(f"\n===== TỔNG THÁNG {month} =====")
     print(f"  Thu:      {income:,} đ")

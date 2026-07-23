@@ -3,7 +3,14 @@ from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
 
-from transaction import connect_db
+from transaction import (
+    connect_db,
+    get_active_accounts,
+    get_categories,
+    get_monthly_totals,
+    get_recent_transactions,
+    insert_transaction,
+)
 
 app = Flask(__name__)
 
@@ -40,14 +47,16 @@ def login():
     return render_template_string(LOGIN_TEMPLATE, error=error)
 
 
-def build_category_tree(cursor, kind):
-    """Return top-level categories of `kind`, each with its children (if any)."""
-    cursor.execute(
-        """SELECT id, name_vi, parent_id FROM categories
-           WHERE kind = ? ORDER BY parent_id IS NOT NULL, parent_id, id""",
-        (kind,),
-    )
-    rows = cursor.fetchall()
+def accounts_as_json(cursor):
+    return [
+        {"id": row["id"], "name": row["name"], "balance": row["current_balance"]}
+        for row in get_active_accounts(cursor)
+    ]
+
+
+def category_tree_as_json(cursor, kind):
+    """Group get_categories() rows into [{id, name, children: [...]}, ...]."""
+    rows = get_categories(cursor, kind)
 
     parents = []
     children_by_parent = {}
@@ -65,28 +74,57 @@ def build_category_tree(cursor, kind):
     return parents
 
 
-def get_accounts(cursor):
-    cursor.execute(
-        "SELECT id, name, current_balance FROM accounts WHERE is_active = 1 ORDER BY id"
-    )
-    return [
-        {"id": row["id"], "name": row["name"], "balance": row["current_balance"]}
-        for row in cursor.fetchall()
-    ]
-
-
 @app.route("/")
 def index():
     conn = connect_db()
     cursor = conn.cursor()
-    accounts = get_accounts(cursor)
+    accounts = accounts_as_json(cursor)
     categories_by_kind = {
-        "expense": build_category_tree(cursor, "expense"),
-        "income": build_category_tree(cursor, "income"),
+        "expense": category_tree_as_json(cursor, "expense"),
+        "income": category_tree_as_json(cursor, "income"),
     }
     conn.close()
     return render_template_string(
         PAGE_TEMPLATE, accounts=accounts, categories_by_kind=categories_by_kind
+    )
+
+
+@app.route("/transactions")
+def transactions_page():
+    conn = connect_db()
+    cursor = conn.cursor()
+    rows = get_recent_transactions(cursor, limit=50)
+    conn.close()
+
+    transactions = []
+    for row in rows:
+        sign = "+" if row["direction"] == "in" else "-"
+        transactions.append({
+            "occurred_at": row["occurred_at"],
+            "amount_display": f"{sign}{row['amount']:,} đ",
+            "sign_class": "in" if row["direction"] == "in" else "out",
+            "category_name": row["category_name"] or "(chưa phân loại)",
+            "account_name": row["account_name"],
+            "description": row["description"] or "",
+        })
+
+    return render_template_string(LIST_TEMPLATE, transactions=transactions)
+
+
+@app.route("/summary")
+def summary_page():
+    month = request.args.get("month") or datetime.now().strftime("%Y-%m")
+    conn = connect_db()
+    cursor = conn.cursor()
+    totals = get_monthly_totals(cursor, month)
+    conn.close()
+
+    return render_template_string(
+        SUMMARY_TEMPLATE,
+        month=month,
+        income_display=f"{totals['income']:,} đ",
+        expense_display=f"{totals['expense']:,} đ",
+        diff_display=f"{totals['income'] - totals['expense']:,} đ",
     )
 
 
@@ -131,19 +169,14 @@ def create_transaction():
 
     occurred_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    cursor.execute(
-        """INSERT INTO transactions
-           (occurred_at, amount, direction, account_id, category_id,
-            description, source, is_reviewed)
-           VALUES (?, ?, ?, ?, ?, ?, 'manual', 1)""",
-        (occurred_at, amount, direction, account_id, category_id, description),
-    )
-
-    # Same balance-update rule as transaction.py's add_transaction()
-    balance_delta = amount if direction == "in" else -amount
-    cursor.execute(
-        "UPDATE accounts SET current_balance = current_balance + ? WHERE id = ?",
-        (balance_delta, account_id),
+    insert_transaction(
+        cursor,
+        occurred_at=occurred_at,
+        amount=amount,
+        direction=direction,
+        account_id=account_id,
+        category_id=category_id,
+        description=description,
     )
 
     conn.commit()
@@ -224,13 +257,9 @@ LOGIN_TEMPLATE = """<!doctype html>
 """
 
 
-PAGE_TEMPLATE = """<!doctype html>
-<html lang="vi">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>Sổ tài chính</title>
-<style>
+# Shared by PAGE_TEMPLATE / LIST_TEMPLATE / SUMMARY_TEMPLATE — kept as a plain
+# (non-f, non-Jinja) string so the CSS's { } don't need escaping.
+BASE_STYLE = """
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
   body {
@@ -240,6 +269,25 @@ PAGE_TEMPLATE = """<!doctype html>
     background: #f4f5f7;
     color: #1c1c1e;
   }
+  .nav {
+    max-width: 480px;
+    margin: 0 auto 12px;
+    display: flex;
+    gap: 8px;
+  }
+  .nav a {
+    flex: 1;
+    text-align: center;
+    padding: 10px 0;
+    border-radius: 10px;
+    background: #fff;
+    color: #1c1c1e;
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .nav a.active { background: #007aff; color: #fff; }
   .card {
     max-width: 480px;
     margin: 0 auto;
@@ -253,6 +301,16 @@ PAGE_TEMPLATE = """<!doctype html>
     margin: 0 0 16px;
     text-align: center;
   }
+"""
+
+
+PAGE_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Sổ tài chính</title>
+<style>""" + BASE_STYLE + """
   label.field-label {
     display: block;
     font-size: 0.9rem;
@@ -309,6 +367,11 @@ PAGE_TEMPLATE = """<!doctype html>
 </style>
 </head>
 <body>
+<div class="nav">
+  <a href="/" class="active">Thêm</a>
+  <a href="/transactions">Danh sách</a>
+  <a href="/summary">Tổng tháng</a>
+</div>
 <div class="card">
   <h1>Thêm giao dịch</h1>
   <form id="tx-form">
@@ -452,6 +515,96 @@ PAGE_TEMPLATE = """<!doctype html>
   renderAccounts();
   renderCategories(currentKind());
 </script>
+</body>
+</html>
+"""
+
+
+LIST_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Danh sách giao dịch</title>
+<style>""" + BASE_STYLE + """
+  .tx-row { padding: 12px 0; border-bottom: 1px solid #eee; }
+  .tx-row:last-child { border-bottom: none; }
+  .tx-main { display: flex; justify-content: space-between; font-weight: 600; gap: 8px; }
+  .tx-amount.in { color: #1e7a34; }
+  .tx-amount.out { color: #c0392b; }
+  .tx-sub { font-size: 0.85rem; color: #777; margin-top: 2px; }
+  .empty { text-align: center; color: #888; padding: 20px 0; }
+</style>
+</head>
+<body>
+<div class="nav">
+  <a href="/">Thêm</a>
+  <a href="/transactions" class="active">Danh sách</a>
+  <a href="/summary">Tổng tháng</a>
+</div>
+<div class="card">
+  <h1>{{ transactions|length }} giao dịch gần đây</h1>
+  {% if transactions %}
+    {% for tx in transactions %}
+    <div class="tx-row">
+      <div class="tx-main">
+        <span>{{ tx.category_name }}</span>
+        <span class="tx-amount {{ tx.sign_class }}">{{ tx.amount_display }}</span>
+      </div>
+      <div class="tx-sub">{{ tx.occurred_at }} · {{ tx.account_name }}{% if tx.description %} · {{ tx.description }}{% endif %}</div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">Chưa có giao dịch nào.</p>
+  {% endif %}
+</div>
+</body>
+</html>
+"""
+
+
+SUMMARY_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Tổng theo tháng</title>
+<style>""" + BASE_STYLE + """
+  input[type="month"] {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+    border: 1px solid #d1d1d6;
+    border-radius: 10px;
+    margin-bottom: 18px;
+  }
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid #eee;
+    font-size: 1.05rem;
+  }
+  .summary-row.total { border-bottom: none; margin-top: 4px; font-size: 1.15rem; font-weight: 600; }
+  .summary-row .in { color: #1e7a34; }
+  .summary-row .out { color: #c0392b; }
+</style>
+</head>
+<body>
+<div class="nav">
+  <a href="/">Thêm</a>
+  <a href="/transactions">Danh sách</a>
+  <a href="/summary" class="active">Tổng tháng</a>
+</div>
+<div class="card">
+  <h1>Tổng theo tháng</h1>
+  <form method="get">
+    <input type="month" name="month" value="{{ month }}" onchange="this.form.submit()">
+  </form>
+  <div class="summary-row"><span>Thu</span><span class="in">{{ income_display }}</span></div>
+  <div class="summary-row"><span>Chi</span><span class="out">{{ expense_display }}</span></div>
+  <div class="summary-row total"><span>Chênh lệch</span><span>{{ diff_display }}</span></div>
+</div>
 </body>
 </html>
 """
