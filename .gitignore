@@ -1,0 +1,14 @@
+# Cơ sở dữ liệu - chứa dữ liệu tài chính thật, không đưa lên GitHub
+data/*.db
+
+# Cấu hình riêng của máy
+.vscode/
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Thông tin bí mật - TUYỆT ĐỐI không đẩy lên GitHub
+.env
+*.key
