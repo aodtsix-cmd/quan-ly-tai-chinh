@@ -1,0 +1,1 @@
+SELECT name_vi, kind, parent_id FROM categories ORDER BY kind, parent_id;
