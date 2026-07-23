@@ -1,22 +1,22 @@
 import sqlite3
 from pathlib import Path
 
-DU_AN_GOC = Path(__file__).parent.parent
-DUONG_DAN_DB = DU_AN_GOC / "data" / "finance.db"
+PROJECT_ROOT = Path(__file__).parent.parent
+DB_PATH = PROJECT_ROOT / "data" / "finance.db"
 
-# ============ TÀI KHOẢN ============
-# (tên, loại, số dư ban đầu, có phải tài sản lỏng không)
-TAI_KHOAN = [
+# ============ ACCOUNTS ============
+# (name, type, initial balance, is liquid asset)
+ACCOUNTS = [
     ("MB Thanh toán", "bank", 0, 1),
-    ("MB Thẻ tín dụng", "credit_card", 0, 0),  # nợ thẻ không tính là tài sản lỏng
+    ("MB Thẻ tín dụng", "credit_card", 0, 0),  # credit card debt does not count as a liquid asset
     ("MoMo", "ewallet", 0, 1),
     ("Tiền mặt", "cash", 0, 1),
 ]
 
-# ============ DANH MỤC CHI TIÊU (dạng cây) ============
-# Mục cha: (name_vi, name_en, kind, necessity, stability, [danh sách con])
-# Mục con: (name_vi, name_en, necessity, stability) — kế thừa "kind" từ cha
-CAY_DANH_MUC = [
+# ============ EXPENSE CATEGORIES (tree) ============
+# Parent: (name_vi, name_en, kind, necessity, stability, [list of children])
+# Child: (name_vi, name_en, necessity, stability) — inherits "kind" from parent
+CATEGORY_TREE = [
     ("Nhà ở", "Housing", "expense", "essential", "fixed", [
         ("Tiền phòng/thuê nhà", "Rent", "essential", "fixed"),
         ("Điện nước", "Utilities", "essential", "fixed"),
@@ -66,85 +66,85 @@ CAY_DANH_MUC = [
     ("Khác", "Other", "expense", "optional", "variable", []),
 ]
 
-# ============ DANH MỤC THU NHẬP ============
-DANH_MUC_THU_NHAP = [
+# ============ INCOME CATEGORIES ============
+INCOME_CATEGORIES = [
     ("Thu nhập từ dạy học", "Teaching income", "variable"),
     ("Trợ cấp gia đình", "Family support", "variable"),
     ("Học bổng", "Scholarship", "variable"),
     ("Thu nhập khác", "Other income", "variable"),
 ]
 
-# ============ CHUYỂN KHOẢN NỘI BỘ ============
-DANH_MUC_CHUYEN_KHOAN = [
+# ============ INTERNAL TRANSFERS ============
+TRANSFER_CATEGORIES = [
     ("Chuyển khoản nội bộ", "Internal transfer", "variable"),
 ]
 
 
-def gieo_du_lieu():
-    ket_noi = sqlite3.connect(DUONG_DAN_DB)
-    ket_noi.execute("PRAGMA foreign_keys = ON;")
-    con_tro = ket_noi.cursor()
+def seed_data():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    cursor = conn.cursor()
 
-    # An toàn: kiểm tra đã gieo dữ liệu chưa, tránh gieo trùng
-    con_tro.execute("SELECT COUNT(*) FROM categories")
-    if con_tro.fetchone()[0] > 0:
+    # Safety check: has data already been seeded? Avoid duplicating it.
+    cursor.execute("SELECT COUNT(*) FROM categories")
+    if cursor.fetchone()[0] > 0:
         print("Cơ sở dữ liệu đã có danh mục. Dừng lại để tránh trùng lặp.")
         print("Nếu muốn gieo lại từ đầu, xóa file data/finance.db rồi chạy lại init_db.py trước.")
-        ket_noi.close()
+        conn.close()
         return
 
-    # --- Tài khoản ---
-    for ten, loai, so_du, la_long in TAI_KHOAN:
-        con_tro.execute(
+    # --- Accounts ---
+    for name, acc_type, balance, is_liquid in ACCOUNTS:
+        cursor.execute(
             """INSERT INTO accounts (name, type, current_balance, is_liquid)
                VALUES (?, ?, ?, ?)""",
-            (ten, loai, so_du, la_long),
+            (name, acc_type, balance, is_liquid),
         )
-    print(f"Đã thêm {len(TAI_KHOAN)} tài khoản.")
+    print(f"Đã thêm {len(ACCOUNTS)} tài khoản.")
 
-    # --- Danh mục chi tiêu (cây: cha trước, con sau) ---
-    so_luong = 0
-    for name_vi, name_en, kind, necessity, stability, con_cai in CAY_DANH_MUC:
-        con_tro.execute(
+    # --- Expense categories (tree: parents first, then children) ---
+    count = 0
+    for name_vi, name_en, kind, necessity, stability, children in CATEGORY_TREE:
+        cursor.execute(
             """INSERT INTO categories (name_vi, name_en, kind, necessity, stability, parent_id)
                VALUES (?, ?, ?, ?, ?, NULL)""",
             (name_vi, name_en, kind, necessity, stability),
         )
-        id_cha = con_tro.lastrowid
-        so_luong += 1
+        parent_id = cursor.lastrowid
+        count += 1
 
-        for ten_con, ten_con_en, nec_con, stab_con in con_cai:
-            con_tro.execute(
+        for child_name_vi, child_name_en, child_necessity, child_stability in children:
+            cursor.execute(
                 """INSERT INTO categories (name_vi, name_en, kind, necessity, stability, parent_id)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (ten_con, ten_con_en, kind, nec_con, stab_con, id_cha),
+                (child_name_vi, child_name_en, kind, child_necessity, child_stability, parent_id),
             )
-            so_luong += 1
+            count += 1
 
-    # --- Danh mục thu nhập ---
-    for name_vi, name_en, stability in DANH_MUC_THU_NHAP:
-        con_tro.execute(
+    # --- Income categories ---
+    for name_vi, name_en, stability in INCOME_CATEGORIES:
+        cursor.execute(
             """INSERT INTO categories (name_vi, name_en, kind, stability, parent_id)
                VALUES (?, ?, 'income', ?, NULL)""",
             (name_vi, name_en, stability),
         )
-        so_luong += 1
+        count += 1
 
-    # --- Chuyển khoản nội bộ ---
-    for name_vi, name_en, stability in DANH_MUC_CHUYEN_KHOAN:
-        con_tro.execute(
+    # --- Internal transfers ---
+    for name_vi, name_en, stability in TRANSFER_CATEGORIES:
+        cursor.execute(
             """INSERT INTO categories (name_vi, name_en, kind, stability, parent_id)
                VALUES (?, ?, 'transfer', ?, NULL)""",
             (name_vi, name_en, stability),
         )
-        so_luong += 1
+        count += 1
 
-    print(f"Đã thêm {so_luong} danh mục.")
+    print(f"Đã thêm {count} danh mục.")
 
-    ket_noi.commit()
-    ket_noi.close()
+    conn.commit()
+    conn.close()
     print("Gieo dữ liệu hoàn tất.")
 
 
 if __name__ == "__main__":
-    gieo_du_lieu()
+    seed_data()
