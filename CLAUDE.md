@@ -6,19 +6,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A personal finance tracker ("Quản lý tài chính cá nhân") built as a Python + SQLite CLI. The project is in **Stage 1** of a 7-stage roadmap described in [docs/THIET-KE.md](docs/THIET-KE.md) (Vietnamese design doc — read it before making schema or product-behavior decisions, it is the authoritative spec). Stage 1 scope: database + manual entry + transaction list + monthly totals, running in a terminal. Later stages (not yet built) add rule-based auto-categorization, email/OCR ingestion, a web UI, and risk-analysis features.
 
-There is no package manager manifest (no requirements.txt/pyproject.toml) — the code only uses the Python standard library (`sqlite3`, `pathlib`, `datetime`).
+`init_db.py`, `seed_data.py`, and `transaction.py` use only the Python standard library. `web_app.py` is the one exception and needs Flask — see `requirements.txt`.
 
 ## Commands
 
 ```bash
+# One-time: install the one third-party dependency (Flask, for web_app.py)
+pip3 install -r requirements.txt
+
 # Create the database and tables from schema.sql (data/finance.db, gitignored)
 python3 src/init_db.py
 
 # Seed initial accounts and categories (safe to re-run: no-ops if categories already exist)
 python3 src/seed_data.py
 
-# Run the interactive CLI (add transaction / list recent / monthly totals)
+# Run the interactive terminal CLI (add transaction / list recent / monthly totals)
 python3 src/transaction.py
+
+# Run the web form instead (same feature as "add transaction" in the CLI, browser-based)
+python3 src/web_app.py
+# Serves on http://0.0.0.0:5000 — reachable from other devices (e.g. a phone) on the same LAN.
 ```
 
 There is no test suite, linter, or build step configured yet.
@@ -37,7 +44,9 @@ To reset the database from scratch: delete `data/finance.db`, then re-run `init_
 
 Tables described in the design doc but **not yet in schema.sql** (planned for later stages): `rules`, `recurring`, `income_sources`, `event_templates`, `event_items`, `event_plans`. When implementing a later stage, add these incrementally rather than scaffolding them all up front.
 
-**Balance maintenance**: `transaction.py` updates `accounts.current_balance` manually inside the same transaction as the insert (see `add_transaction`) — there's no trigger. Any new code path that inserts into `transactions` must update the account balance the same way.
+**Balance maintenance**: `transaction.py` updates `accounts.current_balance` manually inside the same transaction as the insert (see `add_transaction`) — there's no trigger. Any new code path that inserts into `transactions` must update the account balance the same way. `web_app.py`'s `POST /api/transactions` handler replicates this same insert-then-update-balance logic.
+
+**Web form** ([src/web_app.py](src/web_app.py)): a Flask alternative to the CLI's "add transaction" flow, for entering transactions from a phone browser instead of the terminal. Single route `/` renders one page (HTML/CSS/JS inlined via `render_template_string` — no `templates/` folder), with accounts and the category tree embedded as JSON at render time. Submission goes through `POST /api/transactions` (JSON in/out) via `fetch()`, so the page never reloads. It imports `connect_db` from `transaction.py` rather than duplicating the connection setup. It does not touch `note`, `is_reviewed` batching, or any other CLI feature beyond adding a transaction — extend `transaction.py` first if a feature needs to exist in both places.
 
 ## Code conventions actually in use
 
