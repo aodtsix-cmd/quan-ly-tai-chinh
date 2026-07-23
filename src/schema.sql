@@ -51,3 +51,30 @@ CREATE TABLE IF NOT EXISTS behavior_events (
     occurred_at    TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (transaction_id) REFERENCES transactions(id)
 );
+
+-- Bảng luật phân loại tự động (Giai đoạn 2)
+CREATE TABLE IF NOT EXISTS rules (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern      TEXT NOT NULL,
+    category_id  INTEGER NOT NULL,
+    priority     INTEGER NOT NULL DEFAULT 100,
+    hit_count    INTEGER NOT NULL DEFAULT 0,
+    created_from TEXT NOT NULL DEFAULT 'user' CHECK (created_from IN ('user', 'learned')),
+    FOREIGN KEY (category_id) REFERENCES categories(id)
+);
+
+-- Bảng khoản định kỳ (Giai đoạn 2)
+CREATE TABLE IF NOT EXISTS recurring (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    amount        INTEGER NOT NULL CHECK (amount > 0),
+    direction     TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+    category_id   INTEGER,
+    account_id    INTEGER NOT NULL,
+    frequency     TEXT NOT NULL CHECK (frequency IN ('monthly', 'quarterly', 'yearly')),
+    day_of_period INTEGER NOT NULL,
+    next_due      TEXT NOT NULL,
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (category_id) REFERENCES categories(id),
+    FOREIGN KEY (account_id)  REFERENCES accounts(id)
+);

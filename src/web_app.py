@@ -5,11 +5,13 @@ from flask import Flask, jsonify, redirect, render_template_string, request, ses
 
 from transaction import (
     connect_db,
+    generate_due_recurring,
     get_active_accounts,
     get_categories,
     get_monthly_totals,
     get_recent_transactions,
     insert_transaction,
+    resolve_category,
 )
 
 app = Flask(__name__)
@@ -33,6 +35,14 @@ def require_login():
         if request.path.startswith("/api/"):
             return jsonify(ok=False, message="Phiên đăng nhập hết hạn, vui lòng tải lại trang."), 401
         return redirect(url_for("login"))
+
+    # Catch up on any due recurring transactions on every authenticated request —
+    # cheap no-op when nothing is due (see transaction.generate_due_recurring).
+    conn = connect_db()
+    cursor = conn.cursor()
+    generate_due_recurring(cursor)
+    conn.commit()
+    conn.close()
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -167,6 +177,9 @@ def create_transaction():
             conn.close()
             return jsonify(ok=False, message="Danh mục không hợp lệ."), 400
 
+    resolved_category_id = resolve_category(cursor, category_id, description)
+    auto_categorized = resolved_category_id is not None and category_id is None
+
     occurred_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     insert_transaction(
@@ -175,14 +188,17 @@ def create_transaction():
         amount=amount,
         direction=direction,
         account_id=account_id,
-        category_id=category_id,
+        category_id=resolved_category_id,
         description=description,
     )
 
     conn.commit()
     conn.close()
 
-    return jsonify(ok=True, message=f"Đã ghi nhận giao dịch: {amount:,} đ")
+    message = f"Đã ghi nhận giao dịch: {amount:,} đ"
+    if auto_categorized:
+        message += " (tự động phân loại)"
+    return jsonify(ok=True, message=message)
 
 
 LOGIN_TEMPLATE = """<!doctype html>
