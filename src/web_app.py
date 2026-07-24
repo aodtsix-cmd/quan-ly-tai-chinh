@@ -4,14 +4,18 @@ from datetime import datetime, timedelta
 from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
 
 from transaction import (
+    add_rule,
     connect_db,
     generate_due_recurring,
     get_active_accounts,
     get_categories,
     get_monthly_totals,
     get_recent_transactions,
+    get_transaction_by_id,
     insert_transaction,
+    log_behavior_event,
     resolve_category,
+    update_transaction_category,
 )
 
 app = Flask(__name__)
@@ -110,6 +114,7 @@ def transactions_page():
     for row in rows:
         sign = "+" if row["direction"] == "in" else "-"
         transactions.append({
+            "id": row["id"],
             "occurred_at": row["occurred_at"],
             "amount_display": f"{sign}{row['amount']:,} đ",
             "sign_class": "in" if row["direction"] == "in" else "out",
@@ -119,6 +124,54 @@ def transactions_page():
         })
 
     return render_template_string(LIST_TEMPLATE, transactions=transactions)
+
+
+@app.route("/transactions/<int:transaction_id>/edit", methods=["GET", "POST"])
+def edit_transaction_page(transaction_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    tx = get_transaction_by_id(cursor, transaction_id)
+    if tx is None:
+        conn.close()
+        return "Không tìm thấy giao dịch.", 404
+
+    if request.method == "POST":
+        category_id_raw = request.form.get("category_id")
+        new_category_id = int(category_id_raw) if category_id_raw else None
+        old_category_id = tx["category_id"]
+
+        update_transaction_category(cursor, transaction_id, new_category_id)
+        log_behavior_event(
+            cursor, "category_overridden", transaction_id=transaction_id,
+            payload={"old_category_id": old_category_id, "new_category_id": new_category_id},
+        )
+
+        if new_category_id is not None and request.form.get("create_rule"):
+            pattern = (request.form.get("pattern") or "").strip()
+            if pattern:
+                add_rule(cursor, pattern=pattern, category_id=new_category_id, created_from="learned")
+
+        conn.commit()
+        conn.close()
+        return redirect(url_for("transactions_page"))
+
+    kind = "expense" if tx["direction"] == "out" else "income"
+    categories = category_tree_as_json(cursor, kind)
+    conn.close()
+
+    sign = "+" if tx["direction"] == "in" else "-"
+    return render_template_string(
+        EDIT_TEMPLATE,
+        tx={
+            "id": tx["id"],
+            "occurred_at": tx["occurred_at"],
+            "amount_display": f"{sign}{tx['amount']:,} đ",
+            "account_name": tx["account_name"],
+            "description": tx["description"] or "",
+            "category_id": tx["category_id"],
+        },
+        categories=categories,
+    )
 
 
 @app.route("/summary")
@@ -548,7 +601,8 @@ LIST_TEMPLATE = """<!doctype html>
   .tx-main { display: flex; justify-content: space-between; font-weight: 600; gap: 8px; }
   .tx-amount.in { color: #1e7a34; }
   .tx-amount.out { color: #c0392b; }
-  .tx-sub { font-size: 0.85rem; color: #777; margin-top: 2px; }
+  .tx-sub { font-size: 0.85rem; color: #777; margin-top: 2px; display: flex; justify-content: space-between; gap: 8px; }
+  .tx-edit { color: #007aff; text-decoration: none; white-space: nowrap; }
   .empty { text-align: center; color: #888; padding: 20px 0; }
 </style>
 </head>
@@ -567,7 +621,10 @@ LIST_TEMPLATE = """<!doctype html>
         <span>{{ tx.category_name }}</span>
         <span class="tx-amount {{ tx.sign_class }}">{{ tx.amount_display }}</span>
       </div>
-      <div class="tx-sub">{{ tx.occurred_at }} · {{ tx.account_name }}{% if tx.description %} · {{ tx.description }}{% endif %}</div>
+      <div class="tx-sub">
+        <span>{{ tx.occurred_at }} · {{ tx.account_name }}{% if tx.description %} · {{ tx.description }}{% endif %}</span>
+        <a class="tx-edit" href="/transactions/{{ tx.id }}/edit">Sửa</a>
+      </div>
     </div>
     {% endfor %}
   {% else %}
@@ -620,6 +677,92 @@ SUMMARY_TEMPLATE = """<!doctype html>
   <div class="summary-row"><span>Thu</span><span class="in">{{ income_display }}</span></div>
   <div class="summary-row"><span>Chi</span><span class="out">{{ expense_display }}</span></div>
   <div class="summary-row total"><span>Chênh lệch</span><span>{{ diff_display }}</span></div>
+</div>
+</body>
+</html>
+"""
+
+
+EDIT_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Sửa danh mục</title>
+<style>""" + BASE_STYLE + """
+  .tx-info { color: #555; font-size: 0.9rem; margin-bottom: 16px; }
+  label.field-label {
+    display: block;
+    font-size: 0.9rem;
+    color: #555;
+    margin: 16px 0 6px;
+  }
+  select, input[type="text"] {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+    border: 1px solid #d1d1d6;
+    border-radius: 10px;
+    background: #fff;
+  }
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    font-size: 0.9rem;
+    color: #555;
+  }
+  .checkbox-row input { width: auto; }
+  button#save {
+    width: 100%;
+    margin-top: 22px;
+    padding: 16px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #fff;
+    background: #007aff;
+    border: none;
+    border-radius: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="nav">
+  <a href="/">Thêm</a>
+  <a href="/transactions" class="active">Danh sách</a>
+  <a href="/summary">Tổng tháng</a>
+</div>
+<div class="card">
+  <h1>Sửa danh mục</h1>
+  <p class="tx-info">{{ tx.occurred_at }} · {{ tx.account_name }} · {{ tx.amount_display }}{% if tx.description %} · {{ tx.description }}{% endif %}</p>
+  <form method="post">
+    <label class="field-label" for="category_id">Danh mục</label>
+    <select id="category_id" name="category_id">
+      <option value="">-- Chưa phân loại --</option>
+      {% for parent in categories %}
+        {% if parent.children %}
+          <optgroup label="{{ parent.name }}">
+            {% for child in parent.children %}
+              <option value="{{ child.id }}" {% if child.id == tx.category_id %}selected{% endif %}>{{ child.name }}</option>
+            {% endfor %}
+          </optgroup>
+        {% else %}
+          <option value="{{ parent.id }}" {% if parent.id == tx.category_id %}selected{% endif %}>{{ parent.name }}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+
+    {% if tx.description %}
+    <div class="checkbox-row">
+      <input type="checkbox" id="create_rule" name="create_rule" checked>
+      <label for="create_rule">Lần sau mô tả chứa từ khóa dưới đây thì tự xếp vào danh mục này</label>
+    </div>
+    <input type="text" name="pattern" value="{{ tx.description }}">
+    {% endif %}
+
+    <button type="submit" id="save">Lưu</button>
+  </form>
 </div>
 </body>
 </html>

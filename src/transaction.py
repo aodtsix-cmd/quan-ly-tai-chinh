@@ -1,4 +1,5 @@
 import calendar
+import json
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -53,7 +54,7 @@ def insert_transaction(cursor, *, occurred_at, amount, direction, account_id,
 
 def get_recent_transactions(cursor, limit=15):
     cursor.execute(
-        """SELECT t.occurred_at, t.amount, t.direction, t.description,
+        """SELECT t.id, t.occurred_at, t.amount, t.direction, t.description,
                   a.name AS account_name, c.name_vi AS category_name
            FROM transactions t
            JOIN accounts a ON t.account_id = a.id
@@ -63,6 +64,33 @@ def get_recent_transactions(cursor, limit=15):
         (limit,),
     )
     return cursor.fetchall()
+
+
+def get_transaction_by_id(cursor, transaction_id):
+    cursor.execute(
+        """SELECT t.id, t.occurred_at, t.amount, t.direction, t.description, t.category_id,
+                  a.name AS account_name
+           FROM transactions t
+           JOIN accounts a ON t.account_id = a.id
+           WHERE t.id = ?""",
+        (transaction_id,),
+    )
+    return cursor.fetchone()
+
+
+def update_transaction_category(cursor, transaction_id, category_id):
+    cursor.execute(
+        "UPDATE transactions SET category_id = ? WHERE id = ?",
+        (category_id, transaction_id),
+    )
+
+
+def log_behavior_event(cursor, event_type, transaction_id=None, payload=None):
+    cursor.execute(
+        """INSERT INTO behavior_events (event_type, transaction_id, payload)
+           VALUES (?, ?, ?)""",
+        (event_type, transaction_id, json.dumps(payload) if payload is not None else None),
+    )
 
 
 def get_monthly_totals(cursor, month):
@@ -265,8 +293,56 @@ def list_transactions(limit=15):
     for row in rows:
         sign = "+" if row["direction"] == "in" else "-"
         category_name = row["category_name"] or "(chưa phân loại)"
-        print(f"{row['occurred_at']}  {sign}{row['amount']:,} đ  "
+        print(f"#{row['id']}  {row['occurred_at']}  {sign}{row['amount']:,} đ  "
               f"[{category_name}]  {row['account_name']}  — {row['description']}")
+
+    conn.close()
+
+
+def edit_transaction_category_interactive():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    print("\n===== SỬA DANH MỤC GIAO DỊCH =====")
+    list_transactions(limit=15)
+    transaction_id_raw = input("Chọn mã giao dịch cần sửa (số sau dấu #): ").strip()
+    try:
+        transaction_id = int(transaction_id_raw)
+    except ValueError:
+        print("Mã không hợp lệ.")
+        conn.close()
+        return
+
+    tx = get_transaction_by_id(cursor, transaction_id)
+    if tx is None:
+        print("Không tìm thấy giao dịch.")
+        conn.close()
+        return
+
+    kind = "expense" if tx["direction"] == "out" else "income"
+    display_categories(cursor, kind)
+    new_category_raw = input("Chọn mã danh mục mới (bỏ trống để bỏ phân loại): ").strip()
+    new_category_id = int(new_category_raw) if new_category_raw else None
+
+    old_category_id = tx["category_id"]
+    update_transaction_category(cursor, transaction_id, new_category_id)
+    log_behavior_event(
+        cursor, "category_overridden", transaction_id=transaction_id,
+        payload={"old_category_id": old_category_id, "new_category_id": new_category_id},
+    )
+    conn.commit()
+    print("\n✔ Đã cập nhật danh mục.")
+
+    if new_category_id is not None and tx["description"]:
+        pattern_raw = input(
+            f"Lần sau giao dịch có mô tả chứa từ khóa nào thì tự xếp vào danh mục này? "
+            f"(Enter = dùng nguyên mô tả \"{tx['description']}\", hoặc gõ 'khong' để bỏ qua): "
+        ).strip()
+        if pattern_raw.lower() not in ("khong", "không", "no", "n"):
+            pattern = pattern_raw or tx["description"]
+            add_rule(cursor, pattern=pattern, category_id=new_category_id, created_from="learned")
+            conn.commit()
+            print(f"✔ Đã thêm luật: mô tả chứa \"{pattern}\" → tự động xếp vào danh mục này.")
 
     conn.close()
 
@@ -454,6 +530,7 @@ def main_menu():
         print("5. Xem luật phân loại")
         print("6. Thêm khoản định kỳ")
         print("7. Xem khoản định kỳ")
+        print("8. Sửa danh mục giao dịch")
         print("0. Thoát")
         choice = input("Chọn: ").strip()
 
@@ -471,6 +548,8 @@ def main_menu():
             add_recurring_interactive()
         elif choice == "7":
             list_recurring_interactive()
+        elif choice == "8":
+            edit_transaction_category_interactive()
         elif choice == "0":
             print("Tạm biệt!")
             break
