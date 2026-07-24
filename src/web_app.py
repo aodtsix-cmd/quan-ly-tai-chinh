@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
 
+import alerts
 import risk
 from ocr_import import analyze_image, make_external_ref
 from transaction import (
@@ -101,9 +102,13 @@ def index():
         "expense": category_tree_as_json(cursor, "expense"),
         "income": category_tree_as_json(cursor, "income"),
     }
+    active_alerts = alerts.get_active_alerts(cursor)
+    if active_alerts:
+        alerts.log_shown_alerts(cursor, active_alerts)
+        conn.commit()
     conn.close()
     return render_template_string(
-        PAGE_TEMPLATE, accounts=accounts, categories_by_kind=categories_by_kind
+        PAGE_TEMPLATE, accounts=accounts, categories_by_kind=categories_by_kind, alerts=active_alerts
     )
 
 
@@ -599,6 +604,17 @@ PAGE_TEMPLATE = """<!doctype html>
   }
   #message.ok { display: block; background: #e6f9ea; color: #1e7a34; }
   #message.error { display: block; background: #fdecea; color: #c0392b; }
+  .alert-banner {
+    max-width: 480px;
+    margin: 0 auto 12px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .alert-banner.danger { background: #fdecea; color: #c0392b; }
+  .alert-banner.warning { background: #fff4e5; color: #b9770e; }
+  .alert-banner + .alert-banner { margin-top: -4px; }
 </style>
 </head>
 <body>
@@ -609,6 +625,9 @@ PAGE_TEMPLATE = """<!doctype html>
   <a href="/risk">Sức khỏe TC</a>
   <a href="/import">Nhập ảnh</a>
 </div>
+{% for alert in alerts %}
+<div class="alert-banner {{ alert.level }}">{{ alert.message }}</div>
+{% endfor %}
 <div class="card">
   <h1>Thêm giao dịch</h1>
   <form id="tx-form">

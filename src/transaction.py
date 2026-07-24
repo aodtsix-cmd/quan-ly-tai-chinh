@@ -573,13 +573,20 @@ def list_recurring_interactive():
 
 
 def main_menu():
+    import alerts  # local import: alerts.py imports log_behavior_event from this module
+
     conn = connect_db()
     cursor = conn.cursor()
     generated = generate_due_recurring(cursor)
+    active_alerts = alerts.get_active_alerts(cursor)
+    if active_alerts:
+        alerts.log_shown_alerts(cursor, active_alerts)
     conn.commit()
     conn.close()
     if generated:
         print(f"\n(Đã tự động sinh {generated} giao dịch định kỳ đến hạn.)")
+    for alert in active_alerts:
+        print(f"\n{alert['message']}")
 
     while True:
         print("\n========== SỔ TÀI CHÍNH ==========")
