@@ -30,6 +30,35 @@ NOTE_LABELS = ("tin nhắn", "tin nhan", "lời nhắn", "loi nhan", "nội dung
 # all — it's just the last line of the details box before this fixed footer.
 NOTE_BEFORE_FOOTER_MARKERS = ("cảm ơn bạn đã sử dụng", "cam on ban da su dung")
 
+# Fallback for when OCR drops the note's label entirely (confirmed real case,
+# 2026-07-24: MoMo's "Lời nhắn" label wasn't read at all by Tesseract — likely
+# an icon or spacing issue — leaving "tien gui xe" as a bare, unlabeled line
+# with no footer marker either). The user types notes without Vietnamese
+# diacritics in every real sample seen, while the surrounding app UI text
+# (statuses, bank names, labels) almost always has them — so a line with no
+# diacritics that also isn't ALL-CAPS (which would make it a name/account
+# label instead, e.g. "NGUYEN PHUC THANH") is a reasonable last-resort guess
+# for the note.
+_DIACRITIC_CHARS = set(
+    "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
+)
+
+
+def _find_ascii_lowercase_note(lines):
+    for line in lines:
+        lower = line.lower()
+        if any(ch in _DIACRITIC_CHARS for ch in lower):
+            continue
+        if not re.search(r"[a-z]", line):  # no lowercase letter ⇒ likely a code/name, not typed prose
+            continue
+        if len(line.split()) < 2:
+            continue
+        if AMOUNT_PATTERN.search(line):
+            continue
+        return line
+    return None
+
+
 # Neither app's screens reliably show a plain +/- next to the amount (MoMo's
 # receipt/confirmation screen doesn't; MoMo's "Chi tiết giao dịch" detail
 # screen and MB's dark transaction-lookup modal sometimes do, sometimes just
@@ -133,6 +162,7 @@ def parse_candidates(text):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     labeled_note = _find_labeled_note(lines)
     footer_note = _find_note_before_footer(lines)
+    ascii_note = _find_ascii_lowercase_note(lines)
     whole_text_lower = text.lower()
 
     candidates = []
@@ -163,7 +193,7 @@ def parse_candidates(text):
         seen.add(key)
 
         inline_note = (line[:match.start()] + " " + line[match.end():]).strip()
-        note = inline_note or labeled_note or footer_note or line
+        note = inline_note or labeled_note or footer_note or ascii_note or line
 
         candidates.append({
             "raw_line": line,
