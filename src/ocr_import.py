@@ -123,19 +123,37 @@ def _clean_mb_noi_dung(value):
 
 
 def _find_labeled_note(lines):
-    for i, line in enumerate(lines):
+    """Only matches label and value on the *same* line. A "look at the next
+    line if the label's own line is empty" fallback was tried and removed
+    after a real case (2026-07-24, MB's dark 'Chi tiết giao dịch' modal)
+    showed Tesseract sometimes reads a two-column label/value layout as one
+    block of *all* labels followed by a separate block of *all* values —
+    so the line right after "Nội dung" was actually the next label
+    ("Thời gian"), not the value. See `_find_mb_content_value` for the
+    position-independent fallback that handles that shape instead."""
+    for line in lines:
         lower = line.lower()
         for label in NOTE_LABELS:
             if not lower.startswith(label):
                 continue
             remainder = line[len(label):].strip(" :\t")
-            if not remainder and i + 1 < len(lines):
-                remainder = lines[i + 1].strip()
             if not remainder:
                 continue
             if label in ("nội dung", "noi dung"):
                 remainder = _clean_mb_noi_dung(remainder)
             return remainder
+    return None
+
+
+def _find_mb_content_value(lines):
+    """Finds MB Bank's 'Nội dung' value by its own content shape (see
+    `_clean_mb_noi_dung`) rather than by position relative to the "Nội dung"
+    label — needed because that label and its value can end up far apart in
+    the OCR text (see `_find_labeled_note`'s docstring)."""
+    for line in lines:
+        upper = line.upper()
+        if upper.startswith("CUSTOMER MBCT") or "-CHUYEN TIEN-" in upper:
+            return _clean_mb_noi_dung(line)
     return None
 
 
@@ -181,6 +199,7 @@ def parse_candidates(text):
     saved, not to be trusted on its own."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     labeled_note = _find_labeled_note(lines)
+    mb_content_note = _find_mb_content_value(lines)
     footer_note = _find_note_before_footer(lines)
     ascii_note = _find_ascii_lowercase_note(lines)
     whole_text_lower = text.lower()
@@ -215,7 +234,7 @@ def parse_candidates(text):
         inline_note = (line[:match.start()] + " " + line[match.end():]).strip()
         if not _looks_like_real_note(inline_note):
             inline_note = ""
-        note = inline_note or labeled_note or footer_note or ascii_note or line
+        note = inline_note or labeled_note or mb_content_note or footer_note or ascii_note or line
 
         candidates.append({
             "raw_line": line,
