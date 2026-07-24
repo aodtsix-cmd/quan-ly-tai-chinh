@@ -38,14 +38,19 @@ def get_categories(cursor, kind):
 
 
 def insert_transaction(cursor, *, occurred_at, amount, direction, account_id,
-                        category_id, description, note=None, source="manual", is_reviewed=1):
-    """Insert a transaction and update the account balance in the same call."""
+                        category_id, description, note=None, source="manual",
+                        is_reviewed=1, external_ref=None):
+    """Insert a transaction and update the account balance in the same call.
+    Raises sqlite3.IntegrityError if external_ref collides with an existing
+    row (the dedupe key for automated imports) — callers that batch-insert
+    untrusted rows (e.g. OCR import) should catch it per-row."""
     cursor.execute(
         """INSERT INTO transactions
            (occurred_at, amount, direction, account_id, category_id,
-            description, note, source, is_reviewed)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (occurred_at, amount, direction, account_id, category_id, description, note, source, is_reviewed),
+            description, note, source, is_reviewed, external_ref)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (occurred_at, amount, direction, account_id, category_id, description,
+         note, source, is_reviewed, external_ref),
     )
     balance_delta = amount if direction == "in" else -amount
     cursor.execute(

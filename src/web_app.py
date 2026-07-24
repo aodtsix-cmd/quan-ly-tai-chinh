@@ -1,11 +1,14 @@
 import os
+import sqlite3
 from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
 
 import risk
+from ocr_import import extract_text, make_external_ref, parse_candidates
 from transaction import (
     add_rule,
+    apply_matching_rule,
     connect_db,
     generate_due_recurring,
     get_active_accounts,
@@ -248,6 +251,99 @@ def risk_page():
             "savings_pct": f"{budget['savings_pct']:.0f}" if budget["savings_pct"] is not None else "",
         },
     )
+
+
+@app.route("/import", methods=["GET", "POST"])
+def import_page():
+    if request.method != "POST":
+        return render_template_string(IMPORT_TEMPLATE, error=None)
+
+    images = [f for f in request.files.getlist("images") if f.filename]
+    if not images:
+        return render_template_string(IMPORT_TEMPLATE, error="Chưa chọn ảnh nào.")
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    raw_texts = []
+    candidates = []
+    try:
+        for image_index, image in enumerate(images):
+            text = extract_text(image.stream)
+            raw_texts.append(f"--- Ảnh #{image_index + 1} ({image.filename}) ---\n{text}")
+            for candidate in parse_candidates(text):
+                candidate["image_index"] = image_index
+                candidate["kind"] = "expense" if candidate["direction"] == "out" else "income"
+                candidate["suggested_category_id"] = apply_matching_rule(cursor, candidate["note"])
+                candidates.append(candidate)
+    except Exception as exc:
+        conn.close()
+        return render_template_string(
+            IMPORT_TEMPLATE,
+            error=f"Không đọc được ảnh (có thể chưa cài Tesseract đúng cách): {exc}",
+        )
+
+    accounts = accounts_as_json(cursor)
+    all_categories = category_tree_as_json(cursor, "expense") + category_tree_as_json(cursor, "income")
+    conn.close()
+
+    if not candidates:
+        return render_template_string(
+            IMPORT_TEMPLATE,
+            error="Không tìm thấy dòng nào trông giống số tiền trong ảnh. Xem chữ máy đọc được bên dưới để biết vì sao.",
+            raw_text="\n\n".join(raw_texts),
+        )
+
+    return render_template_string(
+        IMPORT_REVIEW_TEMPLATE,
+        candidates=candidates,
+        raw_text="\n\n".join(raw_texts),
+        accounts=accounts,
+        categories=all_categories,
+        today=datetime.now().strftime("%Y-%m-%d"),
+    )
+
+
+@app.route("/import/confirm", methods=["POST"])
+def import_confirm():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    saved = 0
+    skipped_duplicate = 0
+
+    for i in request.form.getlist("include"):
+        try:
+            amount = int(request.form.get(f"amount_{i}", "").replace(",", "").replace(".", ""))
+            account_id = int(request.form.get(f"account_{i}"))
+        except (TypeError, ValueError):
+            continue
+
+        direction = request.form.get(f"direction_{i}")
+        if amount <= 0 or direction not in ("in", "out"):
+            continue
+
+        category_id_raw = request.form.get(f"category_{i}")
+        category_id = int(category_id_raw) if category_id_raw else None
+        note = (request.form.get(f"note_{i}") or "").strip()
+        date_raw = request.form.get(f"date_{i}")
+        occurred_at = f"{date_raw} 00:00:00" if date_raw else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        external_ref = make_external_ref(amount, direction, note)
+
+        try:
+            insert_transaction(
+                cursor, occurred_at=occurred_at, amount=amount, direction=direction,
+                account_id=account_id, category_id=category_id, description=note,
+                source="ocr", is_reviewed=0, external_ref=external_ref,
+            )
+            conn.commit()
+            saved += 1
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            skipped_duplicate += 1
+
+    conn.close()
+    return redirect(url_for("transactions_page"))
 
 
 @app.route("/api/transactions", methods=["POST"])
@@ -500,6 +596,7 @@ PAGE_TEMPLATE = """<!doctype html>
   <a href="/transactions">Danh sách</a>
   <a href="/summary">Tổng tháng</a>
   <a href="/risk">Sức khỏe TC</a>
+  <a href="/import">Nhập ảnh</a>
 </div>
 <div class="card">
   <h1>Thêm giao dịch</h1>
@@ -672,6 +769,7 @@ LIST_TEMPLATE = """<!doctype html>
   <a href="/transactions" class="active">Danh sách</a>
   <a href="/summary">Tổng tháng</a>
   <a href="/risk">Sức khỏe TC</a>
+  <a href="/import">Nhập ảnh</a>
 </div>
 <div class="card">
   <h1>{{ transactions|length }} giao dịch gần đây</h1>
@@ -730,6 +828,7 @@ SUMMARY_TEMPLATE = """<!doctype html>
   <a href="/transactions">Danh sách</a>
   <a href="/summary" class="active">Tổng tháng</a>
   <a href="/risk">Sức khỏe TC</a>
+  <a href="/import">Nhập ảnh</a>
 </div>
 <div class="card">
   <h1>Tổng theo tháng</h1>
@@ -795,6 +894,7 @@ EDIT_TEMPLATE = """<!doctype html>
   <a href="/transactions" class="active">Danh sách</a>
   <a href="/summary">Tổng tháng</a>
   <a href="/risk">Sức khỏe TC</a>
+  <a href="/import">Nhập ảnh</a>
 </div>
 <div class="card">
   <h1>Sửa danh mục</h1>
@@ -879,6 +979,7 @@ RISK_TEMPLATE = """<!doctype html>
   <a href="/transactions">Danh sách</a>
   <a href="/summary">Tổng tháng</a>
   <a href="/risk" class="active">Sức khỏe TC</a>
+  <a href="/import">Nhập ảnh</a>
 </div>
 <div class="card">
   <h1>Tình hình tài chính</h1>
@@ -919,6 +1020,168 @@ RISK_TEMPLATE = """<!doctype html>
   {% else %}
     <p class="empty">Chưa có thu nhập ghi nhận tháng này.</p>
   {% endif %}
+</div>
+</body>
+</html>
+"""
+
+
+IMPORT_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Nhập từ ảnh chụp</title>
+<style>""" + BASE_STYLE + """
+  input[type="file"] {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+    border: 1px solid #d1d1d6;
+    border-radius: 10px;
+    background: #fff;
+  }
+  button#save {
+    width: 100%;
+    margin-top: 16px;
+    padding: 16px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #fff;
+    background: #007aff;
+    border: none;
+    border-radius: 12px;
+  }
+  #message.error { margin-top: 14px; padding: 12px; border-radius: 10px; background: #fdecea; color: #c0392b; }
+  pre.raw-text { white-space: pre-wrap; font-size: 0.8rem; color: #555; background: #f4f5f7; padding: 10px; border-radius: 8px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="nav">
+  <a href="/">Thêm</a>
+  <a href="/transactions">Danh sách</a>
+  <a href="/summary">Tổng tháng</a>
+  <a href="/risk">Sức khỏe TC</a>
+  <a href="/import" class="active">Nhập ảnh</a>
+</div>
+<div class="card">
+  <h1>Nhập từ ảnh chụp</h1>
+  <p class="tx-info">Chụp màn hình lịch sử giao dịch MoMo/MB Bank (có ghi chú rõ ràng), chọn ảnh ở đây — có thể chọn nhiều ảnh cùng lúc. Máy sẽ đọc số tiền và ghi chú, bạn xem lại và sửa trước khi lưu.</p>
+  <form method="post" enctype="multipart/form-data">
+    <input type="file" name="images" accept="image/*" multiple required>
+    <button type="submit" id="save">Đọc ảnh</button>
+  </form>
+  {% if error %}<div id="message" class="error">{{ error }}</div>{% endif %}
+  {% if raw_text %}<pre class="raw-text">{{ raw_text }}</pre>{% endif %}
+</div>
+</body>
+</html>
+"""
+
+
+IMPORT_REVIEW_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Duyệt giao dịch từ ảnh</title>
+<style>""" + BASE_STYLE + """
+  .candidate {
+    border: 1px solid #eee;
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 14px;
+  }
+  .candidate .raw-line { font-size: 0.8rem; color: #888; margin-bottom: 8px; }
+  .candidate label.field-label { margin: 10px 0 4px; }
+  .candidate select, .candidate input[type="text"], .candidate input[type="date"] {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid #d1d1d6;
+    border-radius: 8px;
+  }
+  .include-row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .include-row input { width: auto; }
+  pre.raw-text { white-space: pre-wrap; font-size: 0.8rem; color: #555; background: #f4f5f7; padding: 10px; border-radius: 8px; margin-bottom: 16px; }
+  details summary { cursor: pointer; color: #007aff; font-size: 0.9rem; margin-bottom: 10px; }
+  button#save {
+    width: 100%;
+    margin-top: 10px;
+    padding: 16px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #fff;
+    background: #007aff;
+    border: none;
+    border-radius: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="nav">
+  <a href="/">Thêm</a>
+  <a href="/transactions">Danh sách</a>
+  <a href="/summary">Tổng tháng</a>
+  <a href="/risk">Sức khỏe TC</a>
+  <a href="/import" class="active">Nhập ảnh</a>
+</div>
+<div class="card">
+  <h1>{{ candidates|length }} giao dịch tìm thấy — kiểm tra trước khi lưu</h1>
+  <details>
+    <summary>Xem chữ máy đọc được từ ảnh</summary>
+    <pre class="raw-text">{{ raw_text }}</pre>
+  </details>
+
+  <form method="post" action="/import/confirm">
+    {% for c in candidates %}
+    <div class="candidate">
+      <div class="include-row">
+        <input type="checkbox" name="include" value="{{ loop.index0 }}" checked>
+        <span>Lưu giao dịch này (ảnh #{{ c.image_index + 1 }})</span>
+      </div>
+      <div class="raw-line">Dòng gốc: "{{ c.raw_line }}"</div>
+
+      <label class="field-label">Ngày</label>
+      <input type="date" name="date_{{ loop.index0 }}" value="{{ today }}">
+
+      <label class="field-label">Loại</label>
+      <select name="direction_{{ loop.index0 }}">
+        <option value="out" {% if c.direction == 'out' %}selected{% endif %}>Chi tiền</option>
+        <option value="in" {% if c.direction == 'in' %}selected{% endif %}>Thu tiền</option>
+      </select>
+
+      <label class="field-label">Tài khoản</label>
+      <select name="account_{{ loop.index0 }}">
+        {% for acc in accounts %}<option value="{{ acc.id }}">{{ acc.name }}</option>{% endfor %}
+      </select>
+
+      <label class="field-label">Danh mục</label>
+      <select name="category_{{ loop.index0 }}">
+        <option value="">-- Chưa phân loại --</option>
+        {% for parent in categories %}
+          {% if parent.children %}
+            <optgroup label="{{ parent.name }}">
+              {% for child in parent.children %}
+                <option value="{{ child.id }}" {% if child.id == c.suggested_category_id %}selected{% endif %}>{{ child.name }}</option>
+              {% endfor %}
+            </optgroup>
+          {% else %}
+            <option value="{{ parent.id }}" {% if parent.id == c.suggested_category_id %}selected{% endif %}>{{ parent.name }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+
+      <label class="field-label">Số tiền</label>
+      <input type="text" inputmode="numeric" name="amount_{{ loop.index0 }}" value="{{ c.amount }}">
+
+      <label class="field-label">Ghi chú</label>
+      <input type="text" name="note_{{ loop.index0 }}" value="{{ c.note }}">
+    </div>
+    {% endfor %}
+
+    <button type="submit" id="save">Lưu các giao dịch đã chọn</button>
+  </form>
 </div>
 </body>
 </html>
