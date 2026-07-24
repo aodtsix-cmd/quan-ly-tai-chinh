@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
 
 import risk
-from ocr_import import extract_text, make_external_ref, parse_candidates
+from ocr_import import analyze_image, make_external_ref
 from transaction import (
     add_rule,
     apply_matching_rule,
@@ -265,13 +265,17 @@ def import_page():
     conn = connect_db()
     cursor = conn.cursor()
 
-    raw_texts = []
+    debug_blocks = []
     candidates = []
     try:
         for image_index, image in enumerate(images):
-            text = extract_text(image.stream)
-            raw_texts.append(f"--- Ảnh #{image_index + 1} ({image.filename}) ---\n{text}")
-            for candidate in parse_candidates(text):
+            image_bytes = image.stream.read()
+            found = analyze_image(image_bytes, image.mimetype or "image/png")
+            debug_blocks.append(
+                f"--- Ảnh #{image_index + 1} ({image.filename}) ---\n"
+                + ("\n".join(f"{c['amount']:,} đ ({c['direction']}) — {c['note']!r}" for c in found) or "(không tìm thấy giao dịch nào)")
+            )
+            for candidate in found:
                 candidate["image_index"] = image_index
                 candidate["kind"] = "expense" if candidate["direction"] == "out" else "income"
                 candidate["suggested_category_id"] = apply_matching_rule(cursor, candidate["note"])
@@ -280,7 +284,7 @@ def import_page():
         conn.close()
         return render_template_string(
             IMPORT_TEMPLATE,
-            error=f"Không đọc được ảnh (có thể chưa cài Tesseract đúng cách): {exc}",
+            error=f"Không đọc được ảnh (kiểm tra GEMINI_API_KEY, hoặc thử lại): {exc}",
         )
 
     accounts = accounts_as_json(cursor)
@@ -290,14 +294,14 @@ def import_page():
     if not candidates:
         return render_template_string(
             IMPORT_TEMPLATE,
-            error="Không tìm thấy dòng nào trông giống số tiền trong ảnh. Xem chữ máy đọc được bên dưới để biết vì sao.",
-            raw_text="\n\n".join(raw_texts),
+            error="Không tìm thấy giao dịch nào trong ảnh. Xem kết quả bên dưới để biết vì sao.",
+            raw_text="\n\n".join(debug_blocks),
         )
 
     return render_template_string(
         IMPORT_REVIEW_TEMPLATE,
         candidates=candidates,
-        raw_text="\n\n".join(raw_texts),
+        raw_text="\n\n".join(debug_blocks),
         accounts=accounts,
         categories=all_categories,
         today=datetime.now().strftime("%Y-%m-%d"),
@@ -1129,7 +1133,7 @@ IMPORT_REVIEW_TEMPLATE = """<!doctype html>
 <div class="card">
   <h1>{{ candidates|length }} giao dịch tìm thấy — kiểm tra trước khi lưu</h1>
   <details>
-    <summary>Xem chữ máy đọc được từ ảnh</summary>
+    <summary>Xem kết quả AI đọc được từ ảnh</summary>
     <pre class="raw-text">{{ raw_text }}</pre>
   </details>
 
