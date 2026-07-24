@@ -265,12 +265,17 @@ def import_page():
     conn = connect_db()
     cursor = conn.cursor()
 
+    categories_by_kind = {
+        "expense": category_tree_as_json(cursor, "expense"),
+        "income": category_tree_as_json(cursor, "income"),
+    }
+
     debug_blocks = []
     candidates = []
     try:
         for image_index, image in enumerate(images):
             image_bytes = image.stream.read()
-            found = analyze_image(image_bytes, image.mimetype or "image/png")
+            found = analyze_image(image_bytes, image.mimetype or "image/png", categories_by_kind)
             debug_blocks.append(
                 f"--- Ảnh #{image_index + 1} ({image.filename}) ---\n"
                 + ("\n".join(f"{c['amount']:,} đ ({c['direction']}) — {c['note']!r}" for c in found) or "(không tìm thấy giao dịch nào)")
@@ -278,7 +283,9 @@ def import_page():
             for candidate in found:
                 candidate["image_index"] = image_index
                 candidate["kind"] = "expense" if candidate["direction"] == "out" else "income"
-                candidate["suggested_category_id"] = apply_matching_rule(cursor, candidate["note"])
+                # AI's own semantic guess wins; only fall back to the keyword-based
+                # rules engine when Gemini wasn't confident enough to suggest one.
+                candidate["suggested_category_id"] = candidate["category_id"] or apply_matching_rule(cursor, candidate["note"])
                 candidates.append(candidate)
     except Exception as exc:
         conn.close()

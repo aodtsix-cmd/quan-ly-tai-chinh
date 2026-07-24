@@ -7,6 +7,13 @@ values" instead of label-value pairs in order — each requiring a new,
 increasingly fragile heuristic. A vision model reads the screen semantically
 instead of line-by-line, so it isn't tripped up by OCR reading order.
 
+Also asks Gemini to suggest a category directly from the note's meaning
+(e.g. "tien an trua" → an eating-out category) — a semantic guess, broader
+than the substring-matching `rules` engine in transaction.py, which only
+fires on an exact known keyword. Both still land in the same editable
+review screen before anything is saved, so a wrong guess either way costs
+the user one dropdown click, not bad data.
+
 Requires GEMINI_API_KEY in the environment (get one free at
 https://aistudio.google.com/apikey). Images are sent to Google's API for
 this — a deliberate trade of the "everything stays local" property the
@@ -42,13 +49,17 @@ class _Candidate(BaseModel):
     amount: int = Field(description="Số tiền giao dịch, chỉ ghi số nguyên VNĐ, không có dấu phẩy/chấm/đơn vị")
     direction: str = Field(description='"out" nếu là tiền chuyển đi/chi tiêu, "in" nếu là tiền nhận được')
     note: str = Field(description="Ghi chú/tin nhắn người dùng tự gõ khi chuyển tiền, hoặc chuỗi rỗng nếu không có")
+    category_id: int | None = Field(
+        description="id của danh mục phù hợp nhất với ghi chú, chọn đúng 1 trong danh sách id đã cho ở trên "
+        "(đúng theo hướng chi/thu). Để null nếu không đủ căn cứ để đoán, đừng chọn bừa."
+    )
 
 
 class _AnalysisResult(BaseModel):
     transactions: list[_Candidate]
 
 
-PROMPT = """Đây là ảnh chụp màn hình xác nhận/chi tiết một giao dịch chuyển
+BASE_PROMPT = """Đây là ảnh chụp màn hình xác nhận/chi tiết một giao dịch chuyển
 tiền từ ứng dụng ngân hàng hoặc ví điện tử Việt Nam (MB Bank, MoMo, ...).
 
 Hãy đọc và trích xuất TỪNG giao dịch chuyển tiền THỰC SỰ xuất hiện trong ảnh
@@ -66,26 +77,68 @@ Với mỗi giao dịch, xác định:
   dung hệ thống trộn lẫn ghi chú người dùng ở giữa một chuỗi dài, chỉ lấy
   đúng phần ghi chú đó, bỏ phần còn lại. Nếu không tìm thấy ghi chú nào, để
   note là chuỗi rỗng.
+- category_id: dựa vào Ý NGHĨA của ghi chú (không chỉ khớp từ khóa), đoán
+  giao dịch này thuộc danh mục nào trong danh sách dưới đây, rồi trả về
+  đúng "id" số nguyên của danh mục đó. Ví dụ ghi chú "an trua"/"tien com"
+  hợp lý thuộc danh mục ăn uống; "gui xe"/"gửi xe" hợp lý thuộc danh mục
+  di chuyển/gửi xe. Chỉ chọn trong danh sách id đã cho, đúng theo hướng
+  (giao dịch "out" phải chọn id thuộc nhóm Chi tiêu, "in" phải chọn id
+  thuộc nhóm Thu nhập). Nếu ghi chú quá mơ hồ để đoán chắc chắn, để
+  category_id là null.
 
 Đừng tính các dòng chỉ hiển thị số dư tài khoản hiện tại (không phải một
 giao dịch cụ thể). Nếu cùng một giao dịch có số tiền bị hiển thị lặp lại
 nhiều lần trên ảnh (vd số tiền lớn ở đầu và nhắc lại ở một dòng "Số tiền"
-phía dưới), chỉ tính đó là MỘT giao dịch, không tách thành hai."""
+phía dưới), chỉ tính đó là MỘT giao dịch, không tách thành hai.
+
+Danh sách danh mục có thể chọn cho category_id:
+{categories_text}"""
 
 
-def analyze_image(image_bytes, mime_type="image/png"):
+def _format_categories(categories_by_kind):
+    kind_labels = {"expense": "Chi tiêu", "income": "Thu nhập"}
+    lines = []
+    for kind, label in kind_labels.items():
+        lines.append(f"{label}:")
+        for parent in categories_by_kind.get(kind, []):
+            if parent["children"]:
+                for child in parent["children"]:
+                    lines.append(f"  id={child['id']}: {child['name']} (thuộc {parent['name']})")
+            else:
+                lines.append(f"  id={parent['id']}: {parent['name']}")
+    return "\n".join(lines)
+
+
+def analyze_image(image_bytes, mime_type, categories_by_kind):
     """Sends one screenshot to Gemini and returns a list of
-    {"amount": int, "direction": "in"/"out", "note": str} — one per real
-    transaction found (almost always exactly one). Raises RuntimeError if
-    GEMINI_API_KEY isn't set, or lets the underlying API exception propagate
-    on request failure (network error, invalid key, quota, ...) — the caller
-    is expected to catch and show a friendly message, same as the old
-    Tesseract path did for OCR failures."""
+    {"amount": int, "direction": "in"/"out", "note": str, "category_id": int|None}
+    — one per real transaction found (almost always exactly one).
+
+    `categories_by_kind` is {"expense": [...], "income": [...]}, each a list
+    of {"id", "name", "children": [...]}} as built by web_app.py's
+    category_tree_as_json — given to Gemini so it can suggest a category id
+    directly, and used here afterward to reject any id it returns that isn't
+    actually a real category (never trust a model-generated foreign key
+    blindly, even for a low-stakes field like this).
+
+    Raises RuntimeError if GEMINI_API_KEY isn't set, or lets the underlying
+    API exception propagate on request failure (network error, invalid key,
+    quota, ...) — the caller is expected to catch and show a friendly
+    message, same as the old Tesseract path did for OCR failures."""
+    valid_category_ids = set()
+    for parents in categories_by_kind.values():
+        for parent in parents:
+            valid_category_ids.add(parent["id"])
+            for child in parent["children"]:
+                valid_category_ids.add(child["id"])
+
+    prompt = BASE_PROMPT.format(categories_text=_format_categories(categories_by_kind))
+
     client = _get_client()
     response = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=[
-            PROMPT,
+            prompt,
             types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
         ],
         config=types.GenerateContentConfig(
@@ -104,7 +157,13 @@ def analyze_image(image_bytes, mime_type="image/png"):
         if key in seen:
             continue
         seen.add(key)
-        candidates.append({"amount": tx.amount, "direction": tx.direction, "note": tx.note.strip()})
+        category_id = tx.category_id if tx.category_id in valid_category_ids else None
+        candidates.append({
+            "amount": tx.amount,
+            "direction": tx.direction,
+            "note": tx.note.strip(),
+            "category_id": category_id,
+        })
     return candidates
 
 
