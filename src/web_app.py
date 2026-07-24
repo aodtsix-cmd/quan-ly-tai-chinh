@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
 
+import risk
 from transaction import (
     add_rule,
     connect_db,
@@ -188,6 +189,64 @@ def summary_page():
         income_display=f"{totals['income']:,} đ",
         expense_display=f"{totals['expense']:,} đ",
         diff_display=f"{totals['income'] - totals['expense']:,} đ",
+    )
+
+
+RUNWAY_LEVEL_LABELS = {
+    "nguy_hiem": "Nguy hiểm",
+    "mong_manh": "Mong manh",
+    "on": "Ổn",
+    "vung": "Vững",
+}
+
+
+@app.route("/risk")
+def risk_page():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    forecast = risk.short_term_forecast(cursor)
+    liquidity = risk.liquidity_risk(cursor)
+    runway = risk.runway_months(cursor)
+    this_month = datetime.now().strftime("%Y-%m")
+    budget = risk.budget_balance_50_30_20(cursor, this_month)
+
+    conn.close()
+
+    return render_template_string(
+        RISK_TEMPLATE,
+        month=this_month,
+        forecast={
+            "liquid_balance_display": f"{forecast['liquid_balance']:,} đ",
+            "remaining_recurring_display": f"{forecast['remaining_recurring']:,} đ",
+            "projected_spend_display": f"{forecast['projected_variable_spend']:,} đ",
+            "forecast_balance_display": f"{forecast['forecast_balance']:,} đ",
+            "at_risk": forecast["at_risk"],
+        },
+        liquidity={
+            "has_data": liquidity["essential_monthly_expense"] is not None,
+            "liquid_balance_display": f"{liquidity['liquid_balance']:,} đ",
+            "essential_monthly_display": (
+                f"{liquidity['essential_monthly_expense']:,.0f} đ"
+                if liquidity["essential_monthly_expense"] else ""
+            ),
+            "sufficient": liquidity["sufficient"],
+        },
+        runway={
+            "has_data": runway["months"] is not None,
+            "months_display": f"{runway['months']:.1f}" if runway["months"] is not None else "",
+            "level": runway["level"],
+            "level_label": RUNWAY_LEVEL_LABELS.get(runway["level"], ""),
+        },
+        budget={
+            "has_income": budget["income"] > 0,
+            "essential_display": f"{budget['essential']:,} đ",
+            "optional_display": f"{budget['optional']:,} đ",
+            "savings_display": f"{budget['savings']:,} đ",
+            "essential_pct": f"{budget['essential_pct']:.0f}" if budget["essential_pct"] is not None else "",
+            "optional_pct": f"{budget['optional_pct']:.0f}" if budget["optional_pct"] is not None else "",
+            "savings_pct": f"{budget['savings_pct']:.0f}" if budget["savings_pct"] is not None else "",
+        },
     )
 
 
@@ -440,6 +499,7 @@ PAGE_TEMPLATE = """<!doctype html>
   <a href="/" class="active">Thêm</a>
   <a href="/transactions">Danh sách</a>
   <a href="/summary">Tổng tháng</a>
+  <a href="/risk">Sức khỏe TC</a>
 </div>
 <div class="card">
   <h1>Thêm giao dịch</h1>
@@ -611,6 +671,7 @@ LIST_TEMPLATE = """<!doctype html>
   <a href="/">Thêm</a>
   <a href="/transactions" class="active">Danh sách</a>
   <a href="/summary">Tổng tháng</a>
+  <a href="/risk">Sức khỏe TC</a>
 </div>
 <div class="card">
   <h1>{{ transactions|length }} giao dịch gần đây</h1>
@@ -668,6 +729,7 @@ SUMMARY_TEMPLATE = """<!doctype html>
   <a href="/">Thêm</a>
   <a href="/transactions">Danh sách</a>
   <a href="/summary" class="active">Tổng tháng</a>
+  <a href="/risk">Sức khỏe TC</a>
 </div>
 <div class="card">
   <h1>Tổng theo tháng</h1>
@@ -732,6 +794,7 @@ EDIT_TEMPLATE = """<!doctype html>
   <a href="/">Thêm</a>
   <a href="/transactions" class="active">Danh sách</a>
   <a href="/summary">Tổng tháng</a>
+  <a href="/risk">Sức khỏe TC</a>
 </div>
 <div class="card">
   <h1>Sửa danh mục</h1>
@@ -763,6 +826,99 @@ EDIT_TEMPLATE = """<!doctype html>
 
     <button type="submit" id="save">Lưu</button>
   </form>
+</div>
+</body>
+</html>
+"""
+
+
+RISK_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Tình hình tài chính</title>
+<style>""" + BASE_STYLE + """
+  .section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 22px 0 8px;
+  }
+  .section-title:first-of-type { margin-top: 4px; }
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95rem;
+    gap: 8px;
+  }
+  .summary-row.total { border-bottom: none; margin-top: 2px; font-size: 1.05rem; font-weight: 600; }
+  .summary-row.total.good span:last-child { color: #1e7a34; }
+  .summary-row.total.danger span:last-child { color: #c0392b; }
+  .note.good { color: #1e7a34; font-weight: 600; }
+  .note.warning { color: #c0392b; font-weight: 600; }
+  .empty { color: #888; font-size: 0.9rem; }
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #fff;
+  }
+  .badge-nguy_hiem { background: #c0392b; }
+  .badge-mong_manh { background: #e67e22; }
+  .badge-on { background: #2980b9; }
+  .badge-vung { background: #1e7a34; }
+</style>
+</head>
+<body>
+<div class="nav">
+  <a href="/">Thêm</a>
+  <a href="/transactions">Danh sách</a>
+  <a href="/summary">Tổng tháng</a>
+  <a href="/risk" class="active">Sức khỏe TC</a>
+</div>
+<div class="card">
+  <h1>Tình hình tài chính</h1>
+
+  <p class="section-title">Dự báo ngắn hạn (còn lại tháng này)</p>
+  <div class="summary-row"><span>Số dư khả dụng</span><span>{{ forecast.liquid_balance_display }}</span></div>
+  <div class="summary-row"><span>Khoản định kỳ còn phải trả</span><span>{{ forecast.remaining_recurring_display }}</span></div>
+  <div class="summary-row"><span>Chi tiêu dự kiến còn lại</span><span>{{ forecast.projected_spend_display }}</span></div>
+  <div class="summary-row total {{ 'danger' if forecast.at_risk else 'good' }}">
+    <span>Dự báo cuối tháng</span><span>{{ forecast.forecast_balance_display }}</span>
+  </div>
+  {% if forecast.at_risk %}<p class="note warning">⚠️ Có thể âm quỹ cuối tháng nếu chi tiêu như hiện tại.</p>{% endif %}
+
+  <p class="section-title">Rủi ro thanh khoản</p>
+  {% if liquidity.has_data %}
+    <div class="summary-row"><span>Tài sản lỏng</span><span>{{ liquidity.liquid_balance_display }}</span></div>
+    <div class="summary-row"><span>Chi phí thiết yếu 1 tháng (ước tính)</span><span>{{ liquidity.essential_monthly_display }}</span></div>
+    <p class="note {{ 'good' if liquidity.sufficient else 'warning' }}">
+      {{ 'Đủ trang trải 1 tháng chi phí bắt buộc.' if liquidity.sufficient else '⚠️ Không đủ trang trải 1 tháng chi phí bắt buộc.' }}
+    </p>
+  {% else %}
+    <p class="empty">Chưa đủ dữ liệu (cần lịch sử chi tiêu ít nhất 1 tháng đã qua).</p>
+  {% endif %}
+
+  <p class="section-title">Nền móng tài chính</p>
+  {% if runway.has_data %}
+    <p>Nếu mất thu nhập, tài sản lỏng đủ sống <strong>{{ runway.months_display }} tháng</strong> —
+       <span class="badge badge-{{ runway.level }}">{{ runway.level_label }}</span></p>
+  {% else %}
+    <p class="empty">Chưa đủ dữ liệu (cần lịch sử chi tiêu ít nhất 1 tháng đã qua).</p>
+  {% endif %}
+
+  <p class="section-title">Cân đối 50/30/20 (tháng {{ month }})</p>
+  {% if budget.has_income %}
+    <div class="summary-row"><span>Thiết yếu (≤ 50%)</span><span>{{ budget.essential_display }} ({{ budget.essential_pct }}%)</span></div>
+    <div class="summary-row"><span>Tùy chọn (≤ 30%)</span><span>{{ budget.optional_display }} ({{ budget.optional_pct }}%)</span></div>
+    <div class="summary-row"><span>Còn lại (≥ 20%)</span><span>{{ budget.savings_display }} ({{ budget.savings_pct }}%)</span></div>
+  {% else %}
+    <p class="empty">Chưa có thu nhập ghi nhận tháng này.</p>
+  {% endif %}
 </div>
 </body>
 </html>

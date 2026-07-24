@@ -4,6 +4,8 @@ import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 
+import risk
+
 PROJECT_ROOT = Path(__file__).parent.parent
 DB_PATH = PROJECT_ROOT / "data" / "finance.db"
 
@@ -364,6 +366,59 @@ def monthly_summary():
     conn.close()
 
 
+RUNWAY_LEVEL_LABELS = {
+    "nguy_hiem": "Nguy hiểm",
+    "mong_manh": "Mong manh",
+    "on": "Ổn",
+    "vung": "Vững",
+}
+
+
+def show_risk_report():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    print("\n===== TÌNH HÌNH TÀI CHÍNH =====")
+
+    forecast = risk.short_term_forecast(cursor)
+    print("\n-- Dự báo ngắn hạn (còn lại tháng này) --")
+    print(f"  Số dư khả dụng hiện tại:      {forecast['liquid_balance']:,} đ")
+    print(f"  Khoản định kỳ còn phải trả:   {forecast['remaining_recurring']:,} đ")
+    print(f"  Chi tiêu dự kiến còn lại:     {forecast['projected_variable_spend']:,} đ")
+    warn = "  ⚠️ CÓ THỂ ÂM QUỸ" if forecast["at_risk"] else ""
+    print(f"  → Dự báo số dư cuối tháng:    {forecast['forecast_balance']:,} đ{warn}")
+
+    liquidity = risk.liquidity_risk(cursor)
+    print("\n-- Rủi ro thanh khoản --")
+    if liquidity["essential_monthly_expense"] is None:
+        print("  Chưa đủ dữ liệu (cần ít nhất 1 tháng lịch sử chi tiêu đã qua).")
+    else:
+        status = "Đủ trang trải" if liquidity["sufficient"] else "⚠️ KHÔNG ĐỦ trang trải"
+        print(f"  Tài sản lỏng:                 {liquidity['liquid_balance']:,} đ")
+        print(f"  Chi phí thiết yếu 1 tháng:    {liquidity['essential_monthly_expense']:,.0f} đ")
+        print(f"  → {status} 1 tháng chi phí bắt buộc")
+
+    runway = risk.runway_months(cursor)
+    print("\n-- Nền móng tài chính --")
+    if runway["months"] is None:
+        print("  Chưa đủ dữ liệu (cần ít nhất 1 tháng lịch sử chi tiêu đã qua).")
+    else:
+        level_text = RUNWAY_LEVEL_LABELS[runway["level"]]
+        print(f"  Nếu mất thu nhập, sống được: {runway['months']:.1f} tháng ({level_text})")
+
+    this_month = datetime.now().strftime("%Y-%m")
+    budget = risk.budget_balance_50_30_20(cursor, this_month)
+    print(f"\n-- Cân đối 50/30/20 (tháng {this_month}) --")
+    if budget["income"] <= 0:
+        print("  Chưa có thu nhập ghi nhận tháng này, không tính được tỉ lệ.")
+    else:
+        print(f"  Thiết yếu: {budget['essential']:,} đ ({budget['essential_pct']:.0f}%, khuyến nghị ≤ 50%)")
+        print(f"  Tùy chọn:  {budget['optional']:,} đ ({budget['optional_pct']:.0f}%, khuyến nghị ≤ 30%)")
+        print(f"  Còn lại:   {budget['savings']:,} đ ({budget['savings_pct']:.0f}%, khuyến nghị ≥ 20%)")
+
+    conn.close()
+
+
 def add_rule_interactive():
     conn = connect_db()
     cursor = conn.cursor()
@@ -531,6 +586,7 @@ def main_menu():
         print("6. Thêm khoản định kỳ")
         print("7. Xem khoản định kỳ")
         print("8. Sửa danh mục giao dịch")
+        print("9. Xem tình hình tài chính")
         print("0. Thoát")
         choice = input("Chọn: ").strip()
 
@@ -550,6 +606,8 @@ def main_menu():
             list_recurring_interactive()
         elif choice == "8":
             edit_transaction_category_interactive()
+        elif choice == "9":
+            show_risk_report()
         elif choice == "0":
             print("Tạm biệt!")
             break
