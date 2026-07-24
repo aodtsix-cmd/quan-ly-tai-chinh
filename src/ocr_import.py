@@ -20,7 +20,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 
 _client = None
 
