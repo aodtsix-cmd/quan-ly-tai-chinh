@@ -43,6 +43,24 @@ _DIACRITIC_CHARS = set(
     "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
 )
 
+# Confirmed real case (2026-07-24): a checkmark/icon next to the headline
+# amount got misread as "{sy" on the *same line* as "5,000 VND", and because
+# text on the amount's own line is normally trusted as an inline note (that's
+# correct for the history-list-row shape), "{sy" was wrongly saved as the
+# note ahead of the real, correctly-found labeled/footer note. These symbols
+# essentially never appear in real Vietnamese/English prose or in a typed
+# transfer note, so their presence marks a line as OCR noise rather than text.
+_JUNK_CHARS = set("{}<>|¬©®™§¶•·^~`»«‹›")
+
+
+def _looks_like_real_note(candidate):
+    candidate = candidate.strip()
+    if not candidate:
+        return False
+    if any(ch in _JUNK_CHARS for ch in candidate):
+        return False
+    return sum(ch.isalpha() for ch in candidate) >= 3
+
 
 def _find_ascii_lowercase_note(lines):
     for line in lines:
@@ -54,6 +72,8 @@ def _find_ascii_lowercase_note(lines):
         if len(line.split()) < 2:
             continue
         if AMOUNT_PATTERN.search(line):
+            continue
+        if not _looks_like_real_note(line):
             continue
         return line
     return None
@@ -193,6 +213,8 @@ def parse_candidates(text):
         seen.add(key)
 
         inline_note = (line[:match.start()] + " " + line[match.end():]).strip()
+        if not _looks_like_real_note(inline_note):
+            inline_note = ""
         note = inline_note or labeled_note or footer_note or ascii_note or line
 
         candidates.append({
