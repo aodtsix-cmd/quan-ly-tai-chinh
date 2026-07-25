@@ -413,6 +413,8 @@ def import_confirm():
 
         category_id_raw = request.form.get(f"category_{i}")
         category_id = int(category_id_raw) if category_id_raw else None
+        suggested_raw = request.form.get(f"suggested_{i}")
+        suggested_category_id = int(suggested_raw) if suggested_raw else None
         note = (request.form.get(f"note_{i}") or "").strip()
         date_raw = request.form.get(f"date_{i}")
         occurred_at = f"{date_raw} 00:00:00" if date_raw else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -424,6 +426,13 @@ def import_confirm():
                 account_id=account_id, category_id=category_id, description=note,
                 source="ocr", is_reviewed=0, external_ref=external_ref,
             )
+            # User corrected the AI's category guess for this note — learn a rule
+            # from it, same mechanism as correcting a transaction's category
+            # manually (transaction.py's add_rule with created_from="learned").
+            # This is what lets categorization improve as more screenshots come
+            # in, instead of every note being judged fresh by the AI each time.
+            if category_id is not None and category_id != suggested_category_id and note:
+                add_rule(cursor, pattern=note, category_id=category_id, created_from="learned")
             conn.commit()
             saved += 1
         except sqlite3.IntegrityError:
@@ -1410,6 +1419,7 @@ IMPORT_REVIEW_TEMPLATE = """<!doctype html>
         {% for acc in accounts %}<option value="{{ acc.id }}">{{ acc.name }}</option>{% endfor %}
       </select>
 
+      <input type="hidden" name="suggested_{{ loop.index0 }}" value="{{ c.suggested_category_id or '' }}">
       <label class="field-label">Danh mục</label>
       <select name="category_{{ loop.index0 }}">
         <option value="">-- Chưa phân loại --</option>
