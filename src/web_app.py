@@ -1191,6 +1191,8 @@ RISK_TEMPLATE = """<!doctype html>
   .summary-row.total.danger span:last-child { color: #c0392b; }
   .note.good { color: #1e7a34; font-weight: 600; }
   .note.warning { color: #c0392b; font-weight: 600; }
+  .summary-row span.good { color: #1e7a34; }
+  .summary-row span.warning { color: #c0392b; }
   .empty { color: #888; font-size: 0.9rem; }
   .badge {
     display: inline-block;
@@ -1384,7 +1386,6 @@ IMPORT_REVIEW_TEMPLATE = """<!doctype html>
     padding: 12px;
     margin-bottom: 14px;
   }
-  .candidate .raw-line { font-size: 0.8rem; color: #888; margin-bottom: 8px; }
   .candidate label.field-label { margin: 10px 0 4px; }
   .candidate select, .candidate input[type="text"], .candidate input[type="date"] {
     width: 100%;
@@ -1433,7 +1434,6 @@ IMPORT_REVIEW_TEMPLATE = """<!doctype html>
         <input type="checkbox" name="include" value="{{ loop.index0 }}" checked>
         <span>Lưu giao dịch này (ảnh #{{ c.image_index + 1 }})</span>
       </div>
-      <div class="raw-line">Dòng gốc: "{{ c.raw_line }}"</div>
 
       <label class="field-label">Ngày</label>
       <input type="date" name="date_{{ loop.index0 }}" value="{{ today }}">

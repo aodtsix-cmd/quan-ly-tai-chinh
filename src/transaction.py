@@ -101,6 +101,15 @@ def delete_transaction(cursor, transaction_id):
         "UPDATE accounts SET current_balance = current_balance + ? WHERE id = ?",
         (balance_delta, row["account_id"]),
     )
+    # behavior_events.transaction_id has no ON DELETE CASCADE, so a transaction
+    # that was ever category-edited (which logs a category_overridden event)
+    # would fail this delete with a foreign key violation otherwise. Detach
+    # the reference rather than deleting the event — the log entry itself is
+    # still meaningful analytics even once its transaction is gone.
+    cursor.execute(
+        "UPDATE behavior_events SET transaction_id = NULL WHERE transaction_id = ?",
+        (transaction_id,),
+    )
     cursor.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
     return True
 
