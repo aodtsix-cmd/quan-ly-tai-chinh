@@ -78,3 +78,13 @@ CREATE TABLE IF NOT EXISTS recurring (
     FOREIGN KEY (category_id) REFERENCES categories(id),
     FOREIGN KEY (account_id)  REFERENCES accounts(id)
 );
+
+-- Bảng nguồn thu nhập (Giai đoạn 6, THIET-KE.md 3.7)
+CREATE TABLE IF NOT EXISTS income_sources (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    type            TEXT NOT NULL CHECK (type IN ('fixed', 'variable')),
+    expected_amount INTEGER NOT NULL CHECK (expected_amount > 0),
+    reliability     INTEGER NOT NULL CHECK (reliability BETWEEN 0 AND 100),
+    is_active       INTEGER NOT NULL DEFAULT 1
+);

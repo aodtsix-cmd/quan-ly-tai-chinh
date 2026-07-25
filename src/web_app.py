@@ -216,6 +216,7 @@ def risk_page():
     forecast = risk.short_term_forecast(cursor)
     liquidity = risk.liquidity_risk(cursor)
     runway = risk.runway_months(cursor)
+    margin = risk.income_sustainability_margin(cursor)
     this_month = datetime.now().strftime("%Y-%m")
     budget = risk.budget_balance_50_30_20(cursor, this_month)
 
@@ -245,6 +246,13 @@ def risk_page():
             "months_display": f"{runway['months']:.1f}" if runway["months"] is not None else "",
             "level": runway["level"],
             "level_label": RUNWAY_LEVEL_LABELS.get(runway["level"], ""),
+        },
+        margin={
+            "has_data": margin["has_data"],
+            "reliable_income_display": f"{margin['reliable_income']:,.0f} đ" if margin["has_data"] else "",
+            "essential_monthly_display": f"{margin['essential_monthly_expense']:,.0f} đ" if margin["has_data"] else "",
+            "margin_display": f"{margin['margin']:,.0f} đ" if margin["has_data"] else "",
+            "sufficient": margin["sufficient"],
         },
         budget={
             "has_income": budget["income"] > 0,
@@ -1040,6 +1048,17 @@ RISK_TEMPLATE = """<!doctype html>
        <span class="badge badge-{{ runway.level }}">{{ runway.level_label }}</span></p>
   {% else %}
     <p class="empty">Chưa đủ dữ liệu (cần lịch sử chi tiêu ít nhất 1 tháng đã qua).</p>
+  {% endif %}
+
+  <p class="section-title">Thu nhập ổn định</p>
+  {% if margin.has_data %}
+    <div class="summary-row"><span>Thu nhập ổn định (đã tính độ tin cậy)</span><span>{{ margin.reliable_income_display }}</span></div>
+    <div class="summary-row"><span>Chi phí thiết yếu 1 tháng</span><span>{{ margin.essential_monthly_display }}</span></div>
+    <p class="note {{ 'good' if margin.sufficient else 'warning' }}">
+      {{ 'Đủ trang trải' if margin.sufficient else '⚠️ Không đủ trang trải' }} chi phí thiết yếu (chênh lệch {{ margin.margin_display }}).
+    </p>
+  {% else %}
+    <p class="empty">Chưa đủ dữ liệu (cần khai báo nguồn thu nhập ở CLI menu 10, và có lịch sử chi tiêu).</p>
   {% endif %}
 
   <p class="section-title">Cân đối 50/30/20 (tháng {{ month }})</p>

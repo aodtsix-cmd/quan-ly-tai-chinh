@@ -45,6 +45,14 @@ def get_active_alerts(cursor, as_of=None):
             "message": f"Nền móng tài chính mong manh: đủ sống {runway['months']:.1f} tháng nếu mất thu nhập.",
         })
 
+    margin = risk.income_sustainability_margin(cursor)
+    if margin["has_data"] and not margin["sufficient"]:
+        alerts.append({
+            "code": "income_sustainability_insufficient",
+            "level": "warning",
+            "message": f"Thu nhập ổn định thấp hơn chi phí thiết yếu hàng tháng (chênh lệch {margin['margin']:,.0f} đ).",
+        })
+
     return alerts
 
 

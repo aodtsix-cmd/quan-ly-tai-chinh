@@ -112,6 +112,48 @@ def liquidity_risk(cursor):
     }
 
 
+def get_reliable_monthly_income(cursor):
+    """THIET-KE.md 3.7: weight each active income source's expected monthly
+    amount by its reliability — the "chắc chắn" (certain) portion to use in
+    forecasts, not the raw total. An unreliable side gig isn't a foundation
+    to plan around, even if its expected amount is large. Returns None if no
+    income sources have been entered yet (distinct from 0, which would mean
+    "entered sources that sum to zero reliable income")."""
+    cursor.execute("SELECT expected_amount, reliability FROM income_sources WHERE is_active = 1")
+    rows = cursor.fetchall()
+    if not rows:
+        return None
+    return sum(row["expected_amount"] * row["reliability"] / 100 for row in rows)
+
+
+def income_sustainability_margin(cursor):
+    """Reliable monthly income (see get_reliable_monthly_income) vs. average
+    essential monthly expense — a different question from runway_months,
+    which only asks how long *existing savings* would last with zero income.
+    This asks whether *ongoing* reliable income already covers the essential
+    baseline, independent of savings. has_data is False until both an income
+    source and at least one completed month of essential spending exist."""
+    reliable_income = get_reliable_monthly_income(cursor)
+    essential_monthly_expense = get_average_monthly_essential_expense(cursor)
+    if reliable_income is None or essential_monthly_expense is None:
+        return {
+            "has_data": False,
+            "reliable_income": reliable_income,
+            "essential_monthly_expense": essential_monthly_expense,
+            "margin": None,
+            "sufficient": None,
+        }
+
+    margin = reliable_income - essential_monthly_expense
+    return {
+        "has_data": True,
+        "reliable_income": reliable_income,
+        "essential_monthly_expense": essential_monthly_expense,
+        "margin": margin,
+        "sufficient": margin >= 0,
+    }
+
+
 def runway_months(cursor):
     """THIET-KE.md 4.3 — "Nền móng tài chính": liquid assets ÷ essential
     monthly expense = months of runway if income stopped. The doc's own

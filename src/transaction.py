@@ -215,6 +215,24 @@ def generate_due_recurring(cursor, as_of=None):
     return len(due_rows)
 
 
+# ---------- Income sources ----------
+
+def get_income_sources(cursor):
+    cursor.execute(
+        """SELECT id, name, type, expected_amount, reliability
+           FROM income_sources WHERE is_active = 1 ORDER BY id"""
+    )
+    return cursor.fetchall()
+
+
+def add_income_source(cursor, *, name, type_, expected_amount, reliability):
+    cursor.execute(
+        """INSERT INTO income_sources (name, type, expected_amount, reliability)
+           VALUES (?, ?, ?, ?)""",
+        (name, type_, expected_amount, reliability),
+    )
+
+
 # ---------- Terminal CLI ----------
 
 def display_accounts(cursor):
@@ -411,6 +429,16 @@ def show_risk_report():
         level_text = RUNWAY_LEVEL_LABELS[runway["level"]]
         print(f"  Nếu mất thu nhập, sống được: {runway['months']:.1f} tháng ({level_text})")
 
+    margin = risk.income_sustainability_margin(cursor)
+    print("\n-- Thu nhập ổn định --")
+    if not margin["has_data"]:
+        print("  Chưa đủ dữ liệu (cần khai báo nguồn thu nhập và có lịch sử chi tiêu).")
+    else:
+        status = "Đủ trang trải" if margin["sufficient"] else "⚠️ KHÔNG ĐỦ trang trải"
+        print(f"  Thu nhập ổn định (đã tính độ tin cậy): {margin['reliable_income']:,.0f} đ/tháng")
+        print(f"  Chi phí thiết yếu 1 tháng:              {margin['essential_monthly_expense']:,.0f} đ")
+        print(f"  → {status} chi phí thiết yếu bằng thu nhập ổn định (chênh lệch {margin['margin']:,.0f} đ)")
+
     this_month = datetime.now().strftime("%Y-%m")
     budget = risk.budget_balance_50_30_20(cursor, this_month)
     print(f"\n-- Cân đối 50/30/20 (tháng {this_month}) --")
@@ -572,6 +600,62 @@ def list_recurring_interactive():
     conn.close()
 
 
+def add_income_source_interactive():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    print("\n===== THÊM NGUỒN THU NHẬP =====")
+    name = input("Tên nguồn thu (vd: Lương dạy học, Học bổng): ").strip()
+    if not name:
+        print("Tên không được để trống.")
+        conn.close()
+        return
+
+    type_choice = input("Loại (1 = Cố định, 2 = Bấp bênh): ").strip()
+    type_ = {"1": "fixed", "2": "variable"}.get(type_choice)
+    if type_ is None:
+        print("Lựa chọn không hợp lệ.")
+        conn.close()
+        return
+
+    amount_raw = input("Số tiền kỳ vọng mỗi tháng (VNĐ, chỉ gõ số): ").strip().replace(",", "")
+    try:
+        expected_amount = int(amount_raw)
+    except ValueError:
+        print("Số tiền không hợp lệ.")
+        conn.close()
+        return
+
+    default_reliability = 100 if type_ == "fixed" else 50
+    reliability_raw = input(f"Độ tin cậy (0-100%, Enter = {default_reliability}): ").strip()
+    reliability = int(reliability_raw) if reliability_raw else default_reliability
+    if not (0 <= reliability <= 100):
+        print("Độ tin cậy phải trong khoảng 0-100.")
+        conn.close()
+        return
+
+    add_income_source(cursor, name=name, type_=type_, expected_amount=expected_amount, reliability=reliability)
+    conn.commit()
+    conn.close()
+    print(f"\n✔ Đã thêm nguồn thu nhập \"{name}\".")
+
+
+def list_income_sources_interactive():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    print("\n===== NGUỒN THU NHẬP =====")
+    rows = get_income_sources(cursor)
+    if not rows:
+        print("Chưa có nguồn thu nhập nào.")
+    for row in rows:
+        type_label = "Cố định" if row["type"] == "fixed" else "Bấp bênh"
+        print(f"  [{row['id']}] {row['name']}: {row['expected_amount']:,} đ/tháng "
+              f"({type_label}, tin cậy {row['reliability']}%)")
+
+    conn.close()
+
+
 def main_menu():
     import alerts  # local import: alerts.py imports log_behavior_event from this module
 
@@ -599,6 +683,8 @@ def main_menu():
         print("7. Xem khoản định kỳ")
         print("8. Sửa danh mục giao dịch")
         print("9. Xem tình hình tài chính")
+        print("10. Thêm nguồn thu nhập")
+        print("11. Xem nguồn thu nhập")
         print("0. Thoát")
         choice = input("Chọn: ").strip()
 
@@ -620,6 +706,10 @@ def main_menu():
             edit_transaction_category_interactive()
         elif choice == "9":
             show_risk_report()
+        elif choice == "10":
+            add_income_source_interactive()
+        elif choice == "11":
+            list_income_sources_interactive()
         elif choice == "0":
             print("Tạm biệt!")
             break
