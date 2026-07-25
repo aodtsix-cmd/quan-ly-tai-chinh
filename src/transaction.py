@@ -260,6 +260,48 @@ def set_budget(cursor, *, category_id, monthly_limit):
         )
 
 
+# ---------- Event planning ----------
+
+def get_event_templates(cursor):
+    cursor.execute("SELECT id, name FROM event_templates ORDER BY id")
+    return cursor.fetchall()
+
+
+def get_event_template_items(cursor, template_id):
+    cursor.execute("SELECT id, name FROM event_items WHERE template_id = ? ORDER BY id", (template_id,))
+    return cursor.fetchall()
+
+
+def create_event_plan(cursor, *, name, template_id=None):
+    cursor.execute(
+        "INSERT INTO event_plans (name, template_id) VALUES (?, ?)",
+        (name, template_id),
+    )
+    return cursor.lastrowid
+
+
+def add_event_plan_item(cursor, *, event_plan_id, name, expected_amount):
+    cursor.execute(
+        """INSERT INTO event_plan_items (event_plan_id, name, expected_amount)
+           VALUES (?, ?, ?)""",
+        (event_plan_id, name, expected_amount),
+    )
+
+
+def get_event_plans(cursor):
+    cursor.execute("SELECT id, name, template_id, created_at FROM event_plans ORDER BY id DESC")
+    return cursor.fetchall()
+
+
+def get_event_plan_items(cursor, event_plan_id):
+    cursor.execute(
+        """SELECT id, name, expected_amount, actual_amount
+           FROM event_plan_items WHERE event_plan_id = ? ORDER BY id""",
+        (event_plan_id,),
+    )
+    return cursor.fetchall()
+
+
 # ---------- Terminal CLI ----------
 
 def display_accounts(cursor):
@@ -728,6 +770,97 @@ def show_budget_status_interactive():
     conn.close()
 
 
+def list_event_templates_interactive():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    print("\n===== MẪU KẾ HOẠCH SỰ KIỆN =====")
+    templates = get_event_templates(cursor)
+    if not templates:
+        print("Chưa có mẫu nào.")
+    for t in templates:
+        print(f"\n[{t['id']}] {t['name']}")
+        for item in get_event_template_items(cursor, t["id"]):
+            print(f"    - {item['name']}")
+
+    conn.close()
+
+
+def create_event_plan_interactive():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    print("\n===== TẠO KẾ HOẠCH SỰ KIỆN =====")
+    templates = get_event_templates(cursor)
+    if templates:
+        print("Chọn mẫu có sẵn (chỉ gợi ý khoản mục, giá do bạn tự nhập), hoặc để trống để tự tạo kế hoạch riêng:")
+        for t in templates:
+            print(f"  {t['id']}. {t['name']}")
+    template_id_raw = input("Mã mẫu (Enter để tự tạo, không dùng mẫu): ").strip()
+    template_id = int(template_id_raw) if template_id_raw else None
+
+    plan_name = input("Tên kế hoạch (vd: Chuyển nhà tháng 9/2026): ").strip()
+    if not plan_name:
+        print("Tên không được để trống.")
+        conn.close()
+        return
+
+    plan_id = create_event_plan(cursor, name=plan_name, template_id=template_id)
+
+    if template_id is not None:
+        items = get_event_template_items(cursor, template_id)
+        print("\nVới mỗi khoản mục gợi ý, nhập số tiền dự kiến (Enter để bỏ qua khoản mục đó):")
+        for item in items:
+            amount_raw = input(f"  {item['name']}: ").strip().replace(",", "")
+            if not amount_raw:
+                continue
+            try:
+                expected_amount = int(amount_raw)
+            except ValueError:
+                print("    Số tiền không hợp lệ, bỏ qua khoản mục này.")
+                continue
+            add_event_plan_item(cursor, event_plan_id=plan_id, name=item["name"], expected_amount=expected_amount)
+
+    print("\nThêm khoản mục khác ngoài gợi ý (để trống tên để dừng):")
+    while True:
+        item_name = input("  Tên khoản mục: ").strip()
+        if not item_name:
+            break
+        amount_raw = input("  Số tiền dự kiến: ").strip().replace(",", "")
+        try:
+            expected_amount = int(amount_raw)
+        except ValueError:
+            print("    Số tiền không hợp lệ, bỏ qua khoản mục này.")
+            continue
+        add_event_plan_item(cursor, event_plan_id=plan_id, name=item_name, expected_amount=expected_amount)
+
+    conn.commit()
+    conn.close()
+    print(f"\n✔ Đã tạo kế hoạch \"{plan_name}\".")
+
+
+def list_event_plans_interactive():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    print("\n===== KẾ HOẠCH SỰ KIỆN =====")
+    plans = get_event_plans(cursor)
+    if not plans:
+        print("Chưa có kế hoạch nào.")
+    for p in plans:
+        items = get_event_plan_items(cursor, p["id"])
+        total_expected = sum(item["expected_amount"] for item in items)
+        print(f"\n[{p['id']}] {p['name']} (tạo lúc {p['created_at']})")
+        if not items:
+            print("    (chưa có khoản mục nào)")
+        for item in items:
+            actual = f", thực tế: {item['actual_amount']:,} đ" if item["actual_amount"] is not None else ""
+            print(f"    - {item['name']}: dự kiến {item['expected_amount']:,} đ{actual}")
+        print(f"    → Tổng dự kiến: {total_expected:,} đ")
+
+    conn.close()
+
+
 def main_menu():
     import alerts  # local import: alerts.py imports log_behavior_event from this module
 
@@ -759,6 +892,9 @@ def main_menu():
         print("11. Xem nguồn thu nhập")
         print("12. Đặt ngân sách theo danh mục (hũ chi tiêu)")
         print("13. Xem ngân sách tháng này")
+        print("14. Xem mẫu kế hoạch sự kiện")
+        print("15. Tạo kế hoạch sự kiện")
+        print("16. Xem kế hoạch sự kiện")
         print("0. Thoát")
         choice = input("Chọn: ").strip()
 
@@ -788,6 +924,12 @@ def main_menu():
             set_budget_interactive()
         elif choice == "13":
             show_budget_status_interactive()
+        elif choice == "14":
+            list_event_templates_interactive()
+        elif choice == "15":
+            create_event_plan_interactive()
+        elif choice == "16":
+            list_event_plans_interactive()
         elif choice == "0":
             print("Tạm biệt!")
             break

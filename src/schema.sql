@@ -98,3 +98,40 @@ CREATE TABLE IF NOT EXISTS budgets (
     is_active     INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (category_id) REFERENCES categories(id)
 );
+
+-- Kế hoạch sự kiện lớn (Giai đoạn 6, THIET-KE.md 3.8): hệ thống chỉ gợi ý
+-- KHOẢN MỤC, không đưa giá — giá do người dùng tự nhập vì phụ thuộc địa
+-- phương/hoàn cảnh (nguyên tắc gốc trong tài liệu, không được vi phạm khi
+-- mở rộng tính năng này).
+CREATE TABLE IF NOT EXISTS event_templates (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL
+);
+
+-- Khoản mục gợi ý cho mỗi loại sự kiện (chỉ tên, không có giá)
+CREATE TABLE IF NOT EXISTS event_items (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id INTEGER NOT NULL,
+    name        TEXT NOT NULL,
+    FOREIGN KEY (template_id) REFERENCES event_templates(id)
+);
+
+-- Một kế hoạch thực tế người dùng lập (có thể dựa trên template hoặc tự tạo)
+CREATE TABLE IF NOT EXISTS event_plans (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    template_id INTEGER,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (template_id) REFERENCES event_templates(id)
+);
+
+-- Khoản mục cụ thể trong một kế hoạch, với số tiền dự kiến (người dùng tự
+-- nhập) và số tiền thực tế (chưa có UI ghi nhận, xem CLAUDE.md)
+CREATE TABLE IF NOT EXISTS event_plan_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_plan_id   INTEGER NOT NULL,
+    name            TEXT NOT NULL,
+    expected_amount INTEGER NOT NULL CHECK (expected_amount > 0),
+    actual_amount   INTEGER,
+    FOREIGN KEY (event_plan_id) REFERENCES event_plans(id)
+);

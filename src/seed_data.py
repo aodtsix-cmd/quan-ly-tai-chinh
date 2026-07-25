@@ -79,6 +79,46 @@ TRANSFER_CATEGORIES = [
     ("Chuyển khoản nội bộ", "Internal transfer", "variable"),
 ]
 
+# ============ EVENT TEMPLATES (name, [suggested line items — no prices]) ============
+# THIET-KE.md 3.8: hệ thống chỉ gợi ý khoản mục, không đưa giá (giá phụ
+# thuộc địa phương/hoàn cảnh). "Chuyển nhà" list is verbatim from the design
+# doc; the other two are common, well-known checklists for their event type.
+EVENT_TEMPLATES = [
+    ("Chuyển nhà", [
+        "Tiền cọc nhà mới",
+        "Xe chuyển đồ",
+        "Phí môi giới",
+        "Lắp internet mới",
+        "Đổi khóa",
+        "Rèm cửa, đồ dùng thiếu",
+        "Phí quản lý tháng đầu",
+        "Điện nước trùng hai nơi",
+    ]),
+    ("Cưới hỏi", [
+        "Đặt cọc nhà hàng/địa điểm",
+        "Trang phục cô dâu chú rể",
+        "Chụp ảnh cưới",
+        "Thiệp mời và in ấn",
+        "Trang trí",
+        "Nhẫn cưới",
+        "Quay phim",
+        "Tiệc/đãi khách",
+        "Xe hoa/đưa đón",
+        "Quà cảm ơn khách mời",
+    ]),
+    ("Du lịch", [
+        "Vé máy bay/tàu xe",
+        "Khách sạn",
+        "Bảo hiểm du lịch",
+        "Visa (nếu có)",
+        "Ăn uống",
+        "Vé tham quan/hoạt động",
+        "Di chuyển tại điểm đến",
+        "Mua sắm/quà lưu niệm",
+        "Chi phí phát sinh",
+    ]),
+]
+
 
 def seed_data():
     conn = sqlite3.connect(DB_PATH)
@@ -88,8 +128,9 @@ def seed_data():
     # Safety check: has data already been seeded? Avoid duplicating it.
     cursor.execute("SELECT COUNT(*) FROM categories")
     if cursor.fetchone()[0] > 0:
-        print("Cơ sở dữ liệu đã có danh mục. Dừng lại để tránh trùng lặp.")
-        print("Nếu muốn gieo lại từ đầu, xóa file data/finance.db rồi chạy lại init_db.py trước.")
+        print("Cơ sở dữ liệu đã có danh mục. Bỏ qua bước gieo tài khoản/danh mục.")
+        _seed_event_templates(cursor)
+        conn.commit()
         conn.close()
         return
 
@@ -141,9 +182,31 @@ def seed_data():
 
     print(f"Đã thêm {count} danh mục.")
 
+    _seed_event_templates(cursor)
+
     conn.commit()
     conn.close()
     print("Gieo dữ liệu hoàn tất.")
+
+
+def _seed_event_templates(cursor):
+    """Seeds EVENT_TEMPLATES independently of accounts/categories, guarded
+    by its own count check — so re-running seed_data() after categories
+    already exist still picks up newly-added event templates instead of
+    exiting early before reaching this."""
+    cursor.execute("SELECT COUNT(*) FROM event_templates")
+    if cursor.fetchone()[0] > 0:
+        return
+
+    for template_name, item_names in EVENT_TEMPLATES:
+        cursor.execute("INSERT INTO event_templates (name) VALUES (?)", (template_name,))
+        template_id = cursor.lastrowid
+        for item_name in item_names:
+            cursor.execute(
+                "INSERT INTO event_items (template_id, name) VALUES (?, ?)",
+                (template_id, item_name),
+            )
+    print(f"Đã thêm {len(EVENT_TEMPLATES)} mẫu kế hoạch sự kiện.")
 
 
 if __name__ == "__main__":
