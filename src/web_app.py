@@ -219,6 +219,7 @@ def risk_page():
     margin = risk.income_sustainability_margin(cursor)
     this_month = datetime.now().strftime("%Y-%m")
     budget = risk.budget_balance_50_30_20(cursor, this_month)
+    budget_statuses = risk.get_budget_status(cursor, this_month)
 
     conn.close()
 
@@ -263,6 +264,17 @@ def risk_page():
             "optional_pct": f"{budget['optional_pct']:.0f}" if budget["optional_pct"] is not None else "",
             "savings_pct": f"{budget['savings_pct']:.0f}" if budget["savings_pct"] is not None else "",
         },
+        budget_statuses=[
+            {
+                "category_name": s["category_name"],
+                "spent_display": f"{s['spent']:,} đ",
+                "limit_display": f"{s['monthly_limit']:,} đ",
+                "pct_used": min(s["pct_used"], 100),
+                "pct_display": f"{s['pct_used']:.0f}",
+                "over_budget": s["over_budget"],
+            }
+            for s in budget_statuses
+        ],
     )
 
 
@@ -1009,6 +1021,11 @@ RISK_TEMPLATE = """<!doctype html>
   .badge-mong_manh { background: #e67e22; }
   .badge-on { background: #2980b9; }
   .badge-vung { background: #1e7a34; }
+  .budget-item { margin: 10px 0; }
+  .budget-label { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 4px; }
+  .budget-bar-bg { background: #eee; border-radius: 6px; height: 8px; overflow: hidden; }
+  .budget-bar-fill { background: #2980b9; height: 100%; }
+  .budget-bar-fill.over { background: #c0392b; }
 </style>
 </head>
 <body>
@@ -1068,6 +1085,23 @@ RISK_TEMPLATE = """<!doctype html>
     <div class="summary-row"><span>Còn lại (≥ 20%)</span><span>{{ budget.savings_display }} ({{ budget.savings_pct }}%)</span></div>
   {% else %}
     <p class="empty">Chưa có thu nhập ghi nhận tháng này.</p>
+  {% endif %}
+
+  <p class="section-title">Hũ chi tiêu (tháng {{ month }})</p>
+  {% if budget_statuses %}
+    {% for b in budget_statuses %}
+    <div class="budget-item">
+      <div class="budget-label">
+        <span>{{ b.category_name }}</span>
+        <span class="{{ 'warning' if b.over_budget else '' }}">{{ b.spent_display }} / {{ b.limit_display }}</span>
+      </div>
+      <div class="budget-bar-bg">
+        <div class="budget-bar-fill {{ 'over' if b.over_budget else '' }}" style="width: {{ b.pct_used }}%;"></div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">Chưa đặt ngân sách cho danh mục nào (CLI menu 12).</p>
   {% endif %}
 </div>
 </body>

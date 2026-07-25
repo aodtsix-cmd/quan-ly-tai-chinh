@@ -222,3 +222,37 @@ def budget_balance_50_30_20(cursor, month):
         "optional_pct": optional_pct,
         "savings_pct": savings_pct,
     }
+
+
+def get_budget_status(cursor, month):
+    """"Hũ chi tiêu" (envelope budgeting, THIET-KE.md 7.3 — noted there as
+    "chưa triển khai" at the time). For every category with an active
+    budget, how much of its `monthly_limit` has been spent in the given
+    'YYYY-MM' month. Returns an empty list if no budgets have been set."""
+    cursor.execute(
+        """SELECT b.category_id, b.monthly_limit, c.name_vi AS category_name
+           FROM budgets b JOIN categories c ON b.category_id = c.id
+           WHERE b.is_active = 1
+           ORDER BY c.name_vi"""
+    )
+    budgets = cursor.fetchall()
+
+    statuses = []
+    for b in budgets:
+        cursor.execute(
+            """SELECT COALESCE(SUM(amount), 0) AS spent FROM transactions
+               WHERE direction = 'out' AND category_id = ?
+                 AND strftime('%Y-%m', occurred_at) = ?""",
+            (b["category_id"], month),
+        )
+        spent = cursor.fetchone()["spent"]
+        statuses.append({
+            "category_id": b["category_id"],
+            "category_name": b["category_name"],
+            "monthly_limit": b["monthly_limit"],
+            "spent": spent,
+            "remaining": b["monthly_limit"] - spent,
+            "pct_used": spent / b["monthly_limit"] * 100,
+            "over_budget": spent > b["monthly_limit"],
+        })
+    return statuses

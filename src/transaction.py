@@ -233,6 +233,33 @@ def add_income_source(cursor, *, name, type_, expected_amount, reliability):
     )
 
 
+# ---------- Category budgets ("hũ chi tiêu") ----------
+
+def get_budgets(cursor):
+    cursor.execute(
+        """SELECT b.id, b.category_id, b.monthly_limit, c.name_vi AS category_name
+           FROM budgets b JOIN categories c ON b.category_id = c.id
+           WHERE b.is_active = 1
+           ORDER BY c.name_vi"""
+    )
+    return cursor.fetchall()
+
+
+def set_budget(cursor, *, category_id, monthly_limit):
+    """Insert a new budget for this category, or update the existing active
+    one — one active budget per category, so setting it again replaces the
+    limit rather than creating a confusing duplicate."""
+    cursor.execute("SELECT id FROM budgets WHERE category_id = ? AND is_active = 1", (category_id,))
+    existing = cursor.fetchone()
+    if existing:
+        cursor.execute("UPDATE budgets SET monthly_limit = ? WHERE id = ?", (monthly_limit, existing["id"]))
+    else:
+        cursor.execute(
+            "INSERT INTO budgets (category_id, monthly_limit) VALUES (?, ?)",
+            (category_id, monthly_limit),
+        )
+
+
 # ---------- Terminal CLI ----------
 
 def display_accounts(cursor):
@@ -656,6 +683,51 @@ def list_income_sources_interactive():
     conn.close()
 
 
+def set_budget_interactive():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    print("\n===== ĐẶT NGÂN SÁCH THEO DANH MỤC (HŨ CHI TIÊU) =====")
+    display_categories(cursor, "expense")
+    category_id_raw = input("Chọn mã danh mục: ").strip()
+    try:
+        category_id = int(category_id_raw)
+    except ValueError:
+        print("Mã danh mục không hợp lệ.")
+        conn.close()
+        return
+
+    limit_raw = input("Hạn mức chi mỗi tháng (VNĐ, chỉ gõ số): ").strip().replace(",", "")
+    try:
+        monthly_limit = int(limit_raw)
+    except ValueError:
+        print("Số tiền không hợp lệ.")
+        conn.close()
+        return
+
+    set_budget(cursor, category_id=category_id, monthly_limit=monthly_limit)
+    conn.commit()
+    conn.close()
+    print(f"\n✔ Đã đặt ngân sách {monthly_limit:,} đ/tháng cho danh mục đã chọn.")
+
+
+def show_budget_status_interactive():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    this_month = datetime.now().strftime("%Y-%m")
+    print(f"\n===== NGÂN SÁCH THÁNG {this_month} =====")
+    statuses = risk.get_budget_status(cursor, this_month)
+    if not statuses:
+        print("Chưa đặt ngân sách cho danh mục nào.")
+    for s in statuses:
+        marker = "  ⚠️ VƯỢT NGÂN SÁCH" if s["over_budget"] else ""
+        print(f"  {s['category_name']}: {s['spent']:,} / {s['monthly_limit']:,} đ "
+              f"({s['pct_used']:.0f}%){marker}")
+
+    conn.close()
+
+
 def main_menu():
     import alerts  # local import: alerts.py imports log_behavior_event from this module
 
@@ -685,6 +757,8 @@ def main_menu():
         print("9. Xem tình hình tài chính")
         print("10. Thêm nguồn thu nhập")
         print("11. Xem nguồn thu nhập")
+        print("12. Đặt ngân sách theo danh mục (hũ chi tiêu)")
+        print("13. Xem ngân sách tháng này")
         print("0. Thoát")
         choice = input("Chọn: ").strip()
 
@@ -710,6 +784,10 @@ def main_menu():
             add_income_source_interactive()
         elif choice == "11":
             list_income_sources_interactive()
+        elif choice == "12":
+            set_budget_interactive()
+        elif choice == "13":
+            show_budget_status_interactive()
         elif choice == "0":
             print("Tạm biệt!")
             break

@@ -88,3 +88,13 @@ CREATE TABLE IF NOT EXISTS income_sources (
     reliability     INTEGER NOT NULL CHECK (reliability BETWEEN 0 AND 100),
     is_active       INTEGER NOT NULL DEFAULT 1
 );
+
+-- Bảng ngân sách theo danh mục ("hũ chi tiêu", lấy cảm hứng từ Timo —
+-- Envelope Budgeting, THIET-KE.md 7.3 ghi "chưa triển khai" lúc thiết kế gốc)
+CREATE TABLE IF NOT EXISTS budgets (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    category_id   INTEGER NOT NULL,
+    monthly_limit INTEGER NOT NULL CHECK (monthly_limit > 0),
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (category_id) REFERENCES categories(id)
+);
