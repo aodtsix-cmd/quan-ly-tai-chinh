@@ -11,11 +11,14 @@ from transaction import (
     add_rule,
     apply_matching_rule,
     connect_db,
+    delete_rule,
+    delete_transaction,
     generate_due_recurring,
     get_active_accounts,
     get_categories,
     get_monthly_totals,
     get_recent_transactions,
+    get_rules,
     get_transaction_by_id,
     insert_transaction,
     log_behavior_event,
@@ -135,6 +138,16 @@ def transactions_page():
     return render_template_string(LIST_TEMPLATE, transactions=transactions)
 
 
+@app.route("/transactions/<int:transaction_id>/delete", methods=["POST"])
+def delete_transaction_route(transaction_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    delete_transaction(cursor, transaction_id)
+    conn.commit()
+    conn.close()
+    return redirect(url_for("transactions_page"))
+
+
 @app.route("/transactions/<int:transaction_id>/edit", methods=["GET", "POST"])
 def edit_transaction_page(transaction_id):
     conn = connect_db()
@@ -185,19 +198,58 @@ def edit_transaction_page(transaction_id):
 
 @app.route("/summary")
 def summary_page():
-    month = request.args.get("month") or datetime.now().strftime("%Y-%m")
+    month = datetime.now().strftime("%Y-%m")
     conn = connect_db()
     cursor = conn.cursor()
     totals = get_monthly_totals(cursor, month)
+    accounts = get_active_accounts(cursor)
     conn.close()
+
+    diff = totals["income"] - totals["expense"]
 
     return render_template_string(
         SUMMARY_TEMPLATE,
-        month=month,
+        month_display=datetime.now().strftime("%m/%Y"),
         income_display=f"{totals['income']:,} đ",
         expense_display=f"{totals['expense']:,} đ",
-        diff_display=f"{totals['income'] - totals['expense']:,} đ",
+        diff_display=f"{diff:,} đ",
+        diff_positive=diff >= 0,
+        accounts=[
+            {"name": a["name"], "balance_display": f"{a['current_balance']:,} đ"}
+            for a in accounts
+        ],
     )
+
+
+@app.route("/rules")
+def rules_page():
+    conn = connect_db()
+    cursor = conn.cursor()
+    rows = get_rules(cursor)
+    conn.close()
+
+    rules = [
+        {
+            "id": r["id"],
+            "pattern": r["pattern"],
+            "category_name": r["category_name"],
+            "priority": r["priority"],
+            "hit_count": r["hit_count"],
+            "created_from": r["created_from"],
+        }
+        for r in rows
+    ]
+    return render_template_string(RULES_TEMPLATE, rules=rules)
+
+
+@app.route("/rules/<int:rule_id>/delete", methods=["POST"])
+def delete_rule_route(rule_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    delete_rule(cursor, rule_id)
+    conn.commit()
+    conn.close()
+    return redirect(url_for("rules_page"))
 
 
 RUNWAY_LEVEL_LABELS = {
@@ -540,17 +592,18 @@ BASE_STYLE = """
     max-width: 480px;
     margin: 0 auto 12px;
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 6px;
   }
   .nav a {
-    flex: 1;
+    flex: 1 1 30%;
     text-align: center;
-    padding: 10px 0;
+    padding: 9px 2px;
     border-radius: 10px;
     background: #fff;
     color: #1c1c1e;
     text-decoration: none;
-    font-size: 0.9rem;
+    font-size: 0.78rem;
     font-weight: 600;
     box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
@@ -569,6 +622,59 @@ BASE_STYLE = """
     text-align: center;
   }
 """
+
+
+# Shared by the Tailwind-based pages (Danh sách, Tổng quan, Luật phân loại) —
+# head boilerplate + Play CDN + a tiny theme extension for the shared "brand"
+# blue (kept identical to BASE_STYLE's #007aff so both design systems still
+# feel like one app). Kept as a plain string for the same reason as
+# BASE_STYLE: no Jinja/f-string brace escaping to worry about.
+TAILWIND_HEAD = """<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" href="/static/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
+<meta name="theme-color" content="#007aff">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: { brand: "#007aff" },
+        fontFamily: {
+          sans: ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
+        },
+      },
+    },
+  };
+</script>
+"""
+
+
+# Segmented pill nav shared by the three Tailwind pages. {active} is one of
+# "add" (never used here — "/" stays on the old vanilla design), "list",
+# "summary", "rules". Built as a plain function (not Jinja) since it never
+# needs request-time data, just which page is currently active.
+def tailwind_nav(active):
+    def link(href, label, key):
+        classes = "flex-1 text-center py-2.5 rounded-xl text-[13px] font-medium "
+        classes += "bg-brand text-white" if key == active else "text-slate-500"
+        return f'<a href="{href}" class="{classes}">{label}</a>'
+
+    links = "\n    ".join([
+        link("/", "Nhập", "add"),
+        link("/transactions", "Danh sách", "list"),
+        link("/summary", "Tổng quan", "summary"),
+        link("/rules", "Luật", "rules"),
+    ])
+    return f"""<nav class="max-w-lg mx-auto px-4 pt-5 pb-1">
+  <div class="flex gap-1.5 bg-white rounded-2xl p-1.5 shadow-sm ring-1 ring-slate-900/5">
+    {links}
+  </div>
+</nav>"""
 
 
 PAGE_TEMPLATE = """<!doctype html>
@@ -655,9 +761,10 @@ PAGE_TEMPLATE = """<!doctype html>
 <div class="nav">
   <a href="/" class="active">Thêm</a>
   <a href="/transactions">Danh sách</a>
-  <a href="/summary">Tổng tháng</a>
+  <a href="/summary">Tổng quan</a>
   <a href="/risk">Sức khỏe TC</a>
   <a href="/import">Nhập ảnh</a>
+  <a href="/rules">Luật</a>
 </div>
 {% for alert in alerts %}
 <div class="alert-banner {{ alert.level }}">{{ alert.message }}</div>
@@ -813,54 +920,38 @@ PAGE_TEMPLATE = """<!doctype html>
 LIST_TEMPLATE = """<!doctype html>
 <html lang="vi">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<link rel="manifest" href="/static/manifest.json">
-<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-<link rel="icon" href="/static/favicon.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
-<meta name="theme-color" content="#007aff">
+""" + TAILWIND_HEAD + """
 <title>Danh sách giao dịch</title>
-<style>""" + BASE_STYLE + """
-  .tx-row { padding: 12px 0; border-bottom: 1px solid #eee; }
-  .tx-row:last-child { border-bottom: none; }
-  .tx-main { display: flex; justify-content: space-between; font-weight: 600; gap: 8px; }
-  .tx-amount.in { color: #1e7a34; }
-  .tx-amount.out { color: #c0392b; }
-  .tx-sub { font-size: 0.85rem; color: #777; margin-top: 2px; display: flex; justify-content: space-between; gap: 8px; }
-  .tx-edit { color: #007aff; text-decoration: none; white-space: nowrap; }
-  .empty { text-align: center; color: #888; padding: 20px 0; }
-</style>
 </head>
-<body>
-<div class="nav">
-  <a href="/">Thêm</a>
-  <a href="/transactions" class="active">Danh sách</a>
-  <a href="/summary">Tổng tháng</a>
-  <a href="/risk">Sức khỏe TC</a>
-  <a href="/import">Nhập ảnh</a>
-</div>
-<div class="card">
-  <h1>{{ transactions|length }} giao dịch gần đây</h1>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("list") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <h1 class="text-sm font-medium text-slate-500 px-1 mb-3">{{ transactions|length }} giao dịch gần đây</h1>
+
   {% if transactions %}
+  <div class="space-y-3">
     {% for tx in transactions %}
-    <div class="tx-row">
-      <div class="tx-main">
-        <span>{{ tx.category_name }}</span>
-        <span class="tx-amount {{ tx.sign_class }}">{{ tx.amount_display }}</span>
+    <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <p class="text-[15px] font-medium text-slate-900 truncate">{{ tx.category_name }}</p>
+          <p class="text-[13px] text-slate-500 mt-0.5 truncate">{{ tx.occurred_at }} · {{ tx.account_name }}{% if tx.description %} · {{ tx.description }}{% endif %}</p>
+        </div>
+        <p class="text-lg font-bold whitespace-nowrap {{ 'text-emerald-600' if tx.sign_class == 'in' else 'text-rose-600' }}">{{ tx.amount_display }}</p>
       </div>
-      <div class="tx-sub">
-        <span>{{ tx.occurred_at }} · {{ tx.account_name }}{% if tx.description %} · {{ tx.description }}{% endif %}</span>
-        <a class="tx-edit" href="/transactions/{{ tx.id }}/edit">Sửa</a>
+      <div class="flex gap-2 mt-3">
+        <a href="/transactions/{{ tx.id }}/edit" class="flex-1 text-center py-2.5 rounded-xl bg-slate-100 text-slate-700 text-[13px] font-medium active:bg-slate-200">Sửa</a>
+        <form method="post" action="/transactions/{{ tx.id }}/delete" class="flex-1" onsubmit="return confirm('Xóa giao dịch này? Số dư tài khoản sẽ được cập nhật lại. Không thể hoàn tác.');">
+          <button type="submit" class="w-full py-2.5 rounded-xl bg-rose-50 text-rose-600 text-[13px] font-medium active:bg-rose-100">Xóa</button>
+        </form>
       </div>
     </div>
     {% endfor %}
+  </div>
   {% else %}
-    <p class="empty">Chưa có giao dịch nào.</p>
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-8 text-center text-slate-400 text-sm">Chưa có giao dịch nào.</div>
   {% endif %}
-</div>
+</main>
 </body>
 </html>
 """
@@ -869,54 +960,74 @@ LIST_TEMPLATE = """<!doctype html>
 SUMMARY_TEMPLATE = """<!doctype html>
 <html lang="vi">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<link rel="manifest" href="/static/manifest.json">
-<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-<link rel="icon" href="/static/favicon.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
-<meta name="theme-color" content="#007aff">
-<title>Tổng theo tháng</title>
-<style>""" + BASE_STYLE + """
-  input[type="month"] {
-    width: 100%;
-    padding: 12px;
-    font-size: 16px;
-    border: 1px solid #d1d1d6;
-    border-radius: 10px;
-    margin-bottom: 18px;
-  }
-  .summary-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 12px 0;
-    border-bottom: 1px solid #eee;
-    font-size: 1.05rem;
-  }
-  .summary-row.total { border-bottom: none; margin-top: 4px; font-size: 1.15rem; font-weight: 600; }
-  .summary-row .in { color: #1e7a34; }
-  .summary-row .out { color: #c0392b; }
-</style>
+""" + TAILWIND_HEAD + """
+<title>Tổng quan</title>
 </head>
-<body>
-<div class="nav">
-  <a href="/">Thêm</a>
-  <a href="/transactions">Danh sách</a>
-  <a href="/summary" class="active">Tổng tháng</a>
-  <a href="/risk">Sức khỏe TC</a>
-  <a href="/import">Nhập ảnh</a>
-</div>
-<div class="card">
-  <h1>Tổng theo tháng</h1>
-  <form method="get">
-    <input type="month" name="month" value="{{ month }}" onchange="this.form.submit()">
-  </form>
-  <div class="summary-row"><span>Thu</span><span class="in">{{ income_display }}</span></div>
-  <div class="summary-row"><span>Chi</span><span class="out">{{ expense_display }}</span></div>
-  <div class="summary-row total"><span>Chênh lệch</span><span>{{ diff_display }}</span></div>
-</div>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("summary") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <h1 class="text-sm font-medium text-slate-500 px-1 mb-3">Tháng {{ month_display }}</h1>
+
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-5">
+    <div class="flex items-center justify-between py-2">
+      <span class="text-[15px] text-slate-600">Thu nhập</span>
+      <span class="text-lg font-bold text-emerald-600">{{ income_display }}</span>
+    </div>
+    <div class="flex items-center justify-between py-2">
+      <span class="text-[15px] text-slate-600">Chi tiêu</span>
+      <span class="text-lg font-bold text-rose-600">{{ expense_display }}</span>
+    </div>
+    <div class="flex items-center justify-between pt-3 mt-1 border-t border-slate-100">
+      <span class="text-[15px] font-medium text-slate-900">Chênh lệch</span>
+      <span class="text-xl font-bold {{ 'text-emerald-600' if diff_positive else 'text-rose-600' }}">{{ diff_display }}</span>
+    </div>
+  </div>
+
+  <h2 class="text-sm font-medium text-slate-500 px-1 mt-6 mb-3">Số dư tài khoản</h2>
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 divide-y divide-slate-100">
+    {% for acc in accounts %}
+    <div class="flex items-center justify-between px-5 py-4">
+      <span class="text-[15px] text-slate-600">{{ acc.name }}</span>
+      <span class="text-[15px] font-semibold text-slate-900">{{ acc.balance_display }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</main>
+</body>
+</html>
+"""
+
+
+RULES_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>Luật phân loại</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("rules") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <h1 class="text-sm font-medium text-slate-500 px-1 mb-1">{{ rules|length }} luật phân loại tự động</h1>
+  <p class="text-[13px] text-slate-400 px-1 mb-3">Khi mô tả giao dịch chứa một từ khóa dưới đây, danh mục sẽ tự động được gán.</p>
+
+  {% if rules %}
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 divide-y divide-slate-100">
+    {% for rule in rules %}
+    <div class="p-4 flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-[15px] font-medium text-slate-900 truncate">"{{ rule.pattern }}" → {{ rule.category_name }}</p>
+        <p class="text-[13px] text-slate-500 mt-0.5">Ưu tiên {{ rule.priority }} · Đã dùng {{ rule.hit_count }} lần · {{ 'Tự học từ chỉnh sửa' if rule.created_from == 'learned' else 'Tự đặt' }}</p>
+      </div>
+      <form method="post" action="/rules/{{ rule.id }}/delete" onsubmit="return confirm('Xóa luật này?');">
+        <button type="submit" class="px-4 py-2.5 rounded-xl bg-rose-50 text-rose-600 text-[13px] font-medium whitespace-nowrap active:bg-rose-100">Xóa</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-8 text-center text-slate-400 text-sm">Chưa có luật nào. Luật sẽ tự học khi bạn sửa danh mục một giao dịch ở trang Danh sách.</div>
+  {% endif %}
+</main>
 </body>
 </html>
 """
@@ -977,9 +1088,10 @@ EDIT_TEMPLATE = """<!doctype html>
 <div class="nav">
   <a href="/">Thêm</a>
   <a href="/transactions" class="active">Danh sách</a>
-  <a href="/summary">Tổng tháng</a>
+  <a href="/summary">Tổng quan</a>
   <a href="/risk">Sức khỏe TC</a>
   <a href="/import">Nhập ảnh</a>
+  <a href="/rules">Luật</a>
 </div>
 <div class="card">
   <h1>Sửa danh mục</h1>
@@ -1074,9 +1186,10 @@ RISK_TEMPLATE = """<!doctype html>
 <div class="nav">
   <a href="/">Thêm</a>
   <a href="/transactions">Danh sách</a>
-  <a href="/summary">Tổng tháng</a>
+  <a href="/summary">Tổng quan</a>
   <a href="/risk" class="active">Sức khỏe TC</a>
   <a href="/import">Nhập ảnh</a>
+  <a href="/rules">Luật</a>
 </div>
 <div class="card">
   <h1>Tình hình tài chính</h1>
@@ -1192,9 +1305,10 @@ IMPORT_TEMPLATE = """<!doctype html>
 <div class="nav">
   <a href="/">Thêm</a>
   <a href="/transactions">Danh sách</a>
-  <a href="/summary">Tổng tháng</a>
+  <a href="/summary">Tổng quan</a>
   <a href="/risk">Sức khỏe TC</a>
   <a href="/import" class="active">Nhập ảnh</a>
+  <a href="/rules">Luật</a>
 </div>
 <div class="card">
   <h1>Nhập từ ảnh chụp</h1>
@@ -1261,9 +1375,10 @@ IMPORT_REVIEW_TEMPLATE = """<!doctype html>
 <div class="nav">
   <a href="/">Thêm</a>
   <a href="/transactions">Danh sách</a>
-  <a href="/summary">Tổng tháng</a>
+  <a href="/summary">Tổng quan</a>
   <a href="/risk">Sức khỏe TC</a>
   <a href="/import" class="active">Nhập ảnh</a>
+  <a href="/rules">Luật</a>
 </div>
 <div class="card">
   <h1>{{ candidates|length }} giao dịch tìm thấy — kiểm tra trước khi lưu</h1>

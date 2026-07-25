@@ -85,6 +85,26 @@ def get_transaction_by_id(cursor, transaction_id):
     return cursor.fetchone()
 
 
+def delete_transaction(cursor, transaction_id):
+    """Delete a transaction and reverse its effect on the account balance —
+    the symmetric inverse of insert_transaction. Returns False if no such
+    transaction exists (nothing to reverse or delete)."""
+    cursor.execute(
+        "SELECT amount, direction, account_id FROM transactions WHERE id = ?",
+        (transaction_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return False
+    balance_delta = -row["amount"] if row["direction"] == "in" else row["amount"]
+    cursor.execute(
+        "UPDATE accounts SET current_balance = current_balance + ? WHERE id = ?",
+        (balance_delta, row["account_id"]),
+    )
+    cursor.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+    return True
+
+
 def update_transaction_category(cursor, transaction_id, category_id):
     cursor.execute(
         "UPDATE transactions SET category_id = ? WHERE id = ?",
@@ -138,7 +158,7 @@ def resolve_category(cursor, category_id, description):
 
 def get_rules(cursor):
     cursor.execute(
-        """SELECT r.id, r.pattern, r.priority, r.hit_count, c.name_vi AS category_name
+        """SELECT r.id, r.pattern, r.priority, r.hit_count, r.created_from, c.name_vi AS category_name
            FROM rules r JOIN categories c ON r.category_id = c.id
            ORDER BY r.priority DESC, r.id"""
     )
@@ -151,6 +171,11 @@ def add_rule(cursor, *, pattern, category_id, priority=100, created_from="user")
            VALUES (?, ?, ?, ?)""",
         (pattern, category_id, priority, created_from),
     )
+
+
+def delete_rule(cursor, rule_id):
+    cursor.execute("DELETE FROM rules WHERE id = ?", (rule_id,))
+    return cursor.rowcount > 0
 
 
 # ---------- Recurring transactions ----------
