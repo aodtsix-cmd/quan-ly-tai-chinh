@@ -259,6 +259,12 @@ RUNWAY_LEVEL_LABELS = {
     "vung": "Vững",
 }
 
+SAVINGS_TREND_LABELS = {
+    "improving": "↑ Đang cải thiện",
+    "declining": "↓ Đang giảm",
+    "stable": "→ Ổn định",
+}
+
 
 @app.route("/risk")
 def risk_page():
@@ -272,6 +278,7 @@ def risk_page():
     this_month = datetime.now().strftime("%Y-%m")
     budget = risk.budget_balance_50_30_20(cursor, this_month)
     budget_statuses = risk.get_budget_status(cursor, this_month)
+    savings_trend = risk.get_savings_rate_trend(cursor)
 
     conn.close()
 
@@ -327,6 +334,19 @@ def risk_page():
             }
             for s in budget_statuses
         ],
+        savings_trend={
+            "has_data": bool(savings_trend["months"]),
+            "months": [
+                {
+                    "month": m["month"],
+                    "savings_display": f"{m['savings']:,} đ",
+                    "rate_display": f"{m['savings_rate']:.0f}%" if m["savings_rate"] is not None else "—",
+                    "positive": m["savings"] >= 0,
+                }
+                for m in savings_trend["months"]
+            ],
+            "trend_label": SAVINGS_TREND_LABELS.get(savings_trend["trend"]),
+        },
     )
 
 
@@ -575,7 +595,7 @@ LOGIN_TEMPLATE = """<!doctype html>
 <div class="card">
   <h1>Nhập mã truy cập</h1>
   <form method="post">
-    <input type="password" name="password" placeholder="Mã truy cập" autofocus required>
+    <input type="password" name="password" placeholder="Mã truy cập" autocomplete="current-password" autofocus required>
     <button type="submit">Vào</button>
   </form>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -1266,6 +1286,16 @@ RISK_TEMPLATE = """<!doctype html>
     {% endfor %}
   {% else %}
     <p class="empty">Chưa đặt ngân sách cho danh mục nào (CLI menu 12).</p>
+  {% endif %}
+
+  <p class="section-title">Xu hướng tỉ lệ tiết kiệm (các tháng đã qua)</p>
+  {% if savings_trend.has_data %}
+    {% for m in savings_trend.months %}
+    <div class="summary-row"><span>{{ m.month }}</span><span class="{{ 'good' if m.positive else 'warning' }}">{{ m.savings_display }} ({{ m.rate_display }})</span></div>
+    {% endfor %}
+    {% if savings_trend.trend_label %}<p class="note">{{ savings_trend.trend_label }}</p>{% endif %}
+  {% else %}
+    <p class="empty">Chưa đủ dữ liệu (cần ít nhất 1 tháng đã qua có giao dịch).</p>
   {% endif %}
 </div>
 </body>

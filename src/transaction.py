@@ -543,6 +543,18 @@ def show_risk_report():
         print(f"  Tùy chọn:  {budget['optional']:,} đ ({budget['optional_pct']:.0f}%, khuyến nghị ≤ 30%)")
         print(f"  Còn lại:   {budget['savings']:,} đ ({budget['savings_pct']:.0f}%, khuyến nghị ≥ 20%)")
 
+    trend = risk.get_savings_rate_trend(cursor)
+    print("\n-- Xu hướng tỉ lệ tiết kiệm (6 tháng gần nhất đã qua) --")
+    if not trend["months"]:
+        print("  Chưa đủ dữ liệu (cần ít nhất 1 tháng đã qua có giao dịch).")
+    else:
+        for m in trend["months"]:
+            rate_text = f"{m['savings_rate']:.0f}%" if m["savings_rate"] is not None else "(không có thu nhập)"
+            print(f"  {m['month']}: thu {m['income']:,} đ, chi {m['expense']:,} đ, tiết kiệm {m['savings']:,} đ ({rate_text})")
+        trend_labels = {"improving": "↑ Đang cải thiện", "declining": "↓ Đang giảm", "stable": "→ Ổn định"}
+        if trend["trend"]:
+            print(f"  → {trend_labels[trend['trend']]}")
+
     conn.close()
 
 

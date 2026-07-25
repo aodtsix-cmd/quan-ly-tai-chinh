@@ -224,6 +224,65 @@ def budget_balance_50_30_20(cursor, month):
     }
 
 
+def get_savings_rate_trend(cursor, months=6, as_of=None):
+    """Savings rate (= (income − expense) / income) per calendar month over
+    the last `months` *completed* months (current partial month excluded,
+    same convention as get_average_monthly_essential_expense — a half-spent
+    month would understate expense and overstate the rate).
+
+    Unlike the 50/30/20 snapshot (one month, categorized by necessity), this
+    tracks *direction of change* — personal-finance literature (e.g. the
+    FIRE/"shockingly simple math" line of thinking, but really any life-cycle
+    savings model) treats the savings rate, not the absolute amount saved, as
+    the number that actually predicts financial trajectory: someone earning
+    little but saving 30% is on a better path than someone earning a lot but
+    saving 5%. None of the existing metrics show whether that rate is rising
+    or falling over time — this is the first one that does.
+
+    Returns {"months": [{month, income, expense, savings, savings_rate}, ...]
+    oldest-first, "trend": "improving"/"declining"/"stable"/None}. trend is
+    None until at least 2 months have a defined rate (income > 0)."""
+    as_of_date = as_of or date.today()
+    cursor.execute(
+        """SELECT strftime('%Y-%m', occurred_at) AS month,
+                  SUM(CASE WHEN direction = 'in' THEN amount ELSE 0 END) AS income,
+                  SUM(CASE WHEN direction = 'out' THEN amount ELSE 0 END) AS expense
+           FROM transactions
+           WHERE strftime('%Y-%m', occurred_at) < ?
+           GROUP BY month
+           ORDER BY month DESC
+           LIMIT ?""",
+        (as_of_date.strftime("%Y-%m"), months),
+    )
+    rows = list(reversed(cursor.fetchall()))  # oldest -> newest, for trend reading
+
+    data = []
+    for row in rows:
+        income, expense = row["income"], row["expense"]
+        savings = income - expense
+        savings_rate = (savings / income * 100) if income > 0 else None
+        data.append({
+            "month": row["month"],
+            "income": income,
+            "expense": expense,
+            "savings": savings,
+            "savings_rate": savings_rate,
+        })
+
+    rates = [d["savings_rate"] for d in data if d["savings_rate"] is not None]
+    if len(rates) >= 2:
+        if rates[-1] > rates[0]:
+            trend = "improving"
+        elif rates[-1] < rates[0]:
+            trend = "declining"
+        else:
+            trend = "stable"
+    else:
+        trend = None
+
+    return {"months": data, "trend": trend}
+
+
 def get_budget_status(cursor, month):
     """"Hũ chi tiêu" (envelope budgeting, THIET-KE.md 7.3 — noted there as
     "chưa triển khai" at the time). For every category with an active
