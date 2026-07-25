@@ -450,6 +450,13 @@ LOGIN_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" href="/static/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
+<meta name="theme-color" content="#007aff">
 <title>Đăng nhập — Sổ tài chính</title>
 <style>
   :root { color-scheme: light; }
@@ -569,6 +576,13 @@ PAGE_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" href="/static/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
+<meta name="theme-color" content="#007aff">
 <title>Sổ tài chính</title>
 <style>""" + BASE_STYLE + """
   label.field-label {
@@ -801,6 +815,13 @@ LIST_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" href="/static/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
+<meta name="theme-color" content="#007aff">
 <title>Danh sách giao dịch</title>
 <style>""" + BASE_STYLE + """
   .tx-row { padding: 12px 0; border-bottom: 1px solid #eee; }
@@ -850,6 +871,13 @@ SUMMARY_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" href="/static/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
+<meta name="theme-color" content="#007aff">
 <title>Tổng theo tháng</title>
 <style>""" + BASE_STYLE + """
   input[type="month"] {
@@ -899,6 +927,13 @@ EDIT_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" href="/static/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
+<meta name="theme-color" content="#007aff">
 <title>Sửa danh mục</title>
 <style>""" + BASE_STYLE + """
   .tx-info { color: #555; font-size: 0.9rem; margin-bottom: 16px; }
@@ -987,6 +1022,13 @@ RISK_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" href="/static/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
+<meta name="theme-color" content="#007aff">
 <title>Tình hình tài chính</title>
 <style>""" + BASE_STYLE + """
   .section-title {
@@ -1114,6 +1156,13 @@ IMPORT_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" href="/static/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
+<meta name="theme-color" content="#007aff">
 <title>Nhập từ ảnh chụp</title>
 <style>""" + BASE_STYLE + """
   input[type="file"] {
@@ -1167,6 +1216,13 @@ IMPORT_REVIEW_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" href="/static/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
+<meta name="theme-color" content="#007aff">
 <title>Duyệt giao dịch từ ảnh</title>
 <style>""" + BASE_STYLE + """
   .candidate {
