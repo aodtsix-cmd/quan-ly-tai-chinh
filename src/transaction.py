@@ -419,6 +419,79 @@ def deactivate_goal(cursor, goal_id):
     cursor.execute("UPDATE goals SET is_active = 0 WHERE id = ?", (goal_id,))
 
 
+# ---------- Spending-decision simulation (Mốc 3) ----------
+
+def create_spending_simulation(cursor, *, name, note=None, item_amount, maintenance_cost_per_period=0,
+                                expected_lifetime_periods=0, liquidity_snapshot=None, baseline_balances=None,
+                                triggered_by_transaction_id=None):
+    """`baseline_balances` (a list of projected balances with no hypothetical
+    expense) is frozen here at simulation time, same reasoning as
+    ai_recommendation — recomputing it later would use whatever the
+    account's balance/flow happens to be *then*, not what it was when this
+    simulation was actually run."""
+    cursor.execute(
+        """INSERT INTO spending_simulations
+           (name, note, item_amount, maintenance_cost_per_period, expected_lifetime_periods,
+            liquidity_snapshot, baseline_balances, triggered_by_transaction_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (name, note, item_amount, maintenance_cost_per_period, expected_lifetime_periods,
+         liquidity_snapshot, json.dumps(baseline_balances) if baseline_balances is not None else None,
+         triggered_by_transaction_id),
+    )
+    return cursor.lastrowid
+
+
+def add_simulation_scenario(cursor, *, simulation_id, scenario_type, installment_periods, delay_periods,
+                             total_cost_of_ownership, projected_balances, traffic_light):
+    cursor.execute(
+        """INSERT INTO spending_simulation_scenarios
+           (simulation_id, scenario_type, installment_periods, delay_periods,
+            total_cost_of_ownership, projected_balances, traffic_light)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (simulation_id, scenario_type, installment_periods, delay_periods,
+         total_cost_of_ownership, json.dumps(projected_balances), traffic_light),
+    )
+
+
+def set_simulation_ai_recommendation(cursor, simulation_id, ai_recommendation):
+    """Freezes the AI's advice onto the simulation row at the time it was
+    given, so looking back at a past simulation later shows what was
+    actually recommended then — not a fresh, possibly-different AI call."""
+    cursor.execute(
+        "UPDATE spending_simulations SET ai_recommendation = ? WHERE id = ?",
+        (json.dumps(ai_recommendation), simulation_id),
+    )
+
+
+def get_spending_simulations(cursor):
+    cursor.execute(
+        """SELECT id, name, note, item_amount, created_at
+           FROM spending_simulations ORDER BY id DESC"""
+    )
+    return cursor.fetchall()
+
+
+def get_spending_simulation_by_id(cursor, simulation_id):
+    cursor.execute(
+        """SELECT id, name, note, item_amount, maintenance_cost_per_period,
+                  expected_lifetime_periods, liquidity_snapshot, baseline_balances,
+                  ai_recommendation, created_at
+           FROM spending_simulations WHERE id = ?""",
+        (simulation_id,),
+    )
+    return cursor.fetchone()
+
+
+def get_simulation_scenarios(cursor, simulation_id):
+    cursor.execute(
+        """SELECT id, scenario_type, installment_periods, delay_periods,
+                  total_cost_of_ownership, projected_balances, traffic_light
+           FROM spending_simulation_scenarios WHERE simulation_id = ? ORDER BY id""",
+        (simulation_id,),
+    )
+    return cursor.fetchall()
+
+
 # ---------- Terminal CLI ----------
 
 def display_accounts(cursor):

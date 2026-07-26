@@ -22,7 +22,8 @@ def build_test_db():
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     conn.executescript((SRC_DIR / "schema.sql").read_text(encoding="utf-8"))
-    for migration in ["001_ai_infra.sql", "002_period_settings.sql", "003_period_budgets.sql", "004_goals.sql"]:
+    for migration in ["001_ai_infra.sql", "002_period_settings.sql", "003_period_budgets.sql",
+                      "004_goals.sql", "005_simulations.sql"]:
         conn.executescript((SRC_DIR / "migrations" / migration).read_text(encoding="utf-8"))
     return conn
 
@@ -330,6 +331,89 @@ class EmergencyFundSuggestionTests(unittest.TestCase):
         self.conn.commit()
         target = risk.suggest_emergency_fund_target(self.cursor)
         self.assertEqual(target, 6_000_000)
+
+
+class SpendingSimulationTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+        self.conn.execute("UPDATE accounts SET current_balance = 10_000_000 WHERE id = 1")
+        # 3 completed periods of history: income 2,000,000, expense 1,000,000 each
+        for occurred_at in ["2026-04-20 10:00:00", "2026-05-20 10:00:00", "2026-06-20 10:00:00"]:
+            insert_tx(self.conn, occurred_at, 2_000_000, "in", category_id=3)
+            insert_tx(self.conn, occurred_at, 1_000_000, "out", category_id=1)
+        self.conn.commit()
+
+    def test_baseline_flow_averages_history(self):
+        flow = risk.get_baseline_period_flow(self.cursor, periods=3)
+        self.assertAlmostEqual(flow["avg_income"], 2_000_000)
+        self.assertAlmostEqual(flow["avg_expense"], 1_000_000)
+
+    def test_baseline_flow_empty_with_no_history(self):
+        empty_cursor = build_test_db().cursor()
+        flow = risk.get_baseline_period_flow(empty_cursor, periods=3)
+        self.assertEqual(flow, {"avg_income": 0, "avg_expense": 0})
+
+    def test_trajectory_continues_average_flow(self):
+        trajectory = risk.project_simple_trajectory(self.cursor, 3)
+        # each period: +2,000,000 income -1,000,000 expense = +1,000,000 net
+        self.assertEqual(trajectory, [11_000_000, 12_000_000, 13_000_000])
+
+    def test_trajectory_applies_extra_expenses_at_right_offsets(self):
+        trajectory = risk.project_simple_trajectory(self.cursor, 3, extra_expenses={0: 5_000_000, 2: 1_000_000})
+        self.assertEqual(trajectory, [6_000_000, 7_000_000, 7_000_000])
+
+    def test_traffic_light_green_when_comfortably_positive(self):
+        trajectory = [20_000_000, 21_000_000]
+        self.assertEqual(risk.traffic_light_for_trajectory(self.cursor, trajectory), "green")
+
+    def test_traffic_light_yellow_when_below_essential_but_positive(self):
+        # essential expense per period ~1,000,000 (from history); dip below that but stay positive
+        trajectory = [500_000, 2_000_000]
+        self.assertEqual(risk.traffic_light_for_trajectory(self.cursor, trajectory), "yellow")
+
+    def test_traffic_light_red_when_negative(self):
+        trajectory = [500_000, -100_000]
+        self.assertEqual(risk.traffic_light_for_trajectory(self.cursor, trajectory), "red")
+
+    def test_compute_spending_scenarios_shape_and_tco(self):
+        scenarios, baseline = risk.compute_spending_scenarios(
+            self.cursor, item_amount=6_000_000, maintenance_cost_per_period=100_000, expected_lifetime_periods=12
+        )
+        # 1 pay_now + 3 installment options + 2 delay options = 6 scenarios
+        self.assertEqual(len(scenarios), 6)
+        expected_tco = 6_000_000 + 100_000 * 12
+        for s in scenarios:
+            self.assertEqual(s["total_cost_of_ownership"], expected_tco)
+            self.assertEqual(len(s["projected_balances"]), risk.SIMULATION_TRAJECTORY_PERIODS)
+        self.assertEqual(len(baseline), risk.SIMULATION_TRAJECTORY_PERIODS)
+
+    def test_pay_now_deducts_full_amount_immediately(self):
+        scenarios, baseline = risk.compute_spending_scenarios(self.cursor, item_amount=6_000_000)
+        pay_now = next(s for s in scenarios if s["scenario_type"] == "pay_now")
+        # period 0: 10M + 1M net flow - 6M item = 5M
+        self.assertEqual(pay_now["projected_balances"][0], 5_000_000)
+        # baseline period 0 (no expense) should be higher
+        self.assertGreater(baseline[0], pay_now["projected_balances"][0])
+
+    def test_installments_spread_cost_evenly(self):
+        scenarios, _ = risk.compute_spending_scenarios(self.cursor, item_amount=6_000_000)
+        inst3 = next(s for s in scenarios if s["scenario_type"] == "installments" and s["installment_periods"] == 3)
+        # each of first 3 periods pays 2,000,000 extra: net flow +1M - 2M = -1M/period
+        self.assertEqual(inst3["projected_balances"][0], 9_000_000)
+        self.assertEqual(inst3["projected_balances"][1], 8_000_000)
+        self.assertEqual(inst3["projected_balances"][2], 7_000_000)
+        # 4th period: no more installment, just +1M net
+        self.assertEqual(inst3["projected_balances"][3], 8_000_000)
+
+    def test_delay_pushes_full_cost_to_future_period(self):
+        scenarios, baseline = risk.compute_spending_scenarios(self.cursor, item_amount=6_000_000)
+        delay3 = next(s for s in scenarios if s["scenario_type"] == "delay" and s["delay_periods"] == 3)
+        # periods 0-2: no expense yet, same as baseline
+        self.assertEqual(delay3["projected_balances"][:3], baseline[:3])
+        # period 3: baseline + 1M net - 6M item
+        self.assertEqual(delay3["projected_balances"][3], baseline[3] - 6_000_000)
 
 
 def transaction_get_goal(cursor, goal_id):

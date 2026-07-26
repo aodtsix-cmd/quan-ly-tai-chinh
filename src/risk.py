@@ -522,3 +522,122 @@ def get_goal_progress(cursor, goal, as_of=None):
         "is_overdue": is_overdue,
         "is_off_track": is_off_track,
     }
+
+
+# ---------- Spending-decision simulation (Mốc 3) ----------
+
+BASELINE_FLOW_LOOKBACK_PERIODS = 3
+SIMULATION_TRAJECTORY_PERIODS = 12
+INSTALLMENT_OPTIONS = (3, 6, 12)
+DELAY_OPTIONS = (3, 6)
+
+
+def get_baseline_period_flow(cursor, periods=BASELINE_FLOW_LOOKBACK_PERIODS):
+    """Average income/expense per period over the last `periods` completed
+    periods that have any transaction (reuses get_savings_rate_trend's own
+    data rather than re-querying) — the "business as usual" run rate used to
+    project forward in project_simple_trajectory. {0, 0} if there's no
+    history yet."""
+    trend = get_savings_rate_trend(cursor, periods=periods)
+    data = trend["periods"]
+    if not data:
+        return {"avg_income": 0, "avg_expense": 0}
+    return {
+        "avg_income": sum(d["income"] for d in data) / len(data),
+        "avg_expense": sum(d["expense"] for d in data) / len(data),
+    }
+
+
+def project_simple_trajectory(cursor, periods_ahead, extra_expenses=None, as_of=None):
+    """Projected liquid balance at the end of each of the next `periods_ahead`
+    periods, continuing the recent average income/expense flat (see
+    get_baseline_period_flow) — deliberately simple, NOT a real forecast
+    with seasonality/goals/budgets layered in (that's Mốc 4's job; this
+    function exists only to power Mốc 3's "with vs. without this expense"
+    comparison chart, and Mốc 4 may reuse or replace it, not extend it in place
+    without checking whether its own richer model already supersedes this).
+
+    `extra_expenses`: optional {period_offset: amount} to layer hypothetical
+    spending on top, 0-indexed from the current (still-open) period."""
+    flow = get_baseline_period_flow(cursor)
+    balance = get_liquid_balance(cursor)
+    extra_expenses = extra_expenses or {}
+    trajectory = []
+    for offset in range(periods_ahead):
+        balance = balance + flow["avg_income"] - flow["avg_expense"] - extra_expenses.get(offset, 0)
+        trajectory.append(round(balance))
+    return trajectory
+
+
+def traffic_light_for_trajectory(cursor, trajectory):
+    """green: never dips below one period's essential expense (the same
+    threshold liquidity_risk itself uses for "sufficient"). yellow: dips
+    below that but never negative. red: goes negative at some point. Falls
+    back to a plain negative/non-negative check when there isn't yet enough
+    essential-spend history to know the threshold (no yellow tier then —
+    not enough data to justify the finer distinction)."""
+    if any(b < 0 for b in trajectory):
+        return "red"
+    essential = get_average_period_essential_expense(cursor)
+    if essential is not None and any(b < essential for b in trajectory):
+        return "yellow"
+    return "green"
+
+
+def compute_spending_scenarios(cursor, *, item_amount, maintenance_cost_per_period=0, expected_lifetime_periods=0):
+    """Builds Mốc 3's full scenario comparison — pay now, installments over
+    each of INSTALLMENT_OPTIONS periods, and delay by each of DELAY_OPTIONS
+    periods — plus the no-expense baseline for the same window, for the
+    "with vs. without" chart. Every number here is plain Python arithmetic;
+    no AI involved anywhere in this function, per the app's standing rule
+    that AI never computes money.
+
+    total_cost_of_ownership is the SAME figure across every scenario
+    (item_amount + maintenance × lifetime) — no financing/interest cost is
+    modeled, since none was asked for and inventing an interest rate would
+    be a real number this app has no basis to assume. What differs between
+    scenarios is only the *timing* of the cash outflow.
+
+    Returns (scenarios, baseline_balances) — scenarios is a list of
+    {"scenario_type", "installment_periods", "delay_periods",
+    "total_cost_of_ownership", "projected_balances", "traffic_light"}."""
+    total_cost_of_ownership = item_amount + maintenance_cost_per_period * expected_lifetime_periods
+    baseline_balances = project_simple_trajectory(cursor, SIMULATION_TRAJECTORY_PERIODS)
+
+    def maintenance_schedule(start_offset):
+        schedule = {}
+        end_offset = start_offset + expected_lifetime_periods
+        for offset in range(start_offset, min(end_offset, SIMULATION_TRAJECTORY_PERIODS)):
+            schedule[offset] = schedule.get(offset, 0) + maintenance_cost_per_period
+        return schedule
+
+    def build_scenario(scenario_type, installment_periods, delay_periods, extra_expenses):
+        trajectory = project_simple_trajectory(cursor, SIMULATION_TRAJECTORY_PERIODS, extra_expenses=extra_expenses)
+        return {
+            "scenario_type": scenario_type,
+            "installment_periods": installment_periods,
+            "delay_periods": delay_periods,
+            "total_cost_of_ownership": total_cost_of_ownership,
+            "projected_balances": trajectory,
+            "traffic_light": traffic_light_for_trajectory(cursor, trajectory),
+        }
+
+    scenarios = []
+
+    pay_now_extra = maintenance_schedule(0)
+    pay_now_extra[0] = pay_now_extra.get(0, 0) + item_amount
+    scenarios.append(build_scenario("pay_now", 1, 0, pay_now_extra))
+
+    for n in INSTALLMENT_OPTIONS:
+        extra = maintenance_schedule(0)
+        per_period = round(item_amount / n)
+        for offset in range(n):
+            extra[offset] = extra.get(offset, 0) + per_period
+        scenarios.append(build_scenario("installments", n, 0, extra))
+
+    for n in DELAY_OPTIONS:
+        extra = maintenance_schedule(n)
+        extra[n] = extra.get(n, 0) + item_amount
+        scenarios.append(build_scenario("delay", 1, n, extra))
+
+    return scenarios, baseline_balances

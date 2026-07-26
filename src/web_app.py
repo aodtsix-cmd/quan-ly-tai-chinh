@@ -18,14 +18,16 @@ import alerts
 import period
 import risk
 from ocr_import import analyze_image, make_external_ref
-from services.ai_client import get_ai_suggestion
+from services.ai_client import DEFAULT_MODEL_HEAVY, get_ai_suggestion
 from transaction import (
     add_event_plan_item,
     add_rule,
+    add_simulation_scenario,
     apply_matching_rule,
     connect_db,
     create_event_plan,
     create_goal,
+    create_spending_simulation,
     delete_rule,
     delete_transaction,
     dismiss_event_plan_goal_prompt,
@@ -43,12 +45,16 @@ from transaction import (
     get_period_budgets,
     get_recent_transactions,
     get_rules,
+    get_simulation_scenarios,
+    get_spending_simulation_by_id,
+    get_spending_simulations,
     get_transaction_by_id,
     insert_transaction,
     link_event_plan_to_goal,
     log_behavior_event,
     resolve_category,
     set_period_budget,
+    set_simulation_ai_recommendation,
     update_transaction_category,
 )
 
@@ -91,6 +97,32 @@ GOAL_TYPE_LABELS = {
     "medical": "Dự phòng y tế",
     "custom": "Khác",
 }
+
+
+class ScenarioProsCons(BaseModel):
+    scenario_label: str = Field(description="Nhãn phương án, đúng như đã cho trong dữ liệu, ví dụ 'Trả thẳng' hoặc 'Trả góp 6 kỳ'.")
+    pros: str = Field(description="Mặt được, 1 câu, tiếng Việt.")
+    cons: str = Field(description="Mặt mất, 1 câu, tiếng Việt.")
+
+
+class SpendingSimulationAdvice(BaseModel):
+    scenario_notes: list[ScenarioProsCons]
+    recommendation: str = Field(description="Khuyến nghị rõ ràng, 2-3 câu, kèm lý do, tiếng Việt.")
+    summary: str = Field(description="Nhận xét tổng quan 1-2 câu, tiếng Việt.")
+
+
+def scenario_label(scenario):
+    if scenario["scenario_type"] == "pay_now":
+        return "Trả thẳng"
+    if scenario["scenario_type"] == "installments":
+        return f"Trả góp {scenario['installment_periods']} kỳ"
+    if scenario["scenario_type"] == "delay":
+        return f"Hoãn {scenario['delay_periods']} kỳ"
+    return scenario["scenario_type"]
+
+
+TRAFFIC_LIGHT_LABELS = {"green": "An toàn", "yellow": "Cân nhắc", "red": "Rủi ro"}
+TRAFFIC_LIGHT_COLORS = {"green": "bg-emerald-100 text-emerald-700", "yellow": "bg-amber-100 text-amber-700", "red": "bg-rose-100 text-rose-700"}
 
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
@@ -696,6 +728,182 @@ def event_dismiss_goal_prompt(event_plan_id):
     conn.commit()
     conn.close()
     return redirect(url_for("event_detail", event_plan_id=event_plan_id))
+
+
+@app.route("/simulate", methods=["GET", "POST"])
+def simulate_page():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    if request.method == "POST":
+        name = (request.form.get("name") or "").strip()
+        note = (request.form.get("note") or "").strip() or None
+        try:
+            item_amount = int((request.form.get("item_amount") or "").replace(",", "").replace(".", ""))
+            maintenance_raw = (request.form.get("maintenance_cost_per_period") or "0").replace(",", "").replace(".", "")
+            maintenance_cost_per_period = int(maintenance_raw) if maintenance_raw else 0
+            expected_lifetime_periods = int(request.form.get("expected_lifetime_periods") or "0")
+        except ValueError:
+            conn.close()
+            return redirect(url_for("simulate_page"))
+
+        triggered_by_raw = request.form.get("triggered_by_transaction_id")
+        triggered_by_transaction_id = int(triggered_by_raw) if triggered_by_raw else None
+
+        if not name or item_amount <= 0:
+            conn.close()
+            return redirect(url_for("simulate_page"))
+
+        liquidity_snapshot = risk.get_liquid_balance(cursor)
+        scenarios, baseline_balances = risk.compute_spending_scenarios(
+            cursor, item_amount=item_amount,
+            maintenance_cost_per_period=maintenance_cost_per_period,
+            expected_lifetime_periods=expected_lifetime_periods,
+        )
+
+        simulation_id = create_spending_simulation(
+            cursor, name=name, note=note, item_amount=item_amount,
+            maintenance_cost_per_period=maintenance_cost_per_period,
+            expected_lifetime_periods=expected_lifetime_periods,
+            liquidity_snapshot=liquidity_snapshot, baseline_balances=baseline_balances,
+            triggered_by_transaction_id=triggered_by_transaction_id,
+        )
+        for s in scenarios:
+            add_simulation_scenario(
+                cursor, simulation_id=simulation_id, scenario_type=s["scenario_type"],
+                installment_periods=s["installment_periods"], delay_periods=s["delay_periods"],
+                total_cost_of_ownership=s["total_cost_of_ownership"],
+                projected_balances=s["projected_balances"], traffic_light=s["traffic_light"],
+            )
+        conn.commit()
+        conn.close()
+        return redirect(url_for("simulation_detail", simulation_id=simulation_id))
+
+    prefill_amount = request.args.get("amount", "")
+    prefill_name = request.args.get("name", "")
+    triggered_by = request.args.get("triggered_by_transaction_id", "")
+    conn.close()
+    return render_template_string(
+        SIMULATE_TEMPLATE,
+        prefill_amount=prefill_amount,
+        prefill_name=prefill_name,
+        triggered_by=triggered_by,
+    )
+
+
+@app.route("/simulations")
+def simulations_page():
+    conn = connect_db()
+    cursor = conn.cursor()
+    sims = get_spending_simulations(cursor)
+    conn.close()
+    rows = [
+        {
+            "id": s["id"],
+            "name": s["name"],
+            "note": s["note"] or "",
+            "item_amount_display": f"{s['item_amount']:,} đ",
+            "created_at": s["created_at"],
+        }
+        for s in sims
+    ]
+    return render_template_string(SIMULATIONS_TEMPLATE, rows=rows)
+
+
+@app.route("/simulations/<int:simulation_id>")
+def simulation_detail(simulation_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    simulation = get_spending_simulation_by_id(cursor, simulation_id)
+    if simulation is None:
+        conn.close()
+        return "Không tìm thấy mô phỏng.", 404
+    scenario_rows = get_simulation_scenarios(cursor, simulation_id)
+    conn.close()
+
+    scenarios = []
+    pay_now_balances = None
+    for s in scenario_rows:
+        balances = json.loads(s["projected_balances"])
+        scenarios.append({
+            "label": scenario_label(s),
+            "tco_display": f"{s['total_cost_of_ownership']:,} đ",
+            "traffic_light": s["traffic_light"],
+            "traffic_label": TRAFFIC_LIGHT_LABELS.get(s["traffic_light"], s["traffic_light"]),
+            "traffic_color": TRAFFIC_LIGHT_COLORS.get(s["traffic_light"], ""),
+            "balances": balances,
+        })
+        if s["scenario_type"] == "pay_now":
+            pay_now_balances = balances
+
+    baseline_balances = json.loads(simulation["baseline_balances"]) if simulation["baseline_balances"] else []
+    ai_recommendation = json.loads(simulation["ai_recommendation"]) if simulation["ai_recommendation"] else None
+
+    return render_template_string(
+        SIMULATION_DETAIL_TEMPLATE,
+        simulation_id=simulation_id,
+        name=simulation["name"],
+        note=simulation["note"] or "",
+        item_amount_display=f"{simulation['item_amount']:,} đ",
+        ai_recommendation=ai_recommendation,
+        scenarios=scenarios,
+        chart_labels=list(range(1, len(baseline_balances) + 1)),
+        chart_baseline=baseline_balances,
+        chart_with_expense=pay_now_balances or [],
+    )
+
+
+@app.route("/api/ai/simulation-advice")
+def api_ai_simulation_advice():
+    simulation_id = request.args.get("simulation_id", type=int)
+    conn = connect_db()
+    cursor = conn.cursor()
+    simulation = get_spending_simulation_by_id(cursor, simulation_id)
+    if simulation is None:
+        conn.close()
+        return jsonify({"available": False, "reason": "no_data", "data": None})
+
+    # The recommendation is frozen the first time it's successfully generated
+    # (see create_spending_simulation's docstring) — never re-queried after
+    # that, so looking back at an old simulation always shows what was
+    # actually advised at the time, not a fresh (possibly different) answer.
+    if simulation["ai_recommendation"]:
+        conn.close()
+        return jsonify({"available": True, "data": json.loads(simulation["ai_recommendation"]), "cached": True})
+
+    scenario_rows = get_simulation_scenarios(cursor, simulation_id)
+    scenario_data = [
+        {
+            "scenario_label": scenario_label(s),
+            "total_cost_of_ownership": s["total_cost_of_ownership"],
+            "traffic_light": s["traffic_light"],
+            "projected_balances": json.loads(s["projected_balances"]),
+        }
+        for s in scenario_rows
+    ]
+
+    maintenance_text = (
+        f", chi phí duy trì {simulation['maintenance_cost_per_period']:,} đ/kỳ trong "
+        f"{simulation['expected_lifetime_periods']} kỳ"
+        if simulation["maintenance_cost_per_period"] else ""
+    )
+    prompt_template = (PROMPTS_DIR / "simulation_advice.md").read_text(encoding="utf-8")
+    prompt = prompt_template.format(
+        item_name=simulation["name"],
+        item_amount=f"{simulation['item_amount']:,}",
+        maintenance_text=maintenance_text,
+        scenarios_json=json.dumps(scenario_data, ensure_ascii=False),
+    )
+
+    result = get_ai_suggestion(
+        cursor, task="simulation_advice", input_data={"simulation_id": simulation_id},
+        response_schema=SpendingSimulationAdvice, prompt=prompt, model=DEFAULT_MODEL_HEAVY,
+    )
+    if result["available"]:
+        set_simulation_ai_recommendation(cursor, simulation_id, result["data"])
+    conn.commit()
+    conn.close()
+    return jsonify(result)
 
 
 RUNWAY_LEVEL_LABELS = {
@@ -1365,6 +1573,17 @@ PAGE_TEMPLATE = """<!doctype html>
       return;
     }
 
+    if (direction === "out" && amount >= 1000000) {
+      const wantsToSimulate = confirm(
+        `Khoản chi ${formatVND(amount)} đ khá lớn. Bạn có muốn mô phỏng tác động trước khi lưu không?`
+      );
+      if (wantsToSimulate) {
+        const params = new URLSearchParams({ amount: amount, name: descriptionInput.value || "" });
+        window.location.href = "/simulate?" + params.toString();
+        return;
+      }
+    }
+
     saveBtn.disabled = true;
     try {
       const resp = await fetch("/api/transactions", {
@@ -1434,6 +1653,8 @@ LIST_TEMPLATE = """<!doctype html>
   {% else %}
   <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-8 text-center text-slate-400 text-sm">Chưa có giao dịch nào.</div>
   {% endif %}
+
+  <p class="text-center mt-4"><a href="/simulate" class="text-[13px] text-slate-400">Mô phỏng một khoản chi lớn →</a></p>
 </main>
 </body>
 </html>
@@ -1916,6 +2137,213 @@ EVENT_DETAIL_TEMPLATE = """<!doctype html>
     {% endif %}
   </div>
 </main>
+</body>
+</html>
+"""
+
+
+SIMULATE_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>Mô phỏng chi tiêu</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("simulate") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <div class="flex items-center justify-between px-1 mb-3">
+    <h1 class="text-sm font-medium text-slate-500">Mô phỏng một khoản chi</h1>
+    <a href="/simulations" class="text-brand text-sm font-medium">Lịch sử</a>
+  </div>
+
+  <form method="post" class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4 space-y-4">
+    {% if triggered_by %}<input type="hidden" name="triggered_by_transaction_id" value="{{ triggered_by }}">{% endif %}
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Khoản chi dự tính</label>
+      <input type="text" name="name" required value="{{ prefill_name }}" placeholder="VD: Mua laptop mới" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+    </div>
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Số tiền (đ)</label>
+      <input type="text" inputmode="numeric" id="item_amount" name="item_amount" required value="{{ prefill_amount }}" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+    </div>
+
+    <div id="big-item-fields" class="space-y-4 hidden">
+      <p class="text-[12px] text-slate-400">Khoản chi lớn — cho biết thêm để tính tổng chi phí sở hữu:</p>
+      <div>
+        <label class="block text-[13px] text-slate-500 mb-1">Chi phí duy trì mỗi kỳ (nếu có)</label>
+        <input type="text" inputmode="numeric" name="maintenance_cost_per_period" placeholder="0" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+      </div>
+      <div>
+        <label class="block text-[13px] text-slate-500 mb-1">Tuổi thọ dự kiến (số kỳ)</label>
+        <input type="text" inputmode="numeric" name="expected_lifetime_periods" placeholder="0" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+      </div>
+    </div>
+
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Ghi chú (tùy chọn)</label>
+      <input type="text" name="note" placeholder="VD: mô phỏng chuyển nhà" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+    </div>
+
+    <button type="submit" class="w-full py-3.5 rounded-xl bg-brand text-white font-medium">Xem tác động</button>
+  </form>
+</main>
+<script>
+  const amountInput = document.getElementById("item_amount");
+  const bigFields = document.getElementById("big-item-fields");
+  function toggleBigFields() {
+    const digits = amountInput.value.replace(/\\D/g, "");
+    const amount = digits ? parseInt(digits, 10) : 0;
+    bigFields.classList.toggle("hidden", amount < 1000000);
+  }
+  amountInput.addEventListener("input", toggleBigFields);
+  toggleBigFields();
+</script>
+</body>
+</html>
+"""
+
+
+SIMULATIONS_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>Lịch sử mô phỏng</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("simulate") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <div class="flex items-center justify-between px-1 mb-3">
+    <h1 class="text-sm font-medium text-slate-500">{{ rows|length }} mô phỏng đã lưu</h1>
+    <a href="/simulate" class="text-brand text-sm font-medium">+ Mô phỏng mới</a>
+  </div>
+  {% if rows %}
+  <div class="space-y-3">
+    {% for s in rows %}
+    <a href="/simulations/{{ s.id }}" class="block bg-white rounded-2xl ring-1 ring-slate-900/5 p-4">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-[15px] font-medium text-slate-900">{{ s.name }}</span>
+        <span class="text-lg font-bold text-slate-900">{{ s.item_amount_display }}</span>
+      </div>
+      <p class="text-[13px] text-slate-500">{{ s.note }}{% if s.note %} · {% endif %}{{ s.created_at }}</p>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-8 text-center text-slate-400 text-sm">Chưa có mô phỏng nào.</div>
+  {% endif %}
+</main>
+</body>
+</html>
+"""
+
+
+SIMULATION_DETAIL_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<title>{{ name }}</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("simulate") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <a href="/simulations" class="text-[13px] text-slate-400 px-1">‹ Lịch sử mô phỏng</a>
+
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-5 mt-2">
+    <div class="flex items-center justify-between mb-1">
+      <h1 class="text-lg font-semibold">{{ name }}</h1>
+      <span class="text-lg font-bold">{{ item_amount_display }}</span>
+    </div>
+    {% if note %}<p class="text-[13px] text-slate-500 mb-3">{{ note }}</p>{% endif %}
+
+    <div class="mt-3">
+      <canvas id="balance-chart" height="180"></canvas>
+    </div>
+    <p class="text-[11px] text-slate-400 text-center mt-1">Số dư dự báo 12 kỳ tới — có và không có khoản chi này (phương án trả thẳng)</p>
+  </div>
+
+  <div id="ai-panel" class="bg-indigo-50 rounded-2xl p-4 my-3 text-[13px] text-indigo-900 {% if not ai_recommendation %}hidden{% endif %}">
+    {% if ai_recommendation %}
+    <p class="font-semibold mb-1">Khuyến nghị từ AI</p>
+    <p class="mb-2">{{ ai_recommendation.recommendation }}</p>
+    {% if ai_recommendation.scenario_notes %}
+    <ul class="space-y-1 list-disc list-inside mb-2">
+      {% for n in ai_recommendation.scenario_notes %}
+      <li><strong>{{ n.scenario_label }}:</strong> {{ n.pros }} Nhưng {{ n.cons }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <p class="text-indigo-700">{{ ai_recommendation.summary }}</p>
+    {% endif %}
+  </div>
+
+  <h2 class="text-sm font-medium text-slate-500 px-1 mb-2 mt-4">So sánh các phương án</h2>
+  <div class="space-y-3">
+    {% for s in scenarios %}
+    <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-[15px] font-medium text-slate-900">{{ s.label }}</span>
+        <span class="text-[11px] px-2 py-1 rounded-full font-medium {{ s.traffic_color }}">{{ s.traffic_label }}</span>
+      </div>
+      <p class="text-[13px] text-slate-500">Tổng chi phí sở hữu: {{ s.tco_display }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</main>
+<script>
+  const ctx = document.getElementById("balance-chart");
+  if (window.Chart) {
+    new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: {{ chart_labels|tojson }},
+        datasets: [
+          {
+            label: "Không có khoản chi này",
+            data: {{ chart_baseline|tojson }},
+            borderColor: "#64748b",
+            borderDash: [4, 4],
+            tension: 0.2,
+          },
+          {
+            label: "Có khoản chi này (trả thẳng)",
+            data: {{ chart_with_expense|tojson }},
+            borderColor: "#007aff",
+            tension: 0.2,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } },
+        scales: { x: { title: { display: true, text: "Kỳ tới" } } },
+      },
+    });
+  }
+
+  {% if not ai_recommendation %}
+  const aiPanel = document.getElementById("ai-panel");
+  fetch("/api/ai/simulation-advice?simulation_id={{ simulation_id }}")
+    .then((r) => r.json())
+    .then((result) => {
+      if (!result.available || !result.data) return;
+      const d = result.data;
+      let html = '<p class="font-semibold mb-1">Khuyến nghị từ AI</p>';
+      html += `<p class="mb-2">${d.recommendation}</p>`;
+      if (d.scenario_notes && d.scenario_notes.length) {
+        html += '<ul class="space-y-1 list-disc list-inside mb-2">';
+        for (const n of d.scenario_notes) {
+          html += `<li><strong>${n.scenario_label}:</strong> ${n.pros} Nhưng ${n.cons}</li>`;
+        }
+        html += "</ul>";
+      }
+      html += `<p class="text-indigo-700">${d.summary}</p>`;
+      aiPanel.innerHTML = html;
+      aiPanel.classList.remove("hidden");
+    })
+    .catch(() => {});
+  {% endif %}
+</script>
 </body>
 </html>
 """
