@@ -4,6 +4,7 @@ import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 
+import period
 import risk
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -294,6 +295,31 @@ def set_budget(cursor, *, category_id, monthly_limit):
         )
 
 
+# ---------- Period budgets (Mốc 1 — supersedes "hũ chi tiêu" above, per-period not per-month) ----------
+
+def get_period_budgets(cursor, period_id):
+    cursor.execute(
+        """SELECT pb.id, pb.category_id, pb.period_id, pb.amount, pb.source, c.name_vi AS category_name
+           FROM period_budgets pb JOIN categories c ON pb.category_id = c.id
+           WHERE pb.period_id = ?
+           ORDER BY c.name_vi""",
+        (period_id,),
+    )
+    return cursor.fetchall()
+
+
+def set_period_budget(cursor, *, category_id, period_id, amount, source="manual"):
+    """Upsert — one budget per (category, period); setting it again for the
+    same period replaces the amount rather than inserting a duplicate."""
+    cursor.execute(
+        """INSERT INTO period_budgets (category_id, period_id, amount, source)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT (category_id, period_id) DO UPDATE SET
+             amount = excluded.amount, source = excluded.source""",
+        (category_id, period_id, amount, source),
+    )
+
+
 # ---------- Event planning ----------
 
 def get_event_templates(cursor):
@@ -507,30 +533,30 @@ def show_risk_report():
     print("\n===== TÌNH HÌNH TÀI CHÍNH =====")
 
     forecast = risk.short_term_forecast(cursor)
-    print("\n-- Dự báo ngắn hạn (còn lại tháng này) --")
+    print("\n-- Dự báo ngắn hạn (còn lại kỳ này) --")
     print(f"  Số dư khả dụng hiện tại:      {forecast['liquid_balance']:,} đ")
     print(f"  Khoản định kỳ còn phải trả:   {forecast['remaining_recurring']:,} đ")
     print(f"  Chi tiêu dự kiến còn lại:     {forecast['projected_variable_spend']:,} đ")
     warn = "  ⚠️ CÓ THỂ ÂM QUỸ" if forecast["at_risk"] else ""
-    print(f"  → Dự báo số dư cuối tháng:    {forecast['forecast_balance']:,} đ{warn}")
+    print(f"  → Dự báo số dư cuối kỳ:       {forecast['forecast_balance']:,} đ{warn}")
 
     liquidity = risk.liquidity_risk(cursor)
     print("\n-- Rủi ro thanh khoản --")
     if liquidity["essential_monthly_expense"] is None:
-        print("  Chưa đủ dữ liệu (cần ít nhất 1 tháng lịch sử chi tiêu đã qua).")
+        print("  Chưa đủ dữ liệu (cần ít nhất 1 kỳ lịch sử chi tiêu đã qua).")
     else:
         status = "Đủ trang trải" if liquidity["sufficient"] else "⚠️ KHÔNG ĐỦ trang trải"
         print(f"  Tài sản lỏng:                 {liquidity['liquid_balance']:,} đ")
-        print(f"  Chi phí thiết yếu 1 tháng:    {liquidity['essential_monthly_expense']:,.0f} đ")
-        print(f"  → {status} 1 tháng chi phí bắt buộc")
+        print(f"  Chi phí thiết yếu 1 kỳ:       {liquidity['essential_monthly_expense']:,.0f} đ")
+        print(f"  → {status} 1 kỳ chi phí bắt buộc")
 
     runway = risk.runway_months(cursor)
     print("\n-- Nền móng tài chính --")
     if runway["months"] is None:
-        print("  Chưa đủ dữ liệu (cần ít nhất 1 tháng lịch sử chi tiêu đã qua).")
+        print("  Chưa đủ dữ liệu (cần ít nhất 1 kỳ lịch sử chi tiêu đã qua).")
     else:
         level_text = RUNWAY_LEVEL_LABELS[runway["level"]]
-        print(f"  Nếu mất thu nhập, sống được: {runway['months']:.1f} tháng ({level_text})")
+        print(f"  Nếu mất thu nhập, sống được: {runway['months']:.1f} kỳ ({level_text})")
 
     margin = risk.income_sustainability_margin(cursor)
     print("\n-- Thu nhập ổn định --")
@@ -539,27 +565,27 @@ def show_risk_report():
     else:
         status = "Đủ trang trải" if margin["sufficient"] else "⚠️ KHÔNG ĐỦ trang trải"
         print(f"  Thu nhập ổn định (đã tính độ tin cậy): {margin['reliable_income']:,.0f} đ/tháng")
-        print(f"  Chi phí thiết yếu 1 tháng:              {margin['essential_monthly_expense']:,.0f} đ")
+        print(f"  Chi phí thiết yếu 1 kỳ:                 {margin['essential_monthly_expense']:,.0f} đ")
         print(f"  → {status} chi phí thiết yếu bằng thu nhập ổn định (chênh lệch {margin['margin']:,.0f} đ)")
 
-    this_month = datetime.now().strftime("%Y-%m")
-    budget = risk.budget_balance_50_30_20(cursor, this_month)
-    print(f"\n-- Cân đối 50/30/20 (tháng {this_month}) --")
+    this_period = period.current_period_id(cursor)
+    budget = risk.budget_balance_50_30_20(cursor, this_period)
+    print(f"\n-- Cân đối 50/30/20 (kỳ {this_period}) --")
     if budget["income"] <= 0:
-        print("  Chưa có thu nhập ghi nhận tháng này, không tính được tỉ lệ.")
+        print("  Chưa có thu nhập ghi nhận kỳ này, không tính được tỉ lệ.")
     else:
         print(f"  Thiết yếu: {budget['essential']:,} đ ({budget['essential_pct']:.0f}%, khuyến nghị ≤ 50%)")
         print(f"  Tùy chọn:  {budget['optional']:,} đ ({budget['optional_pct']:.0f}%, khuyến nghị ≤ 30%)")
         print(f"  Còn lại:   {budget['savings']:,} đ ({budget['savings_pct']:.0f}%, khuyến nghị ≥ 20%)")
 
     trend = risk.get_savings_rate_trend(cursor)
-    print("\n-- Xu hướng tỉ lệ tiết kiệm (6 tháng gần nhất đã qua) --")
-    if not trend["months"]:
-        print("  Chưa đủ dữ liệu (cần ít nhất 1 tháng đã qua có giao dịch).")
+    print("\n-- Xu hướng tỉ lệ tiết kiệm (6 kỳ gần nhất đã qua) --")
+    if not trend["periods"]:
+        print("  Chưa đủ dữ liệu (cần ít nhất 1 kỳ đã qua có giao dịch).")
     else:
-        for m in trend["months"]:
-            rate_text = f"{m['savings_rate']:.0f}%" if m["savings_rate"] is not None else "(không có thu nhập)"
-            print(f"  {m['month']}: thu {m['income']:,} đ, chi {m['expense']:,} đ, tiết kiệm {m['savings']:,} đ ({rate_text})")
+        for p in trend["periods"]:
+            rate_text = f"{p['savings_rate']:.0f}%" if p["savings_rate"] is not None else "(không có thu nhập)"
+            print(f"  {p['period_id']}: thu {p['income']:,} đ, chi {p['expense']:,} đ, tiết kiệm {p['savings']:,} đ ({rate_text})")
         trend_labels = {"improving": "↑ Đang cải thiện", "declining": "↓ Đang giảm", "stable": "→ Ổn định"}
         if trend["trend"]:
             print(f"  → {trend_labels[trend['trend']]}")

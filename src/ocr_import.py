@@ -23,26 +23,12 @@ accuracy problems proved hard to fix with more regex patches."""
 import hashlib
 import os
 
-from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+from services.ai_client import get_client, log_call
 
-_client = None
-
-
-def _get_client():
-    global _client
-    if _client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "Chưa đặt biến môi trường GEMINI_API_KEY. "
-                "Tạo API key miễn phí tại https://aistudio.google.com/apikey"
-            )
-        _client = genai.Client(api_key=api_key)
-    return _client
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-flash-latest"
 
 
 class _Candidate(BaseModel):
@@ -109,7 +95,7 @@ def _format_categories(categories_by_kind):
     return "\n".join(lines)
 
 
-def analyze_image(image_bytes, mime_type, categories_by_kind):
+def analyze_image(image_bytes, mime_type, categories_by_kind, cursor=None):
     """Sends one screenshot to Gemini and returns a list of
     {"amount": int, "direction": "in"/"out", "note": str, "category_id": int|None}
     — one per real transaction found (almost always exactly one).
@@ -121,10 +107,17 @@ def analyze_image(image_bytes, mime_type, categories_by_kind):
     actually a real category (never trust a model-generated foreign key
     blindly, even for a low-stakes field like this).
 
+    `cursor`, if given, logs this call to ai_calls via services.ai_client —
+    optional (default None) so this stays callable without a DB connection
+    (e.g. ad-hoc testing), but web_app.py always passes one in practice.
+
     Raises RuntimeError if GEMINI_API_KEY isn't set, or lets the underlying
     API exception propagate on request failure (network error, invalid key,
     quota, ...) — the caller is expected to catch and show a friendly
-    message, same as the old Tesseract path did for OCR failures."""
+    message, same as the old Tesseract path did for OCR failures. Unlike
+    services.ai_client.get_ai_suggestion(), this never degrades silently:
+    /import's entire point disappears if the image can't be read, so a
+    visible error is the correct behavior here, not a gentle fallback."""
     valid_category_ids = set()
     for parents in categories_by_kind.values():
         for parent in parents:
@@ -134,19 +127,33 @@ def analyze_image(image_bytes, mime_type, categories_by_kind):
 
     prompt = BASE_PROMPT.format(categories_text=_format_categories(categories_by_kind))
 
-    client = _get_client()
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[
-            prompt,
-            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-        ],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=_AnalysisResult,
-        ),
-    )
-    result = _AnalysisResult.model_validate_json(response.text)
+    client = get_client()
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[
+                prompt,
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=_AnalysisResult,
+            ),
+        )
+        result = _AnalysisResult.model_validate_json(response.text)
+    except Exception as exc:
+        if cursor is not None:
+            log_call(cursor, task="ocr_import", model=GEMINI_MODEL, success=False, error_message=str(exc))
+        raise
+
+    if cursor is not None:
+        usage = getattr(response, "usage_metadata", None)
+        log_call(
+            cursor, task="ocr_import", model=GEMINI_MODEL, success=True,
+            prompt_tokens=getattr(usage, "prompt_token_count", None) if usage else None,
+            response_tokens=getattr(usage, "candidates_token_count", None) if usage else None,
+            total_tokens=getattr(usage, "total_token_count", None) if usage else None,
+        )
 
     candidates = []
     seen = set()

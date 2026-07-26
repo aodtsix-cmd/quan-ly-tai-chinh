@@ -1,12 +1,24 @@
+import json
 import os
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
+from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
+from pydantic import BaseModel, Field
+
+# Must run before any os.environ.get() below — lets APP_PASSWORD/GEMINI_API_KEY/etc.
+# come from a local .env file instead of always needing to be exported by hand.
+# A real shell-exported env var still wins over .env (load_dotenv's default), so
+# existing deployments that already export these directly are unaffected.
+load_dotenv()
 
 import alerts
+import period
 import risk
 from ocr_import import analyze_image, make_external_ref
+from services.ai_client import get_ai_suggestion
 from transaction import (
     add_rule,
     apply_matching_rule,
@@ -17,16 +29,35 @@ from transaction import (
     get_active_accounts,
     get_categories,
     get_monthly_totals,
+    get_period_budgets,
     get_recent_transactions,
     get_rules,
     get_transaction_by_id,
     insert_transaction,
     log_behavior_event,
     resolve_category,
+    set_period_budget,
     update_transaction_category,
 )
 
 app = Flask(__name__)
+
+PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+class BudgetAdjustment(BaseModel):
+    category_id: int
+    suggested_amount: int = Field(
+        description="Số tiền đề xuất cho danh mục này, VNĐ nguyên. Có thể giữ nguyên "
+        "số ở gợi ý công thức nếu hợp lý, hoặc đề xuất số khác nếu thấy cần."
+    )
+    reason: str = Field(description="Lý do ngắn gọn, 1 câu, tiếng Việt.")
+
+
+class BudgetSuggestionResult(BaseModel):
+    adjustments: list[BudgetAdjustment]
+    summary: str = Field(description="Nhận xét tổng quan ngắn gọn, 1-2 câu, tiếng Việt.")
+
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 if not APP_PASSWORD:
@@ -35,7 +66,7 @@ if not APP_PASSWORD:
         "Chạy ví dụ: APP_PASSWORD=matma_cua_ban python3 src/web_app.py"
     )
 
-app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32))
+app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(32)
 app.permanent_session_lifetime = timedelta(days=30)
 
 
@@ -252,6 +283,144 @@ def delete_rule_route(rule_id):
     return redirect(url_for("rules_page"))
 
 
+def _flatten_categories(categories_by_parent):
+    """[{id, name, children:[...]}] -> flat [{id, name}], child names prefixed
+    with their parent's for context (e.g. "Ăn uống › Cà phê/Trà sữa")."""
+    flat = []
+    for parent in categories_by_parent:
+        if parent["children"]:
+            for child in parent["children"]:
+                flat.append({"id": child["id"], "name": f"{parent['name']} › {child['name']}"})
+        else:
+            flat.append({"id": parent["id"], "name": parent["name"]})
+    return flat
+
+
+@app.route("/budgets")
+def budgets_page():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    start_day = period.get_period_start_day(cursor)
+    period_id = request.args.get("period") or period.current_period_id(cursor)
+    prev_period = period.shift_period_id(period_id, -1, start_day)
+    next_period = period.shift_period_id(period_id, 1, start_day)
+    period_start, period_end = period.period_bounds_for_id(period_id, start_day)
+
+    existing_by_category = {b["category_id"]: b for b in get_period_budgets(cursor, period_id)}
+    suggestions = risk.suggest_period_budget_amounts(cursor, period_id)
+    status_by_category = {s["category_id"]: s for s in risk.get_period_budget_status(cursor, period_id)}
+    categories = _flatten_categories(category_tree_as_json(cursor, "expense"))
+
+    conn.close()
+
+    rows = []
+    for cat in categories:
+        cat_id = cat["id"]
+        existing = existing_by_category.get(cat_id)
+        suggestion = suggestions.get(cat_id)
+        status = status_by_category.get(cat_id)
+        amount = existing["amount"] if existing else (suggestion["amount"] if suggestion else None)
+        raw_pct = status["pct_used"] if status else 0
+        if raw_pct > 100:
+            bar_color = "bg-rose-500"
+        elif raw_pct >= 70:
+            bar_color = "bg-amber-500"
+        else:
+            bar_color = "bg-emerald-500"
+        rows.append({
+            "id": cat_id,
+            "name": cat["name"],
+            "amount_value": amount or "",
+            "is_suggestion": existing is None and suggestion is not None,
+            "has_budget": status is not None,
+            "spent_display": f"{status['spent']:,} đ" if status else "",
+            "pct_used": min(raw_pct, 100),
+            "bar_color": bar_color,
+            "over_budget": status["over_budget"] if status else False,
+        })
+
+    return render_template_string(
+        BUDGETS_TEMPLATE,
+        period_id=period_id,
+        prev_period=prev_period,
+        next_period=next_period,
+        period_range_display=f"{period_start.strftime('%d/%m')} – {period_end.strftime('%d/%m/%Y')}",
+        rows=rows,
+    )
+
+
+@app.route("/budgets/save", methods=["POST"])
+def budgets_save():
+    period_id = request.form.get("period_id")
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id FROM categories WHERE kind = 'expense'")
+    valid_category_ids = {row["id"] for row in cursor.fetchall()}
+
+    for key, raw_value in request.form.items():
+        if not key.startswith("amount_"):
+            continue
+        try:
+            category_id = int(key[len("amount_"):])
+            amount = int((raw_value or "").replace(",", "").replace(".", ""))
+        except ValueError:
+            continue
+        if category_id not in valid_category_ids or amount <= 0:
+            continue
+        set_period_budget(cursor, category_id=category_id, period_id=period_id, amount=amount, source="manual")
+
+    conn.commit()
+    conn.close()
+    return redirect(url_for("budgets_page", period=period_id))
+
+
+@app.route("/api/ai/budget-suggestion")
+def api_ai_budget_suggestion():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    start_day = period.get_period_start_day(cursor)
+    period_id = request.args.get("period") or period.current_period_id(cursor)
+    formula_suggestions = risk.suggest_period_budget_amounts(cursor, period_id)
+    recent_ids = period.recent_period_ids_for(period_id, 3, start_day, include_current=False)
+
+    cursor.execute("SELECT id, name_vi FROM categories WHERE kind = 'expense'")
+    category_names = {row["id"]: row["name_vi"] for row in cursor.fetchall()}
+
+    data = []
+    for category_id, suggestion in formula_suggestions.items():
+        history = [
+            risk.get_actual_spend_in_period(cursor, category_id, pid, start_day)
+            for pid in recent_ids
+        ]
+        data.append({
+            "category_id": category_id,
+            "category_name": category_names.get(category_id, ""),
+            "formula_suggested_amount": suggestion["amount"],
+            "recent_periods_actual_spend": history,
+        })
+
+    if not data:
+        conn.close()
+        return jsonify({"available": False, "reason": "no_data", "data": None})
+
+    prompt_template = (PROMPTS_DIR / "budget_suggestion.md").read_text(encoding="utf-8")
+    prompt = prompt_template.format(period_id=period_id, data_json=json.dumps(data, ensure_ascii=False))
+
+    result = get_ai_suggestion(
+        cursor,
+        task="budget_suggestion",
+        input_data={"period_id": period_id, "categories": data},
+        response_schema=BudgetSuggestionResult,
+        prompt=prompt,
+    )
+    conn.commit()
+    conn.close()
+    return jsonify(result)
+
+
 RUNWAY_LEVEL_LABELS = {
     "nguy_hiem": "Nguy hiểm",
     "mong_manh": "Mong manh",
@@ -275,8 +444,9 @@ def risk_page():
     liquidity = risk.liquidity_risk(cursor)
     runway = risk.runway_months(cursor)
     margin = risk.income_sustainability_margin(cursor)
-    this_month = datetime.now().strftime("%Y-%m")
-    budget = risk.budget_balance_50_30_20(cursor, this_month)
+    this_period = period.current_period_id(cursor)
+    this_month = datetime.now().strftime("%Y-%m")  # get_budget_status stays calendar-month, see risk.py
+    budget = risk.budget_balance_50_30_20(cursor, this_period)
     budget_statuses = risk.get_budget_status(cursor, this_month)
     savings_trend = risk.get_savings_rate_trend(cursor)
 
@@ -284,6 +454,7 @@ def risk_page():
 
     return render_template_string(
         RISK_TEMPLATE,
+        period_id=this_period,
         month=this_month,
         forecast={
             "liquid_balance_display": f"{forecast['liquid_balance']:,} đ",
@@ -335,15 +506,15 @@ def risk_page():
             for s in budget_statuses
         ],
         savings_trend={
-            "has_data": bool(savings_trend["months"]),
-            "months": [
+            "has_data": bool(savings_trend["periods"]),
+            "periods": [
                 {
-                    "month": m["month"],
-                    "savings_display": f"{m['savings']:,} đ",
-                    "rate_display": f"{m['savings_rate']:.0f}%" if m["savings_rate"] is not None else "—",
-                    "positive": m["savings"] >= 0,
+                    "period_id": p["period_id"],
+                    "savings_display": f"{p['savings']:,} đ",
+                    "rate_display": f"{p['savings_rate']:.0f}%" if p["savings_rate"] is not None else "—",
+                    "positive": p["savings"] >= 0,
                 }
-                for m in savings_trend["months"]
+                for p in savings_trend["periods"]
             ],
             "trend_label": SAVINGS_TREND_LABELS.get(savings_trend["trend"]),
         },
@@ -372,7 +543,7 @@ def import_page():
     try:
         for image_index, image in enumerate(images):
             image_bytes = image.stream.read()
-            found = analyze_image(image_bytes, image.mimetype or "image/png", categories_by_kind)
+            found = analyze_image(image_bytes, image.mimetype or "image/png", categories_by_kind, cursor=cursor)
             debug_blocks.append(
                 f"--- Ảnh #{image_index + 1} ({image.filename}) ---\n"
                 + ("\n".join(f"{c['amount']:,} đ ({c['direction']}) — {c['note']!r}" for c in found) or "(không tìm thấy giao dịch nào)")
@@ -385,6 +556,7 @@ def import_page():
                 candidate["suggested_category_id"] = candidate["category_id"] or apply_matching_rule(cursor, candidate["note"])
                 candidates.append(candidate)
     except Exception as exc:
+        conn.commit()  # keep the ai_calls failure entry analyze_image() just logged
         conn.close()
         return render_template_string(
             IMPORT_TEMPLATE,
@@ -393,6 +565,7 @@ def import_page():
 
     accounts = accounts_as_json(cursor)
     all_categories = category_tree_as_json(cursor, "expense") + category_tree_as_json(cursor, "income")
+    conn.commit()  # keep the ai_calls success entries analyze_image() logged per image
     conn.close()
 
     if not candidates:
@@ -697,10 +870,11 @@ def tailwind_nav(active):
         link("/", "Nhập", "add"),
         link("/transactions", "Danh sách", "list"),
         link("/summary", "Tổng quan", "summary"),
+        link("/budgets", "Ngân sách", "budgets"),
         link("/rules", "Luật", "rules"),
     ])
     return f"""<nav class="max-w-lg mx-auto px-4 pt-5 pb-1">
-  <div class="flex gap-1.5 bg-white rounded-2xl p-1.5 shadow-sm ring-1 ring-slate-900/5">
+  <div class="flex flex-wrap gap-1.5 bg-white rounded-2xl p-1.5 shadow-sm ring-1 ring-slate-900/5">
     {links}
   </div>
 </nav>"""
@@ -794,6 +968,7 @@ PAGE_TEMPLATE = """<!doctype html>
   <a href="/risk">Sức khỏe TC</a>
   <a href="/import">Nhập ảnh</a>
   <a href="/rules">Luật</a>
+  <a href="/budgets">Ngân sách</a>
 </div>
 {% for alert in alerts %}
 <div class="alert-banner {{ alert.level }}">{{ alert.message }}</div>
@@ -1062,6 +1237,83 @@ RULES_TEMPLATE = """<!doctype html>
 """
 
 
+BUDGETS_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>Ngân sách theo kỳ</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("budgets") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <div class="flex items-center justify-between px-1 mb-3">
+    <a href="/budgets?period={{ prev_period }}" class="text-slate-400 text-sm px-2 py-1">‹</a>
+    <div class="text-center">
+      <p class="text-sm font-medium text-slate-700">Kỳ {{ period_id }}</p>
+      <p class="text-[12px] text-slate-400">{{ period_range_display }}</p>
+    </div>
+    <a href="/budgets?period={{ next_period }}" class="text-slate-400 text-sm px-2 py-1">›</a>
+  </div>
+
+  <div id="ai-panel" class="bg-indigo-50 rounded-2xl p-4 mb-4 text-[13px] text-indigo-900 hidden"></div>
+
+  <form method="post" action="/budgets/save">
+    <input type="hidden" name="period_id" value="{{ period_id }}">
+    <div class="space-y-3">
+      {% for row in rows %}
+      <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4">
+        <div class="flex items-center justify-between gap-3 mb-2">
+          <span class="text-[15px] font-medium text-slate-900">{{ row.name }}</span>
+          <div class="flex items-center gap-1">
+            <input type="text" inputmode="numeric" name="amount_{{ row.id }}" value="{{ row.amount_value }}"
+                   placeholder="0" class="w-28 text-right text-[15px] font-semibold border border-slate-200 rounded-lg px-2 py-1.5">
+            <span class="text-[13px] text-slate-400">đ</span>
+          </div>
+        </div>
+        {% if row.is_suggestion %}
+        <p class="text-[12px] text-brand mb-2">Gợi ý theo công thức — bấm Lưu để chốt, hoặc sửa số trước khi lưu.</p>
+        {% endif %}
+        {% if row.has_budget %}
+        <div class="flex items-center justify-between text-[12px] text-slate-500 mb-1">
+          <span>Đã chi {{ row.spent_display }}</span>
+          {% if row.over_budget %}<span class="text-rose-600 font-medium">Vượt ngân sách</span>{% endif %}
+        </div>
+        <div class="bg-slate-100 rounded-full h-2 overflow-hidden">
+          <div class="{{ row.bar_color }} h-full rounded-full" style="width: {{ row.pct_used }}%;"></div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <button type="submit" class="w-full mt-4 py-3.5 rounded-xl bg-brand text-white font-medium">Lưu ngân sách</button>
+  </form>
+</main>
+<script>
+  const aiPanel = document.getElementById("ai-panel");
+  fetch("/api/ai/budget-suggestion?period={{ period_id }}")
+    .then((r) => r.json())
+    .then((result) => {
+      if (!result.available || !result.data) return;
+      const d = result.data;
+      let html = '<p class="font-semibold mb-1">Nhận xét từ AI</p>';
+      html += `<p class="mb-2">${d.summary}</p>`;
+      if (d.adjustments && d.adjustments.length) {
+        html += '<ul class="space-y-1 list-disc list-inside">';
+        for (const a of d.adjustments) {
+          html += `<li>${a.reason}</li>`;
+        }
+        html += "</ul>";
+      }
+      aiPanel.innerHTML = html;
+      aiPanel.classList.remove("hidden");
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>
+"""
+
+
 EDIT_TEMPLATE = """<!doctype html>
 <html lang="vi">
 <head>
@@ -1121,6 +1373,7 @@ EDIT_TEMPLATE = """<!doctype html>
   <a href="/risk">Sức khỏe TC</a>
   <a href="/import">Nhập ảnh</a>
   <a href="/rules">Luật</a>
+  <a href="/budgets">Ngân sách</a>
 </div>
 <div class="card">
   <h1>Sửa danh mục</h1>
@@ -1221,42 +1474,43 @@ RISK_TEMPLATE = """<!doctype html>
   <a href="/risk" class="active">Sức khỏe TC</a>
   <a href="/import">Nhập ảnh</a>
   <a href="/rules">Luật</a>
+  <a href="/budgets">Ngân sách</a>
 </div>
 <div class="card">
   <h1>Tình hình tài chính</h1>
 
-  <p class="section-title">Dự báo ngắn hạn (còn lại tháng này)</p>
+  <p class="section-title">Dự báo ngắn hạn (còn lại kỳ này)</p>
   <div class="summary-row"><span>Số dư khả dụng</span><span>{{ forecast.liquid_balance_display }}</span></div>
   <div class="summary-row"><span>Khoản định kỳ còn phải trả</span><span>{{ forecast.remaining_recurring_display }}</span></div>
   <div class="summary-row"><span>Chi tiêu dự kiến còn lại</span><span>{{ forecast.projected_spend_display }}</span></div>
   <div class="summary-row total {{ 'danger' if forecast.at_risk else 'good' }}">
-    <span>Dự báo cuối tháng</span><span>{{ forecast.forecast_balance_display }}</span>
+    <span>Dự báo cuối kỳ</span><span>{{ forecast.forecast_balance_display }}</span>
   </div>
-  {% if forecast.at_risk %}<p class="note warning">⚠️ Có thể âm quỹ cuối tháng nếu chi tiêu như hiện tại.</p>{% endif %}
+  {% if forecast.at_risk %}<p class="note warning">⚠️ Có thể âm quỹ cuối kỳ nếu chi tiêu như hiện tại.</p>{% endif %}
 
   <p class="section-title">Rủi ro thanh khoản</p>
   {% if liquidity.has_data %}
     <div class="summary-row"><span>Tài sản lỏng</span><span>{{ liquidity.liquid_balance_display }}</span></div>
-    <div class="summary-row"><span>Chi phí thiết yếu 1 tháng (ước tính)</span><span>{{ liquidity.essential_monthly_display }}</span></div>
+    <div class="summary-row"><span>Chi phí thiết yếu 1 kỳ (ước tính)</span><span>{{ liquidity.essential_monthly_display }}</span></div>
     <p class="note {{ 'good' if liquidity.sufficient else 'warning' }}">
-      {{ 'Đủ trang trải 1 tháng chi phí bắt buộc.' if liquidity.sufficient else '⚠️ Không đủ trang trải 1 tháng chi phí bắt buộc.' }}
+      {{ 'Đủ trang trải 1 kỳ chi phí bắt buộc.' if liquidity.sufficient else '⚠️ Không đủ trang trải 1 kỳ chi phí bắt buộc.' }}
     </p>
   {% else %}
-    <p class="empty">Chưa đủ dữ liệu (cần lịch sử chi tiêu ít nhất 1 tháng đã qua).</p>
+    <p class="empty">Chưa đủ dữ liệu (cần lịch sử chi tiêu ít nhất 1 kỳ đã qua).</p>
   {% endif %}
 
   <p class="section-title">Nền móng tài chính</p>
   {% if runway.has_data %}
-    <p>Nếu mất thu nhập, tài sản lỏng đủ sống <strong>{{ runway.months_display }} tháng</strong> —
+    <p>Nếu mất thu nhập, tài sản lỏng đủ sống <strong>{{ runway.months_display }} kỳ</strong> —
        <span class="badge badge-{{ runway.level }}">{{ runway.level_label }}</span></p>
   {% else %}
-    <p class="empty">Chưa đủ dữ liệu (cần lịch sử chi tiêu ít nhất 1 tháng đã qua).</p>
+    <p class="empty">Chưa đủ dữ liệu (cần lịch sử chi tiêu ít nhất 1 kỳ đã qua).</p>
   {% endif %}
 
   <p class="section-title">Thu nhập ổn định</p>
   {% if margin.has_data %}
     <div class="summary-row"><span>Thu nhập ổn định (đã tính độ tin cậy)</span><span>{{ margin.reliable_income_display }}</span></div>
-    <div class="summary-row"><span>Chi phí thiết yếu 1 tháng</span><span>{{ margin.essential_monthly_display }}</span></div>
+    <div class="summary-row"><span>Chi phí thiết yếu 1 kỳ</span><span>{{ margin.essential_monthly_display }}</span></div>
     <p class="note {{ 'good' if margin.sufficient else 'warning' }}">
       {{ 'Đủ trang trải' if margin.sufficient else '⚠️ Không đủ trang trải' }} chi phí thiết yếu (chênh lệch {{ margin.margin_display }}).
     </p>
@@ -1264,13 +1518,13 @@ RISK_TEMPLATE = """<!doctype html>
     <p class="empty">Chưa đủ dữ liệu (cần khai báo nguồn thu nhập ở CLI menu 10, và có lịch sử chi tiêu).</p>
   {% endif %}
 
-  <p class="section-title">Cân đối 50/30/20 (tháng {{ month }})</p>
+  <p class="section-title">Cân đối 50/30/20 (kỳ {{ period_id }})</p>
   {% if budget.has_income %}
     <div class="summary-row"><span>Thiết yếu (≤ 50%)</span><span>{{ budget.essential_display }} ({{ budget.essential_pct }}%)</span></div>
     <div class="summary-row"><span>Tùy chọn (≤ 30%)</span><span>{{ budget.optional_display }} ({{ budget.optional_pct }}%)</span></div>
     <div class="summary-row"><span>Còn lại (≥ 20%)</span><span>{{ budget.savings_display }} ({{ budget.savings_pct }}%)</span></div>
   {% else %}
-    <p class="empty">Chưa có thu nhập ghi nhận tháng này.</p>
+    <p class="empty">Chưa có thu nhập ghi nhận kỳ này.</p>
   {% endif %}
 
   <p class="section-title">Hũ chi tiêu (tháng {{ month }})</p>
@@ -1287,17 +1541,17 @@ RISK_TEMPLATE = """<!doctype html>
     </div>
     {% endfor %}
   {% else %}
-    <p class="empty">Chưa đặt ngân sách cho danh mục nào (CLI menu 12).</p>
+    <p class="empty">Chưa đặt ngân sách cho danh mục nào (CLI menu 12) — hoặc dùng ngân sách theo kỳ mới ở trang <a href="/budgets">Ngân sách</a>.</p>
   {% endif %}
 
-  <p class="section-title">Xu hướng tỉ lệ tiết kiệm (các tháng đã qua)</p>
+  <p class="section-title">Xu hướng tỉ lệ tiết kiệm (các kỳ đã qua)</p>
   {% if savings_trend.has_data %}
-    {% for m in savings_trend.months %}
-    <div class="summary-row"><span>{{ m.month }}</span><span class="{{ 'good' if m.positive else 'warning' }}">{{ m.savings_display }} ({{ m.rate_display }})</span></div>
+    {% for p in savings_trend.periods %}
+    <div class="summary-row"><span>{{ p.period_id }}</span><span class="{{ 'good' if p.positive else 'warning' }}">{{ p.savings_display }} ({{ p.rate_display }})</span></div>
     {% endfor %}
     {% if savings_trend.trend_label %}<p class="note">{{ savings_trend.trend_label }}</p>{% endif %}
   {% else %}
-    <p class="empty">Chưa đủ dữ liệu (cần ít nhất 1 tháng đã qua có giao dịch).</p>
+    <p class="empty">Chưa đủ dữ liệu (cần ít nhất 1 kỳ đã qua có giao dịch).</p>
   {% endif %}
 </div>
 </body>
@@ -1350,6 +1604,7 @@ IMPORT_TEMPLATE = """<!doctype html>
   <a href="/risk">Sức khỏe TC</a>
   <a href="/import" class="active">Nhập ảnh</a>
   <a href="/rules">Luật</a>
+  <a href="/budgets">Ngân sách</a>
 </div>
 <div class="card">
   <h1>Nhập từ ảnh chụp</h1>
@@ -1419,6 +1674,7 @@ IMPORT_REVIEW_TEMPLATE = """<!doctype html>
   <a href="/risk">Sức khỏe TC</a>
   <a href="/import" class="active">Nhập ảnh</a>
   <a href="/rules">Luật</a>
+  <a href="/budgets">Ngân sách</a>
 </div>
 <div class="card">
   <h1>{{ candidates|length }} giao dịch tìm thấy — kiểm tra trước khi lưu</h1>

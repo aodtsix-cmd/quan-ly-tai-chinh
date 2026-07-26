@@ -20,7 +20,7 @@ def get_active_alerts(cursor, as_of=None):
         alerts.append({
             "code": "short_term_forecast_negative",
             "level": "danger",
-            "message": f"⚠️ Dự báo cuối tháng có thể âm quỹ: {forecast['forecast_balance']:,} đ. Cân nhắc giảm chi tiêu.",
+            "message": f"⚠️ Dự báo cuối kỳ có thể âm quỹ: {forecast['forecast_balance']:,} đ. Cân nhắc giảm chi tiêu.",
         })
 
     liquidity = risk.liquidity_risk(cursor)
@@ -28,7 +28,7 @@ def get_active_alerts(cursor, as_of=None):
         alerts.append({
             "code": "liquidity_insufficient",
             "level": "warning",
-            "message": "Tài sản lỏng hiện không đủ trang trải 1 tháng chi phí thiết yếu.",
+            "message": "Tài sản lỏng hiện không đủ trang trải 1 kỳ chi phí thiết yếu.",
         })
 
     runway = risk.runway_months(cursor)
@@ -36,13 +36,13 @@ def get_active_alerts(cursor, as_of=None):
         alerts.append({
             "code": "runway_danger",
             "level": "danger",
-            "message": f"Nền móng tài chính nguy hiểm: chỉ đủ sống {runway['months']:.1f} tháng nếu mất thu nhập.",
+            "message": f"Nền móng tài chính nguy hiểm: chỉ đủ sống {runway['months']:.1f} kỳ nếu mất thu nhập.",
         })
     elif runway["level"] == "mong_manh":
         alerts.append({
             "code": "runway_fragile",
             "level": "warning",
-            "message": f"Nền móng tài chính mong manh: đủ sống {runway['months']:.1f} tháng nếu mất thu nhập.",
+            "message": f"Nền móng tài chính mong manh: đủ sống {runway['months']:.1f} kỳ nếu mất thu nhập.",
         })
 
     margin = risk.income_sustainability_margin(cursor)
@@ -50,7 +50,7 @@ def get_active_alerts(cursor, as_of=None):
         alerts.append({
             "code": "income_sustainability_insufficient",
             "level": "warning",
-            "message": f"Thu nhập ổn định thấp hơn chi phí thiết yếu hàng tháng (chênh lệch {margin['margin']:,.0f} đ).",
+            "message": f"Thu nhập ổn định thấp hơn chi phí thiết yếu mỗi kỳ (chênh lệch {margin['margin']:,.0f} đ).",
         })
 
     return alerts
