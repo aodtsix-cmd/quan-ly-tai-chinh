@@ -492,6 +492,63 @@ def get_simulation_scenarios(cursor, simulation_id):
     return cursor.fetchall()
 
 
+# ---------- Cashflow forecasting (Mốc 4) ----------
+
+def create_cashflow_forecast(cursor, *, periods_ahead, scenario="base", base_forecast_id=None,
+                              seasonality_applied=False, seasonality_details=None,
+                              macro_adjustment=None, macro_context_note=None, macro_context_sources=None):
+    cursor.execute(
+        """INSERT INTO cashflow_forecasts
+           (periods_ahead, scenario, base_forecast_id, seasonality_applied, seasonality_details,
+            macro_adjustment, macro_context_note, macro_context_sources)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (periods_ahead, scenario, base_forecast_id, int(seasonality_applied),
+         json.dumps(seasonality_details) if seasonality_details is not None else None,
+         macro_adjustment, macro_context_note,
+         json.dumps(macro_context_sources) if macro_context_sources is not None else None),
+    )
+    return cursor.lastrowid
+
+
+def add_forecast_period(cursor, *, forecast_id, period_index, period_id, projected_balance,
+                         projected_income, projected_expense, is_danger):
+    cursor.execute(
+        """INSERT INTO cashflow_forecast_periods
+           (forecast_id, period_index, period_id, projected_balance, projected_income, projected_expense, is_danger)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (forecast_id, period_index, period_id, projected_balance, projected_income,
+         projected_expense, int(is_danger)),
+    )
+
+
+def get_cashflow_forecasts(cursor):
+    cursor.execute(
+        """SELECT id, created_at, periods_ahead, scenario, base_forecast_id, seasonality_applied
+           FROM cashflow_forecasts ORDER BY id DESC"""
+    )
+    return cursor.fetchall()
+
+
+def get_cashflow_forecast_by_id(cursor, forecast_id):
+    cursor.execute(
+        """SELECT id, created_at, periods_ahead, scenario, base_forecast_id,
+                  seasonality_applied, seasonality_details,
+                  macro_adjustment, macro_context_note, macro_context_sources
+           FROM cashflow_forecasts WHERE id = ?""",
+        (forecast_id,),
+    )
+    return cursor.fetchone()
+
+
+def get_forecast_periods(cursor, forecast_id):
+    cursor.execute(
+        """SELECT period_index, period_id, projected_balance, projected_income, projected_expense, is_danger
+           FROM cashflow_forecast_periods WHERE forecast_id = ? ORDER BY period_index""",
+        (forecast_id,),
+    )
+    return cursor.fetchall()
+
+
 # ---------- Terminal CLI ----------
 
 def display_accounts(cursor):

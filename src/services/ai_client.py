@@ -29,6 +29,7 @@ from google.genai import types
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-flash-latest"
 DEFAULT_MODEL_HEAVY = os.environ.get("GEMINI_MODEL_HEAVY") or "gemini-pro-latest"
 DEFAULT_TTL_SECONDS = 6 * 60 * 60  # 6 hours — long enough to avoid refetching on every page load
+MACRO_CONTEXT_TTL_SECONDS = 24 * 60 * 60  # news/context is time-sensitive; don't cache as long as advisory tasks
 
 _client = None
 
@@ -144,5 +145,82 @@ def get_ai_suggestion(cursor, *, task, input_data, response_schema, prompt,
              response = excluded.response, model = excluded.model,
              created_at = datetime('now'), expires_at = excluded.expires_at""",
         (task, input_hash, json.dumps(data), model_name, expires_at),
+    )
+    return {"available": True, "data": data, "cached": False}
+
+
+def get_macro_context(cursor, prompt, model=None, ttl_seconds=MACRO_CONTEXT_TTL_SECONDS):
+    """Mốc 4's optional "Bối cảnh tham khảo" layer: Gemini + Google Search
+    grounding, kept entirely separate from get_ai_suggestion() because
+    grounding doesn't fit that function's contract — there's no Pydantic
+    response_schema here (grounding + forced-JSON structured output is not
+    reliably combinable in the Gemini API as of this writing, and this
+    function's grounding_metadata parsing below is UNCONFIRMED against a
+    real key/response — verify live before relying on it, same as every
+    other "check with a real call" note already in this codebase, e.g.
+    ocr_import.py's model-alias history).
+
+    Returns {"available": True, "data": {"summary": str, "sources": [{"title", "url"}]}}
+    or {"available": False, "reason": ..., "data": None} — same sentinel
+    shape as get_ai_suggestion for template-side consistency, but never
+    cached in ai_cache the same way (grounded search results are
+    time-sensitive by nature; cached here too, but callers should treat a
+    short TTL as more appropriate than the 6-hour default used elsewhere)."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return {"available": False, "reason": "no_key", "data": None}
+
+    model_name = model or DEFAULT_MODEL_HEAVY
+    input_hash = _hash_input("macro_context", {"prompt": prompt})
+
+    cursor.execute(
+        """SELECT response FROM ai_cache
+           WHERE task = 'macro_context' AND input_hash = ? AND expires_at > datetime('now')""",
+        (input_hash,),
+    )
+    row = cursor.fetchone()
+    if row is not None:
+        return {"available": True, "data": json.loads(row["response"]), "cached": True}
+
+    try:
+        client = get_client()
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[prompt],
+            config=types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())]),
+        )
+        summary = response.text
+        sources = []
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            grounding_metadata = getattr(candidates[0], "grounding_metadata", None)
+            chunks = getattr(grounding_metadata, "grounding_chunks", None) or []
+            for chunk in chunks:
+                web = getattr(chunk, "web", None)
+                if web is not None:
+                    sources.append({
+                        "title": getattr(web, "title", "") or "",
+                        "url": getattr(web, "uri", "") or "",
+                    })
+        data = {"summary": summary, "sources": sources}
+        usage = getattr(response, "usage_metadata", None)
+        log_call(
+            cursor, task="macro_context", model=model_name, success=True,
+            prompt_tokens=getattr(usage, "prompt_token_count", None) if usage else None,
+            response_tokens=getattr(usage, "candidates_token_count", None) if usage else None,
+            total_tokens=getattr(usage, "total_token_count", None) if usage else None,
+        )
+    except Exception as exc:
+        log_call(cursor, task="macro_context", model=model_name, success=False, error_message=str(exc))
+        return {"available": False, "reason": _classify_error(exc), "data": None}
+
+    expires_at = (datetime.now() + timedelta(seconds=ttl_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        """INSERT INTO ai_cache (task, input_hash, response, model, expires_at)
+           VALUES ('macro_context', ?, ?, ?, ?)
+           ON CONFLICT (task, input_hash) DO UPDATE SET
+             response = excluded.response, model = excluded.model,
+             created_at = datetime('now'), expires_at = excluded.expires_at""",
+        (input_hash, json.dumps(data), model_name, expires_at),
     )
     return {"available": True, "data": data, "cached": False}

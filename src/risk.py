@@ -1,3 +1,5 @@
+import calendar
+import statistics
 from datetime import date, timedelta
 
 import period
@@ -532,13 +534,13 @@ INSTALLMENT_OPTIONS = (3, 6, 12)
 DELAY_OPTIONS = (3, 6)
 
 
-def get_baseline_period_flow(cursor, periods=BASELINE_FLOW_LOOKBACK_PERIODS):
+def get_baseline_period_flow(cursor, periods=BASELINE_FLOW_LOOKBACK_PERIODS, as_of=None):
     """Average income/expense per period over the last `periods` completed
     periods that have any transaction (reuses get_savings_rate_trend's own
     data rather than re-querying) — the "business as usual" run rate used to
     project forward in project_simple_trajectory. {0, 0} if there's no
     history yet."""
-    trend = get_savings_rate_trend(cursor, periods=periods)
+    trend = get_savings_rate_trend(cursor, periods=periods, as_of=as_of)
     data = trend["periods"]
     if not data:
         return {"avg_income": 0, "avg_expense": 0}
@@ -559,7 +561,7 @@ def project_simple_trajectory(cursor, periods_ahead, extra_expenses=None, as_of=
 
     `extra_expenses`: optional {period_offset: amount} to layer hypothetical
     spending on top, 0-indexed from the current (still-open) period."""
-    flow = get_baseline_period_flow(cursor)
+    flow = get_baseline_period_flow(cursor, as_of=as_of)
     balance = get_liquid_balance(cursor)
     extra_expenses = extra_expenses or {}
     trajectory = []
@@ -641,3 +643,189 @@ def compute_spending_scenarios(cursor, *, item_amount, maintenance_cost_per_peri
         scenarios.append(build_scenario("delay", 1, n, extra))
 
     return scenarios, baseline_balances
+
+
+# ---------- Cashflow forecasting (Mốc 4) ----------
+
+RECURRING_STEP_MONTHS = {"monthly": 1, "quarterly": 3, "yearly": 12}
+SEASONALITY_MIN_PERIODS = 12
+SEASONALITY_PCT_THRESHOLD = 15
+
+
+def _step_months(d, months):
+    """Same day-clamping convention as period.py's/transaction.py's own
+    _add_months — duplicated here rather than imported, for the same
+    one-way-dependency reason period.py already documents (risk.py is
+    imported by transaction.py, so importing back would cycle)."""
+    month_index = d.month - 1 + months
+    year = d.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def project_recurring_by_period(cursor, period_ids):
+    """{period_id: {"in": total, "out": total}} for every id in `period_ids`,
+    by simulating each active recurring item's own occurrences forward from
+    its real next_due using its real frequency — a quarterly item must NOT
+    show up in every single period, only the ones it actually falls in."""
+    cursor.execute("SELECT amount, direction, frequency, next_due FROM recurring WHERE is_active = 1")
+    rows = cursor.fetchall()
+
+    totals = {pid: {"in": 0, "out": 0} for pid in period_ids}
+    period_id_set = set(period_ids)
+    last_period_id = max(period_ids) if period_ids else None
+    start_day = period.get_period_start_day(cursor)
+
+    for row in rows:
+        step = RECURRING_STEP_MONTHS[row["frequency"]]
+        occurrence = date.fromisoformat(row["next_due"])
+        for _ in range(400):  # safety cap — generous even for a 12-period/yearly-frequency window
+            occ_period_id = period.period_id_for(occurrence, start_day)
+            if last_period_id is None or occ_period_id > last_period_id:
+                break
+            if occ_period_id in period_id_set:
+                totals[occ_period_id][row["direction"]] += row["amount"]
+            occurrence = _step_months(occurrence, step)
+
+    return totals
+
+
+def detect_seasonality(cursor, as_of=None):
+    """Descriptive statistics only — mean/stdev total 'out' spend per
+    calendar-month-position (Jan..Dec) vs. the overall period average,
+    using every *completed* period of history (needs >= SEASONALITY_MIN_
+    PERIODS to say anything at all — less than one full annual cycle isn't
+    enough to call something seasonal). This function only ever SUGGESTS: it
+    never decides on its own to feed into a forecast — the confidence
+    threshold (SEASONALITY_PCT_THRESHOLD) is fixed, deterministic Python,
+    not something an AI call adjusts; an AI may only *describe* what this
+    returns in words, per the user's explicit "AI diễn giải căn cứ đó,
+    nhưng ngưỡng tin cậy do công thức quyết định" requirement.
+
+    Returns {"has_enough_data": bool, "periods_analyzed": int,
+             "patterns": [{"month", "avg_expense", "overall_avg",
+                            "pct_difference", "stdev", "sample_count"}, ...]}
+    — patterns only includes month-positions seen >= 2 times whose average
+    differs from the overall average by at least SEASONALITY_PCT_THRESHOLD%,
+    sorted by how large that difference is."""
+    start_day = period.get_period_start_day(cursor)
+    as_of_date = as_of or date.today()
+    current_id = period.current_period_id(cursor, as_of_date)
+
+    cursor.execute("SELECT occurred_at, amount FROM transactions WHERE direction = 'out'")
+    expense_by_period = {}
+    for row in cursor.fetchall():
+        occurred_date = date.fromisoformat(row["occurred_at"][:10])
+        pid = period.period_id_for(occurred_date, start_day)
+        if pid >= current_id:
+            continue
+        expense_by_period[pid] = expense_by_period.get(pid, 0) + row["amount"]
+
+    periods_analyzed = len(expense_by_period)
+    if periods_analyzed < SEASONALITY_MIN_PERIODS:
+        return {"has_enough_data": False, "periods_analyzed": periods_analyzed, "patterns": []}
+
+    overall_avg = sum(expense_by_period.values()) / periods_analyzed
+
+    by_month = {}
+    for pid, total in expense_by_period.items():
+        month = int(pid.split("-")[1])
+        by_month.setdefault(month, []).append(total)
+
+    patterns = []
+    for month, totals in by_month.items():
+        if len(totals) < 2:
+            continue
+        avg = sum(totals) / len(totals)
+        pct_difference = (avg - overall_avg) / overall_avg * 100 if overall_avg else 0
+        if abs(pct_difference) >= SEASONALITY_PCT_THRESHOLD:
+            patterns.append({
+                "month": month,
+                "avg_expense": round(avg),
+                "overall_avg": round(overall_avg),
+                "pct_difference": round(pct_difference, 1),
+                "stdev": round(statistics.stdev(totals)),
+                "sample_count": len(totals),
+            })
+
+    patterns.sort(key=lambda p: -abs(p["pct_difference"]))
+    return {"has_enough_data": True, "periods_analyzed": periods_analyzed, "patterns": patterns}
+
+
+def compute_cashflow_forecast(cursor, periods_ahead, goal_contribution_per_period=0,
+                               irregular_income_by_offset=None, seasonality_patterns=None, as_of=None):
+    """Mốc 4's core forecast: projected balance at the end of each of the
+    next `periods_ahead` periods (6–12 per the spec), chaining each period's
+    ending balance into the next one's starting balance. Combines:
+      - recurring commitments, via project_recurring_by_period (real
+        per-item frequency, not "one per period")
+      - reliable monthly income from income_sources (get_reliable_monthly_
+        income), applied every period
+      - "other variable spend" = recent historical average total expense
+        minus recent average recurring expense (same approach Mốc 3's
+        project_simple_trajectory uses) — deliberately NOT period_budgets
+        directly: a budgeted category can also be a recurring item, and
+        reconciling that overlap correctly is a real double-counting risk;
+        budgets are shown as informational context next to the forecast
+        instead (see web_app.py), not folded into this number
+      - goal_contribution_per_period: the caller's own precomputed sum of
+        every active goal's required_per_period (risk.py can't import
+        transaction.py's get_goals — same one-way dependency rule as
+        elsewhere — so the caller passes this in already computed).
+        Applied as a FLAT amount for every period in this forecast, even
+        past a goal's own deadline — a known simplification, not a bug:
+        properly stopping each goal's contribution at its own deadline
+        would need per-goal period-by-period bookkeeping this function
+        doesn't do; documented here rather than silently assumed correct.
+      - irregular_income_by_offset: {0-indexed period offset: amount}, the
+        user's own manual per-period estimates for uncertain income
+      - seasonality_patterns: optional, from detect_seasonality()'s own
+        `patterns` list — if given, scales "other variable spend" for any
+        period whose calendar-month matches a detected pattern. Passing
+        this is the ONLY way seasonality affects a forecast; it is never
+        applied unless the caller explicitly opted in (see web_app.py's
+        /forecast route — a checkbox the user must actively tick)."""
+    as_of_date = as_of or date.today()
+    start_day = period.get_period_start_day(cursor)
+    current_id = period.current_period_id(cursor, as_of_date)
+    period_ids = [period.shift_period_id(current_id, i, start_day) for i in range(periods_ahead)]
+
+    recurring_by_period = project_recurring_by_period(cursor, period_ids)
+    flow = get_baseline_period_flow(cursor, as_of=as_of_date)
+    reliable_income = get_reliable_monthly_income(cursor) or 0
+    irregular_income_by_offset = irregular_income_by_offset or {}
+    seasonality_patterns = seasonality_patterns or []
+    seasonality_by_month = {p["month"]: p for p in seasonality_patterns}
+
+    avg_recurring_out = (
+        sum(v["out"] for v in recurring_by_period.values()) / len(period_ids) if period_ids else 0
+    )
+    base_other_variable_expense = max(flow["avg_expense"] - avg_recurring_out, 0)
+    essential = get_average_period_essential_expense(cursor, as_of=as_of_date)
+
+    balance = get_liquid_balance(cursor)
+    results = []
+    for i, pid in enumerate(period_ids):
+        rec = recurring_by_period[pid]
+        month = int(pid.split("-")[1])
+        other_variable_expense = base_other_variable_expense
+        pattern = seasonality_by_month.get(month)
+        if pattern and pattern["overall_avg"]:
+            other_variable_expense = round(base_other_variable_expense * (pattern["avg_expense"] / pattern["overall_avg"]))
+
+        period_income = rec["in"] + reliable_income + irregular_income_by_offset.get(i, 0)
+        period_expense = rec["out"] + other_variable_expense + goal_contribution_per_period
+        balance = balance + period_income - period_expense
+        is_danger = balance < 0 or (essential is not None and balance < essential)
+
+        results.append({
+            "period_index": i,
+            "period_id": pid,
+            "projected_balance": round(balance),
+            "projected_income": round(period_income),
+            "projected_expense": round(period_expense),
+            "is_danger": is_danger,
+        })
+
+    return results

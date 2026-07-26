@@ -18,13 +18,15 @@ import alerts
 import period
 import risk
 from ocr_import import analyze_image, make_external_ref
-from services.ai_client import DEFAULT_MODEL_HEAVY, get_ai_suggestion
+from services.ai_client import DEFAULT_MODEL_HEAVY, get_ai_suggestion, get_macro_context
 from transaction import (
     add_event_plan_item,
+    add_forecast_period,
     add_rule,
     add_simulation_scenario,
     apply_matching_rule,
     connect_db,
+    create_cashflow_forecast,
     create_event_plan,
     create_goal,
     create_spending_simulation,
@@ -33,12 +35,15 @@ from transaction import (
     dismiss_event_plan_goal_prompt,
     generate_due_recurring,
     get_active_accounts,
+    get_cashflow_forecast_by_id,
+    get_cashflow_forecasts,
     get_categories,
     get_event_plan_by_id,
     get_event_plan_items,
     get_event_plans,
     get_event_template_items,
     get_event_templates,
+    get_forecast_periods,
     get_goal_by_id,
     get_goals,
     get_monthly_totals,
@@ -134,6 +139,14 @@ if not APP_PASSWORD:
 
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(32)
 app.permanent_session_lifetime = timedelta(days=30)
+
+# Mốc 4's macro-context layer (Gemini + Google Search grounding) is the most
+# expensive/slowest/least deterministic AI feature in this app — off by
+# default per the user's own explicit requirement ("tách riêng, tùy chọn,
+# tắt được"). Set ENABLE_MACRO_CONTEXT=1 to show the "Bối cảnh tham khảo"
+# section on /forecast at all; even when enabled, it's still click-triggered
+# only, never auto-loaded.
+ENABLE_MACRO_CONTEXT = os.environ.get("ENABLE_MACRO_CONTEXT") == "1"
 
 
 @app.before_request
@@ -901,6 +914,205 @@ def api_ai_simulation_advice():
     )
     if result["available"]:
         set_simulation_ai_recommendation(cursor, simulation_id, result["data"])
+    conn.commit()
+    conn.close()
+    return jsonify(result)
+
+
+FORECAST_PERIODS_AHEAD_OPTIONS = (6, 9, 12)
+FORECAST_MAX_IRREGULAR_INCOME_FIELDS = 12
+
+
+def _total_goal_contribution_per_period(cursor):
+    """Sum of every ACTIVE goal's required_per_period (risk.get_goal_progress),
+    skipping goals that are already overdue or have 0 periods remaining —
+    those don't have an ongoing "set aside this much per period" ask."""
+    total = 0
+    for g in get_goals(cursor):
+        progress = risk.get_goal_progress(cursor, g)
+        if not progress["is_overdue"] and progress["periods_remaining"] > 0:
+            total += progress["required_per_period"]
+    return total
+
+
+def _seasonality_patterns_display(patterns):
+    return [
+        {
+            "month_label": f"Tháng {p['month']}",
+            "avg_expense_display": f"{p['avg_expense']:,} đ",
+            "overall_avg_display": f"{p['overall_avg']:,} đ",
+            "pct_difference": p["pct_difference"],
+            "stdev_display": f"{p['stdev']:,} đ",
+            "sample_count": p["sample_count"],
+        }
+        for p in patterns
+    ]
+
+
+@app.route("/forecast", methods=["GET", "POST"])
+def forecast_page():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    if request.method == "POST":
+        try:
+            periods_ahead = int(request.form.get("periods_ahead", 6))
+        except ValueError:
+            periods_ahead = 6
+        if periods_ahead not in FORECAST_PERIODS_AHEAD_OPTIONS:
+            periods_ahead = 6
+
+        irregular_income_by_offset = {}
+        for i in range(periods_ahead):
+            raw = (request.form.get(f"irregular_income_{i}") or "").replace(",", "").replace(".", "")
+            if raw:
+                try:
+                    irregular_income_by_offset[i] = int(raw)
+                except ValueError:
+                    pass
+
+        apply_seasonality = request.form.get("apply_seasonality") == "on"
+        seasonality = risk.detect_seasonality(cursor)
+        patterns = seasonality["patterns"] if apply_seasonality else []
+
+        goal_contribution = _total_goal_contribution_per_period(cursor)
+        results = risk.compute_cashflow_forecast(
+            cursor, periods_ahead,
+            goal_contribution_per_period=goal_contribution,
+            irregular_income_by_offset=irregular_income_by_offset,
+            seasonality_patterns=patterns,
+        )
+
+        forecast_id = create_cashflow_forecast(
+            cursor, periods_ahead=periods_ahead, scenario="base",
+            seasonality_applied=apply_seasonality,
+            seasonality_details=patterns if apply_seasonality else None,
+        )
+        for r in results:
+            add_forecast_period(
+                cursor, forecast_id=forecast_id, period_index=r["period_index"],
+                period_id=r["period_id"], projected_balance=r["projected_balance"],
+                projected_income=r["projected_income"], projected_expense=r["projected_expense"],
+                is_danger=r["is_danger"],
+            )
+        conn.commit()
+        conn.close()
+        return redirect(url_for("forecast_detail", forecast_id=forecast_id))
+
+    forecasts = get_cashflow_forecasts(cursor)
+    latest_base = next((f for f in forecasts if f["scenario"] == "base"), None)
+    if latest_base is not None:
+        conn.close()
+        return redirect(url_for("forecast_detail", forecast_id=latest_base["id"]))
+
+    seasonality = risk.detect_seasonality(cursor)
+    conn.close()
+    return render_template_string(
+        FORECAST_TEMPLATE,
+        has_forecast=False,
+        periods_ahead_options=FORECAST_PERIODS_AHEAD_OPTIONS,
+        irregular_income_field_range=range(FORECAST_MAX_IRREGULAR_INCOME_FIELDS),
+        seasonality_has_data=seasonality["has_enough_data"],
+        seasonality_patterns=_seasonality_patterns_display(seasonality["patterns"]),
+        enable_macro_context=ENABLE_MACRO_CONTEXT,
+    )
+
+
+@app.route("/forecast/<int:forecast_id>")
+def forecast_detail(forecast_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    forecast = get_cashflow_forecast_by_id(cursor, forecast_id)
+    if forecast is None:
+        conn.close()
+        return "Không tìm thấy dự báo.", 404
+    periods = get_forecast_periods(cursor, forecast_id)
+    seasonality = risk.detect_seasonality(cursor)
+    conn.close()
+
+    rows = [
+        {
+            "period_id": p["period_id"],
+            "balance_display": f"{p['projected_balance']:,} đ",
+            "income_display": f"{p['projected_income']:,} đ",
+            "expense_display": f"{p['projected_expense']:,} đ",
+            "is_danger": bool(p["is_danger"]),
+        }
+        for p in periods
+    ]
+
+    return render_template_string(
+        FORECAST_TEMPLATE,
+        has_forecast=True,
+        forecast_id=forecast_id,
+        scenario=forecast["scenario"],
+        seasonality_applied=bool(forecast["seasonality_applied"]),
+        base_forecast_id=forecast["base_forecast_id"],
+        rows=rows,
+        chart_labels=[p["period_id"] for p in periods],
+        chart_balances=[p["projected_balance"] for p in periods],
+        any_danger=any(p["is_danger"] for p in periods),
+        periods_ahead_options=FORECAST_PERIODS_AHEAD_OPTIONS,
+        irregular_income_field_range=range(FORECAST_MAX_IRREGULAR_INCOME_FIELDS),
+        seasonality_has_data=seasonality["has_enough_data"],
+        seasonality_patterns=_seasonality_patterns_display(seasonality["patterns"]),
+        enable_macro_context=ENABLE_MACRO_CONTEXT,
+    )
+
+
+@app.route("/forecast/<int:forecast_id>/macro-scenario", methods=["POST"])
+def forecast_macro_scenario(forecast_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    base = get_cashflow_forecast_by_id(cursor, forecast_id)
+    if base is None:
+        conn.close()
+        return "Không tìm thấy dự báo.", 404
+
+    raw = (request.form.get("macro_adjustment") or "0").replace(",", "").replace(".", "")
+    try:
+        macro_adjustment = int(raw) if raw else 0
+    except ValueError:
+        macro_adjustment = 0
+
+    macro_context_note = request.form.get("macro_context_note") or None
+    try:
+        macro_context_sources = json.loads(request.form.get("macro_context_sources") or "[]")
+    except ValueError:
+        macro_context_sources = []
+
+    base_periods = get_forecast_periods(cursor, forecast_id)
+    new_forecast_id = create_cashflow_forecast(
+        cursor, periods_ahead=base["periods_ahead"], scenario="macro_adjusted",
+        base_forecast_id=forecast_id, macro_adjustment=macro_adjustment,
+        macro_context_note=macro_context_note, macro_context_sources=macro_context_sources,
+    )
+
+    essential = risk.get_average_period_essential_expense(cursor)
+    balance = risk.get_liquid_balance(cursor)
+    for p in base_periods:
+        new_expense = p["projected_expense"] + macro_adjustment
+        balance = balance + p["projected_income"] - new_expense
+        is_danger = balance < 0 or (essential is not None and balance < essential)
+        add_forecast_period(
+            cursor, forecast_id=new_forecast_id, period_index=p["period_index"],
+            period_id=p["period_id"], projected_balance=round(balance),
+            projected_income=p["projected_income"], projected_expense=round(new_expense),
+            is_danger=is_danger,
+        )
+    conn.commit()
+    conn.close()
+    return redirect(url_for("forecast_detail", forecast_id=new_forecast_id))
+
+
+@app.route("/api/ai/macro-context")
+def api_ai_macro_context():
+    if not ENABLE_MACRO_CONTEXT:
+        return jsonify({"available": False, "reason": "disabled", "data": None})
+    conn = connect_db()
+    cursor = conn.cursor()
+    prompt = (PROMPTS_DIR / "macro_context.md").read_text(encoding="utf-8")
+    result = get_macro_context(cursor, prompt)
     conn.commit()
     conn.close()
     return jsonify(result)
@@ -2349,6 +2561,158 @@ SIMULATION_DETAIL_TEMPLATE = """<!doctype html>
 """
 
 
+FORECAST_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<title>Dự báo dòng tiền</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("forecast") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <h1 class="text-sm font-medium text-slate-500 px-1 mb-3">Dự báo dòng tiền</h1>
+
+  {% if has_forecast %}
+  {% if scenario == 'macro_adjusted' %}
+  <div class="bg-amber-50 rounded-2xl p-4 mb-3 text-[13px] text-amber-900">
+    Đây là kịch bản có điều chỉnh theo bối cảnh vĩ mô — xem song song với <a href="/forecast/{{ base_forecast_id }}" class="underline font-medium">dự báo gốc</a>.
+  </div>
+  {% endif %}
+
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-5">
+    <canvas id="forecast-chart" height="180"></canvas>
+    {% if any_danger %}
+    <p class="text-[13px] text-rose-600 font-medium mt-2">⚠️ Có kỳ dự báo âm quỹ hoặc chạm ngưỡng nguy hiểm — xem bảng bên dưới.</p>
+    {% endif %}
+    {% if seasonality_applied %}<p class="text-[12px] text-slate-400 mt-1">Đã áp dụng điều chỉnh mùa vụ.</p>{% endif %}
+  </div>
+
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 divide-y divide-slate-100 mt-3">
+    {% for r in rows %}
+    <div class="flex items-center justify-between px-4 py-3">
+      <div>
+        <span class="text-[14px] font-medium text-slate-900">{{ r.period_id }}</span>
+        <p class="text-[12px] text-slate-400">Thu {{ r.income_display }} · Chi {{ r.expense_display }}</p>
+      </div>
+      <span class="text-[15px] font-bold {{ 'text-rose-600' if r.is_danger else 'text-slate-900' }}">{{ r.balance_display }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if seasonality_has_data and seasonality_patterns %}
+  <div class="bg-indigo-50 rounded-2xl p-4 mt-4 text-[13px] text-indigo-900">
+    <p class="font-semibold mb-1">Phát hiện quy luật mùa vụ</p>
+    {% for p in seasonality_patterns %}
+    <p class="mb-1">{{ p.month_label }}: chi tiêu trung bình {{ p.avg_expense_display }}, lệch {{ p.pct_difference }}% so với trung bình chung ({{ p.overall_avg_display }}), dựa trên {{ p.sample_count }} lần quan sát, độ lệch chuẩn {{ p.stdev_display }}.</p>
+    {% endfor %}
+    <p class="text-[12px] text-indigo-700 mt-1">Tick vào ô "Áp dụng mùa vụ" bên dưới khi tạo dự báo mới nếu muốn dùng thông tin này — hệ thống không tự áp dụng.</p>
+  </div>
+  {% endif %}
+
+  <h2 class="text-sm font-medium text-slate-500 px-1 mb-2 mt-4">Tạo dự báo mới</h2>
+  <form method="post" class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4 space-y-4">
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Số kỳ dự báo</label>
+      <select name="periods_ahead" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+        {% for n in periods_ahead_options %}<option value="{{ n }}">{{ n }} kỳ</option>{% endfor %}
+      </select>
+    </div>
+
+    {% if seasonality_has_data and seasonality_patterns %}
+    <label class="flex items-center gap-2 text-[13px] text-slate-600">
+      <input type="checkbox" name="apply_seasonality"> Áp dụng quy luật mùa vụ đã phát hiện ở trên
+    </label>
+    {% endif %}
+
+    <div>
+      <p class="text-[13px] text-slate-500 mb-2">Thu nhập thất thường ước tính mỗi kỳ (bỏ trống nếu không có — chỉ số kỳ khớp với lựa chọn "Số kỳ dự báo" ở trên được dùng):</p>
+      <div class="grid grid-cols-3 gap-2">
+        {% for i in irregular_income_field_range %}
+        <input type="text" inputmode="numeric" name="irregular_income_{{ i }}" placeholder="Kỳ {{ i + 1 }}" class="border border-slate-200 rounded-lg px-2 py-2 text-[13px]">
+        {% endfor %}
+      </div>
+    </div>
+
+    <button type="submit" class="w-full py-3.5 rounded-xl bg-brand text-white font-medium">Tạo dự báo</button>
+  </form>
+
+  {% if enable_macro_context %}
+  <h2 class="text-sm font-medium text-slate-500 px-1 mb-2 mt-4">Bối cảnh tham khảo</h2>
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4">
+    <p class="text-[12px] text-slate-400 mb-3">Thông tin chung của thị trường, KHÔNG PHẢI tư vấn tài chính cá nhân. Không tự động ảnh hưởng tới số dự báo ở trên.</p>
+    <button type="button" id="load-macro-btn" class="w-full py-2.5 rounded-xl bg-slate-100 text-slate-700 text-[13px] font-medium">Xem bối cảnh tham khảo</button>
+    <div id="macro-panel" class="mt-3 hidden"></div>
+    {% if has_forecast and scenario == 'base' %}
+    <form id="macro-scenario-form" method="post" action="/forecast/{{ forecast_id }}/macro-scenario" class="mt-3 hidden">
+      <label class="block text-[13px] text-slate-500 mb-1">Điều chỉnh thêm mỗi kỳ (đ, có thể để trống)</label>
+      <input type="text" inputmode="numeric" name="macro_adjustment" placeholder="0" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px] mb-2">
+      <input type="hidden" name="macro_context_note" id="macro_context_note">
+      <input type="hidden" name="macro_context_sources" id="macro_context_sources">
+      <button type="submit" class="w-full py-2.5 rounded-xl bg-brand text-white text-[13px] font-medium">Tạo kịch bản có điều chỉnh</button>
+    </form>
+    {% endif %}
+  </div>
+  <script>
+    document.getElementById("load-macro-btn").addEventListener("click", () => {
+      const panel = document.getElementById("macro-panel");
+      panel.classList.remove("hidden");
+      panel.innerHTML = '<p class="text-[13px] text-slate-400">Đang tải...</p>';
+      fetch("/api/ai/macro-context")
+        .then((r) => r.json())
+        .then((result) => {
+          if (!result.available || !result.data) {
+            panel.innerHTML = '<p class="text-[13px] text-slate-400">Tạm thời chưa có bối cảnh tham khảo.</p>';
+            return;
+          }
+          const d = result.data;
+          let html = `<p class="text-[13px] text-slate-700 mb-2">${d.summary}</p>`;
+          if (d.sources && d.sources.length) {
+            html += '<ul class="text-[11px] text-slate-400 space-y-1">';
+            for (const s of d.sources) {
+              html += `<li><a href="${s.url}" target="_blank" class="underline">${s.title || s.url}</a></li>`;
+            }
+            html += "</ul>";
+          }
+          panel.innerHTML = html;
+          const form = document.getElementById("macro-scenario-form");
+          if (form) {
+            document.getElementById("macro_context_note").value = d.summary;
+            document.getElementById("macro_context_sources").value = JSON.stringify(d.sources || []);
+            form.classList.remove("hidden");
+          }
+        })
+        .catch(() => { panel.innerHTML = '<p class="text-[13px] text-slate-400">Tạm thời chưa có bối cảnh tham khảo.</p>'; });
+    });
+  </script>
+  {% endif %}
+</main>
+{% if has_forecast %}
+<script>
+  new Chart(document.getElementById("forecast-chart"), {
+    type: "line",
+    data: {
+      labels: {{ chart_labels|tojson }},
+      datasets: [{
+        label: "Số dư dự báo",
+        data: {{ chart_balances|tojson }},
+        borderColor: "#007aff",
+        tension: 0.2,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+    },
+  });
+</script>
+{% endif %}
+</body>
+</html>
+"""
+
+
 EDIT_TEMPLATE = """<!doctype html>
 <html lang="vi">
 <head>
@@ -2590,6 +2954,8 @@ RISK_TEMPLATE = """<!doctype html>
   {% else %}
     <p class="empty">Chưa đủ dữ liệu (cần ít nhất 1 kỳ đã qua có giao dịch).</p>
   {% endif %}
+
+  <p style="text-align:center; margin-top: 16px;"><a href="/forecast" style="color:#007aff; font-size:0.9rem;">Xem dự báo dòng tiền 6-12 kỳ tới →</a></p>
 </div>
 </body>
 </html>

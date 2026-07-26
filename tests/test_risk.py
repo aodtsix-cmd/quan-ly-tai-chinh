@@ -23,7 +23,7 @@ def build_test_db():
     conn.row_factory = sqlite3.Row
     conn.executescript((SRC_DIR / "schema.sql").read_text(encoding="utf-8"))
     for migration in ["001_ai_infra.sql", "002_period_settings.sql", "003_period_budgets.sql",
-                      "004_goals.sql", "005_simulations.sql"]:
+                      "004_goals.sql", "005_simulations.sql", "006_cashflow_forecast.sql"]:
         conn.executescript((SRC_DIR / "migrations" / migration).read_text(encoding="utf-8"))
     return conn
 
@@ -414,6 +414,166 @@ class SpendingSimulationTests(unittest.TestCase):
         self.assertEqual(delay3["projected_balances"][:3], baseline[:3])
         # period 3: baseline + 1M net - 6M item
         self.assertEqual(delay3["projected_balances"][3], baseline[3] - 6_000_000)
+
+
+class RecurringProjectionTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+
+    def _add_recurring(self, amount, direction, frequency, next_due):
+        self.conn.execute(
+            """INSERT INTO recurring (name, amount, direction, account_id, frequency, day_of_period, next_due, is_active)
+               VALUES ('Test', ?, ?, 1, ?, 1, ?, 1)""",
+            (amount, direction, frequency, next_due),
+        )
+        self.conn.commit()
+
+    def test_monthly_recurring_hits_every_period(self):
+        self._add_recurring(500_000, "out", "monthly", "2026-07-20")
+        totals = risk.project_recurring_by_period(self.cursor, ["2026-07", "2026-08", "2026-09"])
+        self.assertEqual(totals["2026-07"]["out"], 500_000)
+        self.assertEqual(totals["2026-08"]["out"], 500_000)
+        self.assertEqual(totals["2026-09"]["out"], 500_000)
+
+    def test_quarterly_recurring_skips_intermediate_periods(self):
+        self._add_recurring(900_000, "out", "quarterly", "2026-07-20")
+        totals = risk.project_recurring_by_period(self.cursor, ["2026-07", "2026-08", "2026-09"])
+        self.assertEqual(totals["2026-07"]["out"], 900_000)
+        self.assertEqual(totals["2026-08"]["out"], 0)
+        self.assertEqual(totals["2026-09"]["out"], 0)
+
+    def test_income_direction_counted_separately_from_expense(self):
+        self._add_recurring(2_000_000, "in", "monthly", "2026-07-20")
+        totals = risk.project_recurring_by_period(self.cursor, ["2026-07"])
+        self.assertEqual(totals["2026-07"]["in"], 2_000_000)
+        self.assertEqual(totals["2026-07"]["out"], 0)
+
+    def test_yearly_recurring_only_hits_matching_period(self):
+        self._add_recurring(12_000_000, "out", "yearly", "2026-07-20")
+        totals = risk.project_recurring_by_period(self.cursor, ["2026-07", "2026-08", "2027-06", "2027-07"])
+        self.assertEqual(totals["2026-07"]["out"], 12_000_000)
+        self.assertEqual(totals["2026-08"]["out"], 0)
+        self.assertEqual(totals["2027-06"]["out"], 0)
+        self.assertEqual(totals["2027-07"]["out"], 12_000_000)
+
+
+class SeasonalityDetectionTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+        self.as_of = date(2027, 7, 20)
+
+    def _seed_monthly_expense(self, year, month, amount):
+        insert_tx(self.conn, f"{year:04d}-{month:02d}-20 10:00:00", amount, "out", category_id=1)
+
+    def test_not_enough_data_below_threshold(self):
+        self._seed_monthly_expense(2026, 6, 1_000_000)
+        self.conn.commit()
+        result = risk.detect_seasonality(self.cursor, as_of=self.as_of)
+        self.assertFalse(result["has_enough_data"])
+
+    def test_detects_notably_high_month_and_ignores_normal_months(self):
+        # 2025-08 through 2027-06 = 23 completed periods; December double the rest
+        for year, month in [(2025, m) for m in range(8, 13)] + \
+                            [(2026, m) for m in range(1, 13)] + \
+                            [(2027, m) for m in range(1, 7)]:
+            amount = 2_000_000 if month == 12 else 1_000_000
+            self._seed_monthly_expense(year, month, amount)
+        self.conn.commit()
+
+        result = risk.detect_seasonality(self.cursor, as_of=self.as_of)
+        self.assertTrue(result["has_enough_data"])
+        self.assertEqual(result["periods_analyzed"], 23)
+
+        months_flagged = {p["month"] for p in result["patterns"]}
+        self.assertIn(12, months_flagged)
+        self.assertNotIn(1, months_flagged)  # normal month, within threshold, must not be flagged
+
+        december = next(p for p in result["patterns"] if p["month"] == 12)
+        self.assertGreater(december["pct_difference"], risk.SEASONALITY_PCT_THRESHOLD)
+        self.assertEqual(december["sample_count"], 2)
+
+    def test_current_open_period_excluded(self):
+        for year, month in [(2025, m) for m in range(8, 13)] + \
+                            [(2026, m) for m in range(1, 13)] + \
+                            [(2027, m) for m in range(1, 7)]:
+            self._seed_monthly_expense(year, month, 1_000_000)
+        # huge expense in the still-open current period -> must not affect the analysis
+        self._seed_monthly_expense(2027, 7, 999_999_999)
+        self.conn.commit()
+        result = risk.detect_seasonality(self.cursor, as_of=self.as_of)
+        self.assertEqual(result["periods_analyzed"], 23)
+
+
+class CashflowForecastTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+        self.conn.execute("UPDATE accounts SET current_balance = 10_000_000 WHERE id = 1")
+        for occurred_at in ["2026-04-20 10:00:00", "2026-05-20 10:00:00", "2026-06-20 10:00:00"]:
+            insert_tx(self.conn, occurred_at, 2_000_000, "in", category_id=3)
+            insert_tx(self.conn, occurred_at, 1_000_000, "out", category_id=1)
+        self.conn.commit()
+        self.as_of = date(2026, 7, 20)
+
+    def test_basic_forecast_no_recurring_no_goals(self):
+        results = risk.compute_cashflow_forecast(self.cursor, 3, as_of=self.as_of)
+        self.assertEqual(len(results), 3)
+        self.assertEqual(results[0]["projected_balance"], 9_000_000)
+        self.assertEqual(results[1]["projected_balance"], 8_000_000)
+        self.assertEqual(results[2]["projected_balance"], 7_000_000)
+        self.assertEqual([r["period_id"] for r in results], ["2026-07", "2026-08", "2026-09"])
+
+    def test_recurring_does_not_get_double_counted_against_baseline(self):
+        self.conn.execute(
+            """INSERT INTO recurring (name, amount, direction, account_id, frequency, day_of_period, next_due, is_active)
+               VALUES ('Rent', 500000, 'out', 1, 'monthly', 1, '2026-07-20', 1)"""
+        )
+        self.conn.commit()
+        results = risk.compute_cashflow_forecast(self.cursor, 1, as_of=self.as_of)
+        # avg_recurring_out=500k -> other_variable = max(1,000,000-500,000,0)=500k
+        # total expense = 500k (recurring) + 500k (other variable) = 1,000,000, same as baseline total
+        self.assertEqual(results[0]["projected_expense"], 1_000_000)
+
+    def test_reliable_income_applied_every_period(self):
+        self.conn.execute(
+            "INSERT INTO income_sources (name, type, expected_amount, reliability, is_active) VALUES ('Job', 'fixed', 3000000, 100, 1)"
+        )
+        self.conn.commit()
+        results = risk.compute_cashflow_forecast(self.cursor, 2, as_of=self.as_of)
+        self.assertEqual(results[0]["projected_income"], 3_000_000)
+        self.assertEqual(results[1]["projected_income"], 3_000_000)
+
+    def test_irregular_income_applied_at_right_offset(self):
+        results = risk.compute_cashflow_forecast(
+            self.cursor, 3, irregular_income_by_offset={1: 5_000_000}, as_of=self.as_of
+        )
+        self.assertEqual(results[0]["projected_income"], 0)
+        self.assertEqual(results[1]["projected_income"], 5_000_000)
+        self.assertEqual(results[2]["projected_income"], 0)
+
+    def test_goal_contribution_reduces_balance_every_period(self):
+        results = risk.compute_cashflow_forecast(
+            self.cursor, 2, goal_contribution_per_period=200_000, as_of=self.as_of
+        )
+        self.assertEqual(results[0]["projected_expense"], 1_200_000)
+        self.assertEqual(results[0]["projected_balance"], 10_000_000 - 1_200_000)
+
+    def test_is_danger_flags_low_balance(self):
+        self.conn.execute("UPDATE accounts SET current_balance = 500000 WHERE id = 1")
+        self.conn.commit()
+        results = risk.compute_cashflow_forecast(self.cursor, 2, as_of=self.as_of)
+        self.assertTrue(results[0]["is_danger"])
+
+    def test_seasonality_pattern_scales_matching_month(self):
+        pattern = [{"month": 7, "avg_expense": 2_000_000, "overall_avg": 1_000_000,
+                    "pct_difference": 100.0, "stdev": 0, "sample_count": 2}]
+        results = risk.compute_cashflow_forecast(self.cursor, 1, seasonality_patterns=pattern, as_of=self.as_of)
+        self.assertEqual(results[0]["projected_expense"], 2_000_000)
 
 
 def transaction_get_goal(cursor, goal_id):
