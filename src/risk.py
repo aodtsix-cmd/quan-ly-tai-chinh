@@ -465,3 +465,60 @@ def get_period_budgets_for_status(cursor, period_id):
         (period_id,),
     )
     return cursor.fetchall()
+
+
+def suggest_emergency_fund_target(cursor):
+    """Mốc 2's built-in "Quỹ khẩn cấp" goal type suggests its own target:
+    6× average essential period expense — the upper end of THIET-KE.md
+    7.3's "quỹ khẩn cấp 3–6 tháng" reference band (same source as
+    runway_months' bands). Returns None if there's not yet enough essential-
+    spending history to estimate from (same has_data convention as
+    get_average_period_essential_expense itself)."""
+    essential = get_average_period_essential_expense(cursor)
+    return round(essential * 6) if essential is not None else None
+
+
+def get_goal_progress(cursor, goal, as_of=None):
+    """`goal` is a row from transaction.get_goals()/get_goal_by_id() (needs
+    target_amount, deadline, created_at, current_balance). Progress is read
+    live from the goal's linked account balance — see CLAUDE.md/goals for
+    why there's no separately-tracked running total to drift out of sync.
+
+    "Off track" compares actual progress % against a simple LINEAR
+    expectation from the goal's creation date to its deadline — e.g. halfway
+    through the timeline, you'd expect to be at ~50% — not a real forecast
+    (Mốc 4's cashflow forecast is the place for that); this is just "by a
+    straight-line schedule, where should you be by now.\""""
+    as_of_date = as_of or date.today()
+    start_day = period.get_period_start_day(cursor)
+
+    target = goal["target_amount"]
+    current = goal["current_balance"]
+    progress_pct = min(current / target * 100, 100) if target > 0 else 0
+    remaining_amount = max(target - current, 0)
+
+    deadline_date = date.fromisoformat(goal["deadline"])
+    created_date = date.fromisoformat(goal["created_at"][:10])
+    current_id = period.period_id_for(as_of_date, start_day)
+    deadline_id = period.period_id_for(deadline_date, start_day)
+    created_id = period.period_id_for(created_date, start_day)
+
+    periods_remaining = max(period.periods_between(current_id, deadline_id) + 1, 0)
+    required_per_period = round(remaining_amount / periods_remaining) if periods_remaining > 0 else remaining_amount
+
+    total_periods = max(period.periods_between(created_id, deadline_id) + 1, 1)
+    elapsed_periods = min(max(period.periods_between(created_id, current_id) + 1, 0), total_periods)
+    expected_pct = elapsed_periods / total_periods * 100
+
+    is_overdue = deadline_date < as_of_date and remaining_amount > 0
+    is_off_track = (not is_overdue) and (progress_pct + 5 < expected_pct)
+
+    return {
+        "progress_pct": progress_pct,
+        "remaining_amount": remaining_amount,
+        "periods_remaining": periods_remaining,
+        "required_per_period": required_per_period,
+        "expected_pct": expected_pct,
+        "is_overdue": is_overdue,
+        "is_off_track": is_off_track,
+    }

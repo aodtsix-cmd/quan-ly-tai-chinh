@@ -68,6 +68,12 @@ class PeriodIdTests(unittest.TestCase):
         self.assertEqual(period.shift_period_id("2026-12", 1, start_day=15), "2027-01")
         self.assertEqual(period.shift_period_id("2026-07", 0, start_day=15), "2026-07")
 
+    def test_periods_between(self):
+        self.assertEqual(period.periods_between("2026-07", "2026-09"), 2)
+        self.assertEqual(period.periods_between("2026-07", "2026-07"), 0)
+        self.assertEqual(period.periods_between("2026-09", "2026-07"), -2)
+        self.assertEqual(period.periods_between("2026-11", "2027-02"), 3)
+
 
 class RecentPeriodIdsTests(unittest.TestCase):
     def test_excludes_current_by_default(self):

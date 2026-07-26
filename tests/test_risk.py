@@ -22,8 +22,8 @@ def build_test_db():
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     conn.executescript((SRC_DIR / "schema.sql").read_text(encoding="utf-8"))
-    conn.executescript((SRC_DIR / "migrations" / "001_ai_infra.sql").read_text(encoding="utf-8"))
-    conn.executescript((SRC_DIR / "migrations" / "002_period_settings.sql").read_text(encoding="utf-8"))
+    for migration in ["001_ai_infra.sql", "002_period_settings.sql", "003_period_budgets.sql", "004_goals.sql"]:
+        conn.executescript((SRC_DIR / "migrations" / migration).read_text(encoding="utf-8"))
     return conn
 
 
@@ -256,6 +256,94 @@ class OldBudgetStatusUnaffectedTests(unittest.TestCase):
         statuses = risk.get_budget_status(self.cursor, "2026-07")
         self.assertEqual(len(statuses), 1)
         self.assertEqual(statuses[0]["spent"], 400_000)
+
+
+class GoalProgressTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+        self.conn.execute(
+            "UPDATE accounts SET current_balance = 3000000 WHERE id = 1"
+        )
+        self.conn.commit()
+
+    def _make_goal(self, target_amount, deadline, created_at):
+        self.cursor.execute(
+            """INSERT INTO goals (name, goal_type, target_amount, deadline, account_id, created_at)
+               VALUES ('Test goal', 'savings', ?, ?, 1, ?)""",
+            (target_amount, deadline, created_at),
+        )
+        self.conn.commit()
+        return transaction_get_goal(self.cursor, self.cursor.lastrowid)
+
+    def test_progress_pct_and_remaining(self):
+        goal = self._make_goal(10_000_000, "2027-01-15", "2026-07-15 00:00:00")
+        progress = risk.get_goal_progress(self.cursor, goal, as_of=date(2026, 7, 20))
+        self.assertAlmostEqual(progress["progress_pct"], 30.0)  # 3M / 10M
+        self.assertEqual(progress["remaining_amount"], 7_000_000)
+
+    def test_periods_remaining_and_required_per_period(self):
+        # created 2026-07-15, deadline 2027-01-15 (period id 2027-01), as_of 2026-07-20 (period 2026-07)
+        # periods_between(2026-07, 2027-01) = 6, +1 inclusive = 7 periods remaining
+        goal = self._make_goal(10_000_000, "2027-01-15", "2026-07-15 00:00:00")
+        progress = risk.get_goal_progress(self.cursor, goal, as_of=date(2026, 7, 20))
+        self.assertEqual(progress["periods_remaining"], 7)
+        self.assertEqual(progress["required_per_period"], round(7_000_000 / 7))
+
+    def test_progress_capped_at_100_when_over_target(self):
+        goal = self._make_goal(1_000_000, "2027-01-15", "2026-07-15 00:00:00")  # target well under current balance
+        progress = risk.get_goal_progress(self.cursor, goal, as_of=date(2026, 7, 20))
+        self.assertEqual(progress["progress_pct"], 100)
+        self.assertEqual(progress["remaining_amount"], 0)
+
+    def test_off_track_when_behind_linear_schedule(self):
+        # created a year before deadline, now halfway through the timeline but progress is only 30%
+        goal = self._make_goal(10_000_000, "2027-01-15", "2026-01-15 00:00:00")
+        progress = risk.get_goal_progress(self.cursor, goal, as_of=date(2026, 7, 15))
+        self.assertGreater(progress["expected_pct"], 30.0 + 5)
+        self.assertTrue(progress["is_off_track"])
+
+    def test_not_off_track_when_ahead_of_schedule(self):
+        goal = self._make_goal(3_100_000, "2027-06-15", "2026-07-01 00:00:00")
+        progress = risk.get_goal_progress(self.cursor, goal, as_of=date(2026, 7, 20))
+        self.assertFalse(progress["is_off_track"])
+
+    def test_overdue_flag(self):
+        goal = self._make_goal(10_000_000, "2026-01-15", "2025-01-15 00:00:00")
+        progress = risk.get_goal_progress(self.cursor, goal, as_of=date(2026, 7, 20))
+        self.assertTrue(progress["is_overdue"])
+        self.assertFalse(progress["is_off_track"])  # overdue takes precedence, not double-flagged
+
+
+class EmergencyFundSuggestionTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+
+    def test_none_with_no_data(self):
+        self.assertIsNone(risk.suggest_emergency_fund_target(self.cursor))
+
+    def test_six_times_average_essential_expense(self):
+        insert_tx(self.conn, "2026-06-20 10:00:00", 1_000_000, "out", category_id=1)
+        self.conn.commit()
+        target = risk.suggest_emergency_fund_target(self.cursor)
+        self.assertEqual(target, 6_000_000)
+
+
+def transaction_get_goal(cursor, goal_id):
+    """Mirrors transaction.get_goal_by_id's SELECT — duplicated here (not
+    imported) so this test file has no dependency on transaction.py, matching
+    the rest of this file's pattern of building its own minimal test rows."""
+    cursor.execute(
+        """SELECT g.id, g.name, g.goal_type, g.target_amount, g.deadline, g.account_id, g.created_at,
+                  a.name AS account_name, a.current_balance
+           FROM goals g JOIN accounts a ON g.account_id = a.id
+           WHERE g.id = ?""",
+        (goal_id,),
+    )
+    return cursor.fetchone()
 
 
 if __name__ == "__main__":

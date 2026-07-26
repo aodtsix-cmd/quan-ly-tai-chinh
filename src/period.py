@@ -85,6 +85,17 @@ def shift_period_id(period_id_str, n, start_day):
     return shifted_start.strftime("%Y-%m")
 
 
+def periods_between(period_id_a, period_id_b):
+    """Number of period-steps from a to b (b − a) — e.g. "2026-07" to
+    "2026-09" is 2. Pure integer arithmetic on the 'YYYY-MM' shape, valid
+    regardless of start_day (advancing one period always advances the id by
+    exactly one calendar month, whatever day within it the period starts).
+    Negative if b is before a."""
+    year_a, month_a = (int(part) for part in period_id_a.split("-"))
+    year_b, month_b = (int(part) for part in period_id_b.split("-"))
+    return (year_b - year_a) * 12 + (month_b - month_a)
+
+
 def current_period_id(cursor, as_of=None):
     start_day = get_period_start_day(cursor)
     return period_id_for(as_of or date.today(), start_day)

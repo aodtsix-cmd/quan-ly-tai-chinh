@@ -1,7 +1,7 @@
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,20 +20,32 @@ import risk
 from ocr_import import analyze_image, make_external_ref
 from services.ai_client import get_ai_suggestion
 from transaction import (
+    add_event_plan_item,
     add_rule,
     apply_matching_rule,
     connect_db,
+    create_event_plan,
+    create_goal,
     delete_rule,
     delete_transaction,
+    dismiss_event_plan_goal_prompt,
     generate_due_recurring,
     get_active_accounts,
     get_categories,
+    get_event_plan_by_id,
+    get_event_plan_items,
+    get_event_plans,
+    get_event_template_items,
+    get_event_templates,
+    get_goal_by_id,
+    get_goals,
     get_monthly_totals,
     get_period_budgets,
     get_recent_transactions,
     get_rules,
     get_transaction_by_id,
     insert_transaction,
+    link_event_plan_to_goal,
     log_behavior_event,
     resolve_category,
     set_period_budget,
@@ -57,6 +69,28 @@ class BudgetAdjustment(BaseModel):
 class BudgetSuggestionResult(BaseModel):
     adjustments: list[BudgetAdjustment]
     summary: str = Field(description="Nhận xét tổng quan ngắn gọn, 1-2 câu, tiếng Việt.")
+
+
+class GoalPriorityItem(BaseModel):
+    goal_id: int
+    priority_rank: int = Field(description="Thứ tự ưu tiên, 1 = nên ưu tiên nhất.")
+    reason: str = Field(description="Lý do ngắn gọn, 1 câu, tiếng Việt.")
+
+
+class GoalPriorityResult(BaseModel):
+    priorities: list[GoalPriorityItem]
+    summary: str = Field(
+        description="Nhận xét tổng quan 1-2 câu, tiếng Việt, có thể đề xuất giãn hạn nếu cần."
+    )
+
+
+GOAL_TYPE_LABELS = {
+    "emergency_fund": "Quỹ khẩn cấp",
+    "savings": "Tiết kiệm mục tiêu",
+    "investment": "Đầu tư",
+    "medical": "Dự phòng y tế",
+    "custom": "Khác",
+}
 
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
@@ -419,6 +453,249 @@ def api_ai_budget_suggestion():
     conn.commit()
     conn.close()
     return jsonify(result)
+
+
+def _goal_row_display(goal, progress):
+    return {
+        "id": goal["id"],
+        "name": goal["name"],
+        "type_label": GOAL_TYPE_LABELS.get(goal["goal_type"], goal["goal_type"]),
+        "target_display": f"{goal['target_amount']:,} đ",
+        "current_display": f"{goal['current_balance']:,} đ",
+        "account_name": goal["account_name"],
+        "deadline": goal["deadline"],
+        "progress_pct": progress["progress_pct"],
+        "remaining_display": f"{progress['remaining_amount']:,} đ",
+        "periods_remaining": progress["periods_remaining"],
+        "required_per_period_display": f"{progress['required_per_period']:,} đ",
+        "is_off_track": progress["is_off_track"],
+        "is_overdue": progress["is_overdue"],
+    }
+
+
+@app.route("/goals")
+def goals_page():
+    conn = connect_db()
+    cursor = conn.cursor()
+    goals = get_goals(cursor)
+    rows = [_goal_row_display(g, risk.get_goal_progress(cursor, g)) for g in goals]
+    conn.close()
+    return render_template_string(GOALS_TEMPLATE, rows=rows, show_ai_panel=len(rows) >= 2)
+
+
+@app.route("/goals/new", methods=["GET", "POST"])
+def goals_new():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    if request.method == "POST":
+        name = (request.form.get("name") or "").strip()
+        goal_type = request.form.get("goal_type") or "custom"
+        deadline = request.form.get("deadline")
+        try:
+            target_amount = int((request.form.get("target_amount") or "").replace(",", "").replace(".", ""))
+            account_id = int(request.form.get("account_id"))
+        except (TypeError, ValueError):
+            conn.close()
+            return redirect(url_for("goals_new"))
+
+        if name and deadline and target_amount > 0:
+            create_goal(cursor, name=name, goal_type=goal_type, target_amount=target_amount,
+                        deadline=deadline, account_id=account_id)
+            conn.commit()
+        conn.close()
+        return redirect(url_for("goals_page"))
+
+    accounts = accounts_as_json(cursor)
+    emergency_fund_suggestion = risk.suggest_emergency_fund_target(cursor)
+    conn.close()
+    return render_template_string(
+        GOALS_NEW_TEMPLATE,
+        accounts=accounts,
+        goal_types=[{"value": k, "label": v} for k, v in GOAL_TYPE_LABELS.items()],
+        emergency_fund_suggestion=emergency_fund_suggestion or 0,
+        emergency_fund_suggestion_display=f"{emergency_fund_suggestion:,} đ" if emergency_fund_suggestion else "",
+        prefill_name=request.args.get("name", ""),
+        prefill_target=request.args.get("target_amount", ""),
+        prefill_deadline=request.args.get("deadline", ""),
+    )
+
+
+@app.route("/goals/<int:goal_id>")
+def goal_detail(goal_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    goal = get_goal_by_id(cursor, goal_id)
+    if goal is None:
+        conn.close()
+        return "Không tìm thấy mục tiêu.", 404
+    row = _goal_row_display(goal, risk.get_goal_progress(cursor, goal))
+    conn.close()
+    return render_template_string(GOAL_DETAIL_TEMPLATE, goal=row)
+
+
+@app.route("/api/ai/goal-priority")
+def api_ai_goal_priority():
+    conn = connect_db()
+    cursor = conn.cursor()
+    goals = get_goals(cursor)
+
+    if len(goals) < 2:
+        conn.close()
+        return jsonify({"available": False, "reason": "no_data", "data": None})
+
+    data = []
+    for g in goals:
+        progress = risk.get_goal_progress(cursor, g)
+        data.append({
+            "goal_id": g["id"],
+            "name": g["name"],
+            "goal_type": g["goal_type"],
+            "target_amount": g["target_amount"],
+            "remaining_amount": progress["remaining_amount"],
+            "periods_remaining": progress["periods_remaining"],
+            "required_per_period": progress["required_per_period"],
+        })
+    total_required_per_period = sum(d["required_per_period"] for d in data)
+
+    prompt_template = (PROMPTS_DIR / "goal_priority.md").read_text(encoding="utf-8")
+    prompt = prompt_template.format(
+        data_json=json.dumps(data, ensure_ascii=False),
+        total_required_per_period=f"{total_required_per_period:,}",
+    )
+    result = get_ai_suggestion(
+        cursor, task="goal_priority", input_data={"goals": data},
+        response_schema=GoalPriorityResult, prompt=prompt,
+    )
+    conn.commit()
+    conn.close()
+    return jsonify(result)
+
+
+@app.route("/events")
+def events_page():
+    conn = connect_db()
+    cursor = conn.cursor()
+    plans = get_event_plans(cursor)
+    rows = []
+    for p in plans:
+        items = get_event_plan_items(cursor, p["id"])
+        total = sum(i["expected_amount"] for i in items)
+        rows.append({
+            "id": p["id"],
+            "name": p["name"],
+            "event_date": p["event_date"] or "—",
+            "total_display": f"{total:,} đ",
+            "item_count": len(items),
+            "linked_goal_id": p["linked_goal_id"],
+        })
+    conn.close()
+    return render_template_string(EVENTS_TEMPLATE, rows=rows)
+
+
+@app.route("/events/new", methods=["GET", "POST"])
+def events_new():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    if request.method == "POST":
+        name = (request.form.get("name") or "").strip()
+        event_date_value = request.form.get("event_date") or None
+        template_id_raw = request.form.get("template_id")
+        template_id = int(template_id_raw) if template_id_raw else None
+
+        if not name:
+            conn.close()
+            return redirect(url_for("events_new"))
+
+        plan_id = create_event_plan(cursor, name=name, template_id=template_id, event_date=event_date_value)
+
+        for key, raw_value in request.form.items():
+            if not key.startswith("item_name_"):
+                continue
+            index = key[len("item_name_"):]
+            item_name = (raw_value or "").strip()
+            amount_raw = request.form.get(f"item_amount_{index}")
+            if not item_name or not amount_raw:
+                continue
+            try:
+                amount = int(amount_raw.replace(",", "").replace(".", ""))
+            except ValueError:
+                continue
+            if amount > 0:
+                add_event_plan_item(cursor, event_plan_id=plan_id, name=item_name, expected_amount=amount)
+
+        conn.commit()
+
+        # Goal-prompt trigger: total expected >= 10,000,000đ AND event is >= 2
+        # periods away — fires once, at creation time only (see CLAUDE.md).
+        items = get_event_plan_items(cursor, plan_id)
+        total_expected = sum(i["expected_amount"] for i in items)
+        suggest_goal = False
+        if event_date_value and total_expected >= 10_000_000:
+            start_day = period.get_period_start_day(cursor)
+            current_id = period.current_period_id(cursor)
+            event_period_id = period.period_id_for(date.fromisoformat(event_date_value), start_day)
+            if period.periods_between(current_id, event_period_id) >= 2:
+                suggest_goal = True
+
+        conn.close()
+        if suggest_goal:
+            return redirect(url_for("event_detail", event_plan_id=plan_id, suggest_goal=1))
+        return redirect(url_for("event_detail", event_plan_id=plan_id))
+
+    templates = get_event_templates(cursor)
+    template_id_raw = request.args.get("template")
+    template_items = get_event_template_items(cursor, int(template_id_raw)) if template_id_raw else []
+    conn.close()
+    return render_template_string(
+        EVENTS_NEW_TEMPLATE,
+        templates=templates,
+        selected_template_id=template_id_raw,
+        template_items=template_items,
+    )
+
+
+@app.route("/events/<int:event_plan_id>")
+def event_detail(event_plan_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    plan = get_event_plan_by_id(cursor, event_plan_id)
+    if plan is None:
+        conn.close()
+        return "Không tìm thấy kế hoạch.", 404
+    items = get_event_plan_items(cursor, event_plan_id)
+    total = sum(i["expected_amount"] for i in items)
+    conn.close()
+
+    show_goal_prompt = (
+        request.args.get("suggest_goal") == "1"
+        and not plan["linked_goal_id"]
+        and not plan["goal_prompt_dismissed"]
+    )
+
+    return render_template_string(
+        EVENT_DETAIL_TEMPLATE,
+        plan={
+            "id": plan["id"],
+            "name": plan["name"],
+            "event_date": plan["event_date"] or "",
+        },
+        items=[{"name": i["name"], "expected_display": f"{i['expected_amount']:,} đ"} for i in items],
+        total_display=f"{total:,} đ",
+        total_amount=total,
+        show_goal_prompt=show_goal_prompt,
+    )
+
+
+@app.route("/events/<int:event_plan_id>/dismiss-goal-prompt", methods=["POST"])
+def event_dismiss_goal_prompt(event_plan_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    dismiss_event_plan_goal_prompt(cursor, event_plan_id)
+    conn.commit()
+    conn.close()
+    return redirect(url_for("event_detail", event_plan_id=event_plan_id))
 
 
 RUNWAY_LEVEL_LABELS = {
@@ -871,6 +1148,7 @@ def tailwind_nav(active):
         link("/transactions", "Danh sách", "list"),
         link("/summary", "Tổng quan", "summary"),
         link("/budgets", "Ngân sách", "budgets"),
+        link("/goals", "Mục tiêu", "goals"),
         link("/rules", "Luật", "rules"),
     ])
     return f"""<nav class="max-w-lg mx-auto px-4 pt-5 pb-1">
@@ -969,6 +1247,7 @@ PAGE_TEMPLATE = """<!doctype html>
   <a href="/import">Nhập ảnh</a>
   <a href="/rules">Luật</a>
   <a href="/budgets">Ngân sách</a>
+  <a href="/goals">Mục tiêu</a>
 </div>
 {% for alert in alerts %}
 <div class="alert-banner {{ alert.level }}">{{ alert.message }}</div>
@@ -1314,6 +1593,334 @@ BUDGETS_TEMPLATE = """<!doctype html>
 """
 
 
+GOALS_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>Mục tiêu tài chính</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("goals") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <div class="flex items-center justify-between px-1 mb-3">
+    <h1 class="text-sm font-medium text-slate-500">{{ rows|length }} mục tiêu đang chạy</h1>
+    <a href="/goals/new" class="text-brand text-sm font-medium">+ Tạo mục tiêu</a>
+  </div>
+
+  {% if show_ai_panel %}
+  <div id="ai-panel" class="bg-indigo-50 rounded-2xl p-4 mb-4 text-[13px] text-indigo-900 hidden"></div>
+  {% endif %}
+
+  {% if rows %}
+  <div class="space-y-3">
+    {% for g in rows %}
+    <a href="/goals/{{ g.id }}" class="block bg-white rounded-2xl ring-1 ring-slate-900/5 p-4">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-[15px] font-medium text-slate-900">{{ g.name }}</span>
+        <span class="text-[12px] text-slate-400">{{ g.type_label }}</span>
+      </div>
+      <div class="flex items-center justify-between text-[13px] text-slate-500 mb-2">
+        <span>{{ g.current_display }} / {{ g.target_display }}</span>
+        <span>Hạn {{ g.deadline }}</span>
+      </div>
+      <div class="bg-slate-100 rounded-full h-2 overflow-hidden mb-1">
+        <div class="{{ 'bg-rose-500' if g.is_overdue else ('bg-amber-500' if g.is_off_track else 'bg-emerald-500') }} h-full rounded-full" style="width: {{ g.progress_pct }}%;"></div>
+      </div>
+      <div class="text-[12px] {{ 'text-rose-600' if (g.is_overdue or g.is_off_track) else 'text-slate-400' }}">
+        {% if g.is_overdue %}Đã quá hạn, còn thiếu {{ g.remaining_display }}
+        {% elif g.is_off_track %}Đang chậm hơn tiến độ — cần {{ g.required_per_period_display }}/kỳ trong {{ g.periods_remaining }} kỳ còn lại
+        {% else %}Cần {{ g.required_per_period_display }}/kỳ, còn {{ g.periods_remaining }} kỳ{% endif %}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-8 text-center text-slate-400 text-sm">Chưa có mục tiêu nào. Bấm "+ Tạo mục tiêu" để bắt đầu.</div>
+  {% endif %}
+
+  <p class="text-center mt-4"><a href="/events" class="text-[13px] text-slate-400">Xem kế hoạch sự kiện →</a></p>
+</main>
+{% if show_ai_panel %}
+<script>
+  const aiPanel = document.getElementById("ai-panel");
+  fetch("/api/ai/goal-priority")
+    .then((r) => r.json())
+    .then((result) => {
+      if (!result.available || !result.data) return;
+      const d = result.data;
+      let html = '<p class="font-semibold mb-1">Nhận xét từ AI</p>';
+      html += `<p class="mb-2">${d.summary}</p>`;
+      if (d.priorities && d.priorities.length) {
+        const sorted = [...d.priorities].sort((a, b) => a.priority_rank - b.priority_rank);
+        html += '<ul class="space-y-1 list-decimal list-inside">';
+        for (const p of sorted) {
+          html += `<li>${p.reason}</li>`;
+        }
+        html += "</ul>";
+      }
+      aiPanel.innerHTML = html;
+      aiPanel.classList.remove("hidden");
+    })
+    .catch(() => {});
+</script>
+{% endif %}
+</body>
+</html>
+"""
+
+
+GOALS_NEW_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>Tạo mục tiêu</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("goals") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <h1 class="text-sm font-medium text-slate-500 px-1 mb-3">Tạo mục tiêu mới</h1>
+  <form method="post" class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4 space-y-4">
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Tên mục tiêu</label>
+      <input type="text" name="name" required value="{{ prefill_name }}" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+    </div>
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Loại mục tiêu</label>
+      <select id="goal_type" name="goal_type" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+        {% for t in goal_types %}<option value="{{ t.value }}">{{ t.label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Số tiền đích (đ)</label>
+      <input type="text" inputmode="numeric" id="target_amount" name="target_amount" required value="{{ prefill_target }}" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+      {% if emergency_fund_suggestion_display %}
+      <p class="text-[12px] text-brand mt-1">Gợi ý cho Quỹ khẩn cấp: {{ emergency_fund_suggestion_display }} (6 lần chi phí thiết yếu 1 kỳ)</p>
+      {% endif %}
+    </div>
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Hạn chót</label>
+      <input type="date" name="deadline" required value="{{ prefill_deadline }}" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+    </div>
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Tài khoản gắn với mục tiêu</label>
+      <select name="account_id" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+        {% for acc in accounts %}<option value="{{ acc.id }}">{{ acc.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="w-full py-3.5 rounded-xl bg-brand text-white font-medium">Tạo mục tiêu</button>
+  </form>
+</main>
+<script>
+  const goalTypeSelect = document.getElementById("goal_type");
+  const targetInput = document.getElementById("target_amount");
+  const emergencySuggestion = {{ emergency_fund_suggestion }};
+  goalTypeSelect.addEventListener("change", () => {
+    if (goalTypeSelect.value === "emergency_fund" && emergencySuggestion && !targetInput.value) {
+      targetInput.value = emergencySuggestion;
+    }
+  });
+</script>
+</body>
+</html>
+"""
+
+
+GOAL_DETAIL_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>{{ goal.name }}</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("goals") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <a href="/goals" class="text-[13px] text-slate-400 px-1">‹ Mục tiêu</a>
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-5 mt-2">
+    <div class="flex items-center justify-between mb-1">
+      <h1 class="text-lg font-semibold">{{ goal.name }}</h1>
+      <span class="text-[12px] text-slate-400">{{ goal.type_label }}</span>
+    </div>
+    <p class="text-[13px] text-slate-500 mb-3">Tài khoản: {{ goal.account_name }} · Hạn: {{ goal.deadline }}</p>
+
+    <div class="flex items-center justify-between text-[15px] font-semibold mb-2">
+      <span>{{ goal.current_display }}</span>
+      <span class="text-slate-400 font-normal">/ {{ goal.target_display }}</span>
+    </div>
+    <div class="bg-slate-100 rounded-full h-2.5 overflow-hidden mb-3">
+      <div class="{{ 'bg-rose-500' if goal.is_overdue else ('bg-amber-500' if goal.is_off_track else 'bg-emerald-500') }} h-full rounded-full" style="width: {{ goal.progress_pct }}%;"></div>
+    </div>
+
+    {% if goal.is_overdue %}
+    <p class="text-[13px] text-rose-600 font-medium">Đã quá hạn — còn thiếu {{ goal.remaining_display }}.</p>
+    {% elif goal.is_off_track %}
+    <p class="text-[13px] text-rose-600 font-medium">Đang chậm hơn tiến độ dự kiến.</p>
+    {% else %}
+    <p class="text-[13px] text-emerald-600 font-medium">Đang đúng tiến độ.</p>
+    {% endif %}
+
+    <div class="grid grid-cols-2 gap-3 mt-4">
+      <div class="bg-slate-50 rounded-xl p-3">
+        <p class="text-[12px] text-slate-400">Còn thiếu</p>
+        <p class="text-[15px] font-semibold">{{ goal.remaining_display }}</p>
+      </div>
+      <div class="bg-slate-50 rounded-xl p-3">
+        <p class="text-[12px] text-slate-400">Kỳ còn lại</p>
+        <p class="text-[15px] font-semibold">{{ goal.periods_remaining }} kỳ</p>
+      </div>
+    </div>
+    <div class="bg-slate-50 rounded-xl p-3 mt-3">
+      <p class="text-[12px] text-slate-400">Cần để dành mỗi kỳ</p>
+      <p class="text-[15px] font-semibold">{{ goal.required_per_period_display }}</p>
+    </div>
+  </div>
+</main>
+</body>
+</html>
+"""
+
+
+EVENTS_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>Kế hoạch sự kiện</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("goals") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <div class="flex items-center justify-between px-1 mb-3">
+    <h1 class="text-sm font-medium text-slate-500">{{ rows|length }} kế hoạch sự kiện</h1>
+    <a href="/events/new" class="text-brand text-sm font-medium">+ Tạo kế hoạch</a>
+  </div>
+  {% if rows %}
+  <div class="space-y-3">
+    {% for p in rows %}
+    <a href="/events/{{ p.id }}" class="block bg-white rounded-2xl ring-1 ring-slate-900/5 p-4">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-[15px] font-medium text-slate-900">{{ p.name }}</span>
+        <span class="text-lg font-bold text-slate-900">{{ p.total_display }}</span>
+      </div>
+      <p class="text-[13px] text-slate-500">{{ p.item_count }} khoản mục · Ngày: {{ p.event_date }}{% if p.linked_goal_id %} · Đã liên kết mục tiêu{% endif %}</p>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-8 text-center text-slate-400 text-sm">Chưa có kế hoạch sự kiện nào.</div>
+  {% endif %}
+</main>
+</body>
+</html>
+"""
+
+
+EVENTS_NEW_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>Tạo kế hoạch sự kiện</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("goals") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <h1 class="text-sm font-medium text-slate-500 px-1 mb-3">Tạo kế hoạch sự kiện</h1>
+
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4 mb-3">
+    <p class="text-[13px] text-slate-500 mb-2">Chọn mẫu có sẵn (chỉ gợi ý khoản mục, giá do bạn tự nhập):</p>
+    <div class="flex flex-wrap gap-2">
+      <a href="/events/new" class="px-3 py-1.5 rounded-lg text-[13px] {{ 'bg-brand text-white' if not selected_template_id else 'bg-slate-100 text-slate-600' }}">Tự tạo</a>
+      {% for t in templates %}
+      <a href="/events/new?template={{ t.id }}" class="px-3 py-1.5 rounded-lg text-[13px] {{ 'bg-brand text-white' if selected_template_id == t.id|string else 'bg-slate-100 text-slate-600' }}">{{ t.name }}</a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <form method="post" class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4 space-y-4">
+    {% if selected_template_id %}<input type="hidden" name="template_id" value="{{ selected_template_id }}">{% endif %}
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Tên kế hoạch</label>
+      <input type="text" name="name" required placeholder="VD: Chuyển nhà tháng 9" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+    </div>
+    <div>
+      <label class="block text-[13px] text-slate-500 mb-1">Ngày diễn ra (nếu biết)</label>
+      <input type="date" name="event_date" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+    </div>
+
+    <div class="border-t border-slate-100 pt-3">
+      <p class="text-[13px] text-slate-500 mb-2">Khoản mục (để trống số tiền để bỏ qua khoản đó):</p>
+      <div class="space-y-2">
+        {% for item in template_items %}
+        <div class="flex items-center gap-2">
+          <input type="hidden" name="item_name_{{ loop.index0 }}" value="{{ item.name }}">
+          <span class="flex-1 text-[14px] text-slate-700">{{ item.name }}</span>
+          <input type="text" inputmode="numeric" name="item_amount_{{ loop.index0 }}" placeholder="0" class="w-28 text-right border border-slate-200 rounded-lg px-2 py-1.5 text-[14px]">
+        </div>
+        {% endfor %}
+        {% for i in range(5) %}
+        <div class="flex items-center gap-2">
+          <input type="text" name="item_name_extra_{{ i }}" placeholder="Khoản mục khác" class="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-[14px]">
+          <input type="text" inputmode="numeric" name="item_amount_extra_{{ i }}" placeholder="0" class="w-28 text-right border border-slate-200 rounded-lg px-2 py-1.5 text-[14px]">
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <button type="submit" class="w-full py-3.5 rounded-xl bg-brand text-white font-medium">Tạo kế hoạch</button>
+  </form>
+</main>
+</body>
+</html>
+"""
+
+
+EVENT_DETAIL_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>{{ plan.name }}</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("goals") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  <a href="/events" class="text-[13px] text-slate-400 px-1">‹ Kế hoạch sự kiện</a>
+
+  {% if show_goal_prompt %}
+  <div class="bg-indigo-50 rounded-2xl p-4 my-3 text-[13px] text-indigo-900">
+    <p class="mb-2">Kế hoạch này có tổng dự kiến {{ total_display }}{% if plan.event_date %}, diễn ra {{ plan.event_date }}{% endif %} — bạn có muốn tạo một mục tiêu tích lũy tương ứng không?</p>
+    <div class="flex gap-2">
+      <a href="/goals/new?name={{ plan.name | urlencode }}&target_amount={{ total_amount }}&deadline={{ plan.event_date }}" class="flex-1 text-center py-2 rounded-lg bg-brand text-white text-[13px] font-medium">Tạo mục tiêu</a>
+      <form method="post" action="/events/{{ plan.id }}/dismiss-goal-prompt" class="flex-1">
+        <button type="submit" class="w-full py-2 rounded-lg bg-white text-slate-500 text-[13px] font-medium">Không, cảm ơn</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-5 mt-2">
+    <div class="flex items-center justify-between mb-3">
+      <h1 class="text-lg font-semibold">{{ plan.name }}</h1>
+      <span class="text-lg font-bold">{{ total_display }}</span>
+    </div>
+    {% if plan.event_date %}<p class="text-[13px] text-slate-500 mb-3">Ngày diễn ra: {{ plan.event_date }}</p>{% endif %}
+
+    {% if items %}
+    <div class="divide-y divide-slate-100">
+      {% for item in items %}
+      <div class="flex items-center justify-between py-2 text-[14px]">
+        <span class="text-slate-700">{{ item.name }}</span>
+        <span class="font-medium">{{ item.expected_display }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-slate-400 text-sm">Chưa có khoản mục nào.</p>
+    {% endif %}
+  </div>
+</main>
+</body>
+</html>
+"""
+
+
 EDIT_TEMPLATE = """<!doctype html>
 <html lang="vi">
 <head>
@@ -1374,6 +1981,7 @@ EDIT_TEMPLATE = """<!doctype html>
   <a href="/import">Nhập ảnh</a>
   <a href="/rules">Luật</a>
   <a href="/budgets">Ngân sách</a>
+  <a href="/goals">Mục tiêu</a>
 </div>
 <div class="card">
   <h1>Sửa danh mục</h1>
@@ -1475,6 +2083,7 @@ RISK_TEMPLATE = """<!doctype html>
   <a href="/import">Nhập ảnh</a>
   <a href="/rules">Luật</a>
   <a href="/budgets">Ngân sách</a>
+  <a href="/goals">Mục tiêu</a>
 </div>
 <div class="card">
   <h1>Tình hình tài chính</h1>
@@ -1605,6 +2214,7 @@ IMPORT_TEMPLATE = """<!doctype html>
   <a href="/import" class="active">Nhập ảnh</a>
   <a href="/rules">Luật</a>
   <a href="/budgets">Ngân sách</a>
+  <a href="/goals">Mục tiêu</a>
 </div>
 <div class="card">
   <h1>Nhập từ ảnh chụp</h1>
@@ -1675,6 +2285,7 @@ IMPORT_REVIEW_TEMPLATE = """<!doctype html>
   <a href="/import" class="active">Nhập ảnh</a>
   <a href="/rules">Luật</a>
   <a href="/budgets">Ngân sách</a>
+  <a href="/goals">Mục tiêu</a>
 </div>
 <div class="card">
   <h1>{{ candidates|length }} giao dịch tìm thấy — kiểm tra trước khi lưu</h1>

@@ -332,10 +332,10 @@ def get_event_template_items(cursor, template_id):
     return cursor.fetchall()
 
 
-def create_event_plan(cursor, *, name, template_id=None):
+def create_event_plan(cursor, *, name, template_id=None, event_date=None):
     cursor.execute(
-        "INSERT INTO event_plans (name, template_id) VALUES (?, ?)",
-        (name, template_id),
+        "INSERT INTO event_plans (name, template_id, event_date) VALUES (?, ?, ?)",
+        (name, template_id, event_date),
     )
     return cursor.lastrowid
 
@@ -349,8 +349,20 @@ def add_event_plan_item(cursor, *, event_plan_id, name, expected_amount):
 
 
 def get_event_plans(cursor):
-    cursor.execute("SELECT id, name, template_id, created_at FROM event_plans ORDER BY id DESC")
+    cursor.execute(
+        """SELECT id, name, template_id, event_date, linked_goal_id, goal_prompt_dismissed, created_at
+           FROM event_plans ORDER BY id DESC"""
+    )
     return cursor.fetchall()
+
+
+def get_event_plan_by_id(cursor, event_plan_id):
+    cursor.execute(
+        """SELECT id, name, template_id, event_date, linked_goal_id, goal_prompt_dismissed, created_at
+           FROM event_plans WHERE id = ?""",
+        (event_plan_id,),
+    )
+    return cursor.fetchone()
 
 
 def get_event_plan_items(cursor, event_plan_id):
@@ -360,6 +372,51 @@ def get_event_plan_items(cursor, event_plan_id):
         (event_plan_id,),
     )
     return cursor.fetchall()
+
+
+def link_event_plan_to_goal(cursor, event_plan_id, goal_id):
+    cursor.execute("UPDATE event_plans SET linked_goal_id = ? WHERE id = ?", (goal_id, event_plan_id))
+
+
+def dismiss_event_plan_goal_prompt(cursor, event_plan_id):
+    cursor.execute("UPDATE event_plans SET goal_prompt_dismissed = 1 WHERE id = ?", (event_plan_id,))
+
+
+# ---------- Financial goals (Mốc 2) ----------
+
+def get_goals(cursor):
+    cursor.execute(
+        """SELECT g.id, g.name, g.goal_type, g.target_amount, g.deadline, g.account_id, g.created_at,
+                  a.name AS account_name, a.current_balance
+           FROM goals g JOIN accounts a ON g.account_id = a.id
+           WHERE g.is_active = 1
+           ORDER BY g.deadline"""
+    )
+    return cursor.fetchall()
+
+
+def get_goal_by_id(cursor, goal_id):
+    cursor.execute(
+        """SELECT g.id, g.name, g.goal_type, g.target_amount, g.deadline, g.account_id, g.created_at,
+                  a.name AS account_name, a.current_balance
+           FROM goals g JOIN accounts a ON g.account_id = a.id
+           WHERE g.id = ?""",
+        (goal_id,),
+    )
+    return cursor.fetchone()
+
+
+def create_goal(cursor, *, name, goal_type, target_amount, deadline, account_id):
+    cursor.execute(
+        """INSERT INTO goals (name, goal_type, target_amount, deadline, account_id)
+           VALUES (?, ?, ?, ?, ?)""",
+        (name, goal_type, target_amount, deadline, account_id),
+    )
+    return cursor.lastrowid
+
+
+def deactivate_goal(cursor, goal_id):
+    cursor.execute("UPDATE goals SET is_active = 0 WHERE id = ?", (goal_id,))
 
 
 # ---------- Terminal CLI ----------
