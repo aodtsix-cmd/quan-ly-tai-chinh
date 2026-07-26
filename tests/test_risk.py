@@ -23,7 +23,8 @@ def build_test_db():
     conn.row_factory = sqlite3.Row
     conn.executescript((SRC_DIR / "schema.sql").read_text(encoding="utf-8"))
     for migration in ["001_ai_infra.sql", "002_period_settings.sql", "003_period_budgets.sql",
-                      "004_goals.sql", "005_simulations.sql", "006_cashflow_forecast.sql"]:
+                      "004_goals.sql", "005_simulations.sql", "006_cashflow_forecast.sql",
+                      "007_investment_stub.sql"]:
         conn.executescript((SRC_DIR / "migrations" / migration).read_text(encoding="utf-8"))
     return conn
 
@@ -574,6 +575,273 @@ class CashflowForecastTests(unittest.TestCase):
                     "pct_difference": 100.0, "stdev": 0, "sample_count": 2}]
         results = risk.compute_cashflow_forecast(self.cursor, 1, seasonality_patterns=pattern, as_of=self.as_of)
         self.assertEqual(results[0]["projected_expense"], 2_000_000)
+
+
+class NetWorthTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+
+    def test_sums_accounts_and_investments(self):
+        self.conn.execute(
+            "INSERT INTO investment_assets (name, asset_type, current_value, is_active) VALUES ('Vang', 'gold', 2000000, 1)"
+        )
+        self.conn.commit()
+        self.assertEqual(risk.get_total_net_worth(self.cursor), 5_000_000 + 2_000_000)
+
+    def test_inactive_investment_excluded(self):
+        self.conn.execute(
+            "INSERT INTO investment_assets (name, asset_type, current_value, is_active) VALUES ('Old', 'stock', 9999999, 0)"
+        )
+        self.conn.commit()
+        self.assertEqual(risk.get_total_net_worth(self.cursor), 5_000_000)
+
+    def test_zero_when_no_investments(self):
+        self.assertEqual(risk.get_total_net_worth(self.cursor), 5_000_000)
+
+
+class DailySpendAndSurvivalTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+        self.as_of = date(2026, 7, 20)
+
+    def test_average_daily_total_spend_includes_all_out(self):
+        insert_tx(self.conn, "2026-07-10 10:00:00", 1_500_000, "out", category_id=1)
+        insert_tx(self.conn, "2026-07-15 10:00:00", 1_500_000, "out", category_id=2, source="recurring")
+        self.conn.commit()
+        # (1.5M + 1.5M) / 30 days = 100,000/day -- recurring is NOT excluded here (unlike the variable-spend function)
+        self.assertAlmostEqual(risk.get_average_daily_total_spend(self.cursor, as_of=self.as_of), 100_000)
+
+    def test_survival_days(self):
+        insert_tx(self.conn, "2026-07-10 10:00:00", 3_000_000, "out", category_id=1)
+        self.conn.commit()
+        # daily spend = 3,000,000/30 = 100,000; liquid balance = 5,000,000 -> 50 days
+        self.assertAlmostEqual(risk.get_survival_days(self.cursor, as_of=self.as_of), 50)
+
+    def test_survival_days_none_with_no_spend(self):
+        self.assertIsNone(risk.get_survival_days(self.cursor, as_of=self.as_of))
+
+
+class FinancialRigidityTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.conn.execute(
+            "INSERT INTO categories (id, name_vi, name_en, kind, stability) VALUES (4, 'Tien nha', 'Rent', 'expense', 'fixed')"
+        )
+        self.cursor = self.conn.cursor()
+        self.as_of = date(2026, 7, 20)
+
+    def test_ratio_of_fixed_expense_to_income(self):
+        for occurred_at in ["2026-04-20 10:00:00", "2026-05-20 10:00:00", "2026-06-20 10:00:00"]:
+            insert_tx(self.conn, occurred_at, 2_000_000, "in", category_id=3)
+            insert_tx(self.conn, occurred_at, 500_000, "out", category_id=4)  # fixed
+            insert_tx(self.conn, occurred_at, 300_000, "out", category_id=1)  # not fixed, must be excluded
+        self.conn.commit()
+        rigidity = risk.get_financial_rigidity(self.cursor, periods=3, as_of=self.as_of)
+        self.assertAlmostEqual(rigidity, 500_000 * 3 / (2_000_000 * 3) * 100)
+
+    def test_none_with_no_income(self):
+        self.assertIsNone(risk.get_financial_rigidity(self.cursor, as_of=self.as_of))
+
+
+class BurnRateTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+        self.as_of = date(2026, 7, 20)  # current period 2026-07-15..2026-08-14 (31 days, day 6 elapsed)
+
+    def test_no_data_without_budgets(self):
+        result = risk.get_burn_rate_vs_elapsed(self.cursor, as_of=self.as_of)
+        self.assertFalse(result["has_data"])
+
+    def test_ratio_above_one_when_spending_ahead_of_pace(self):
+        self.conn.execute(
+            "INSERT INTO period_budgets (category_id, period_id, amount, source) VALUES (1, '2026-07', 1000000, 'manual')"
+        )
+        insert_tx(self.conn, "2026-07-17 10:00:00", 400_000, "out", category_id=1)
+        self.conn.commit()
+        result = risk.get_burn_rate_vs_elapsed(self.cursor, as_of=self.as_of)
+        self.assertTrue(result["has_data"])
+        self.assertAlmostEqual(result["pct_used"], 40.0)
+        self.assertAlmostEqual(result["pct_elapsed"], 6 / 31 * 100)
+        self.assertGreater(result["ratio"], 1)
+
+
+class CurrentPeriodSavingsRateTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+        self.as_of = date(2026, 7, 20)
+
+    def test_rate_within_elapsed_part_of_period(self):
+        insert_tx(self.conn, "2026-07-16 10:00:00", 1_000_000, "in", category_id=3)
+        insert_tx(self.conn, "2026-07-17 10:00:00", 400_000, "out", category_id=1)
+        self.conn.commit()
+        rate = risk.get_current_period_savings_rate(self.cursor, as_of=self.as_of)
+        self.assertAlmostEqual(rate, 60.0)
+
+    def test_excludes_transactions_after_as_of(self):
+        insert_tx(self.conn, "2026-07-16 10:00:00", 1_000_000, "in", category_id=3)
+        insert_tx(self.conn, "2026-07-25 10:00:00", 999_999_999, "out", category_id=1)  # after as_of
+        self.conn.commit()
+        rate = risk.get_current_period_savings_rate(self.cursor, as_of=self.as_of)
+        self.assertAlmostEqual(rate, 100.0)
+
+    def test_none_with_no_income_yet(self):
+        self.assertIsNone(risk.get_current_period_savings_rate(self.cursor, as_of=self.as_of))
+
+
+class SpendingConcentrationTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.conn.execute(
+            "INSERT INTO categories (id, name_vi, name_en, kind, necessity, parent_id) VALUES (5, 'Con', 'Child', 'expense', 'essential', 1)"
+        )
+        self.cursor = self.conn.cursor()
+        self.as_of = date(2026, 7, 20)
+
+    def test_identifies_top_category_by_percentage(self):
+        insert_tx(self.conn, "2026-07-16 10:00:00", 600_000, "out", category_id=1)
+        insert_tx(self.conn, "2026-07-17 10:00:00", 400_000, "out", category_id=2)
+        self.conn.commit()
+        result = risk.get_spending_concentration(self.cursor, as_of=self.as_of)
+        self.assertEqual(result["category_name"], "Thiết yếu")
+        self.assertAlmostEqual(result["pct_of_total"], 60.0)
+
+    def test_child_category_rolls_up_to_parent(self):
+        insert_tx(self.conn, "2026-07-16 10:00:00", 700_000, "out", category_id=5)  # child of category 1
+        insert_tx(self.conn, "2026-07-17 10:00:00", 300_000, "out", category_id=2)
+        self.conn.commit()
+        result = risk.get_spending_concentration(self.cursor, as_of=self.as_of)
+        self.assertEqual(result["category_name"], "Thiết yếu")  # parent's name, not the child's
+        self.assertAlmostEqual(result["pct_of_total"], 70.0)
+
+    def test_none_with_no_expense(self):
+        self.assertIsNone(risk.get_spending_concentration(self.cursor, as_of=self.as_of))
+
+
+class IncomeStabilityTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+        self.as_of = date(2026, 7, 20)
+
+    def test_zero_when_perfectly_stable(self):
+        for occurred_at in ["2026-04-20 10:00:00", "2026-05-20 10:00:00", "2026-06-20 10:00:00"]:
+            insert_tx(self.conn, occurred_at, 1_000_000, "in", category_id=3)
+        self.conn.commit()
+        self.assertAlmostEqual(risk.get_income_stability(self.cursor, as_of=self.as_of), 0.0)
+
+    def test_coefficient_of_variation_with_varying_income(self):
+        for occurred_at, amount in zip(
+            ["2026-04-20 10:00:00", "2026-05-20 10:00:00", "2026-06-20 10:00:00"],
+            [800_000, 1_000_000, 1_200_000],
+        ):
+            insert_tx(self.conn, occurred_at, amount, "in", category_id=3)
+        self.conn.commit()
+        self.assertAlmostEqual(risk.get_income_stability(self.cursor, as_of=self.as_of), 20.0)
+
+    def test_none_with_fewer_than_two_income_periods(self):
+        insert_tx(self.conn, "2026-06-20 10:00:00", 1_000_000, "in", category_id=3)
+        self.conn.commit()
+        self.assertIsNone(risk.get_income_stability(self.cursor, as_of=self.as_of))
+
+
+class BudgetStreakTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+        self.as_of = date(2026, 7, 20)
+
+    def _set_budget_and_spend(self, period_id, budget, spent):
+        self.conn.execute(
+            "INSERT INTO period_budgets (category_id, period_id, amount, source) VALUES (1, ?, ?, 'manual')",
+            (period_id, budget),
+        )
+        period_start, _ = period.period_bounds_for_id(period_id, 15)
+        insert_tx(self.conn, f"{period_start.isoformat()} 10:00:00", spent, "out", category_id=1)
+
+    def test_no_data_without_any_budget(self):
+        result = risk.get_budget_streak(self.cursor, as_of=self.as_of)
+        self.assertFalse(result["has_data"])
+
+    def test_streak_stops_at_first_over_budget_period(self):
+        self._set_budget_and_spend("2026-06", 1_000_000, 500_000)   # under, most recent completed
+        self._set_budget_and_spend("2026-05", 1_000_000, 500_000)   # under
+        self._set_budget_and_spend("2026-04", 1_000_000, 1_500_000)  # over -> streak stops here
+        self.conn.commit()
+        result = risk.get_budget_streak(self.cursor, as_of=self.as_of)
+        self.assertTrue(result["has_data"])
+        self.assertEqual(result["streak"], 2)
+
+
+class HealthScoreTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.cursor = self.conn.cursor()
+        self.as_of = date(2026, 7, 20)
+
+    def test_none_without_essential_history(self):
+        result = risk.get_health_score(self.cursor, as_of=self.as_of)
+        self.assertIsNone(result["level"])
+        self.assertFalse(result["has_data"])
+
+    def test_matches_runway_level_when_nothing_else_is_wrong(self):
+        # Only one completed period (2026-06) has essential spending, so that
+        # 1,000,000 IS the average (zero-spend periods are skipped, not
+        # counted as 0 -- see get_average_period_essential_expense). Runway =
+        # 4,000,000 / 1,000,000 = 4 months -> "on" (band: 3 <= x < 6).
+        self.conn.execute("UPDATE accounts SET current_balance = 4_000_000 WHERE id = 1")
+        insert_tx(self.conn, "2026-06-20 10:00:00", 1_000_000, "out", category_id=1)
+        self.conn.commit()
+        runway = risk.runway_months(self.cursor)
+        self.assertEqual(runway["level"], "on")
+        result = risk.get_health_score(self.cursor, as_of=self.as_of)
+        self.assertEqual(result["level"], runway["level"])
+        self.assertEqual(result["downgraded_reasons"], [])
+
+    def test_downgrades_on_short_term_forecast_risk(self):
+        # liquid balance high enough for a decent runway, but a huge recurring bill
+        # due later this period makes the immediate short-term forecast go negative
+        self.conn.execute("UPDATE accounts SET current_balance = 10_000_000 WHERE id = 1")
+        insert_tx(self.conn, "2026-06-20 10:00:00", 1_000_000, "out", category_id=1)
+        self.conn.execute(
+            """INSERT INTO recurring (name, amount, direction, account_id, frequency, day_of_period, next_due, is_active)
+               VALUES ('Big bill', 50000000, 'out', 1, 'monthly', 1, '2026-07-25', 1)"""
+        )
+        self.conn.commit()
+        forecast = risk.short_term_forecast(self.cursor, as_of=self.as_of)
+        self.assertTrue(forecast["at_risk"])
+        runway = risk.runway_months(self.cursor)
+        result = risk.get_health_score(self.cursor, as_of=self.as_of)
+        self.assertLess(
+            risk.HEALTH_LEVELS.index(result["level"]),
+            risk.HEALTH_LEVELS.index(runway["level"]),
+        )
+        self.assertIn("Dự báo cuối kỳ có thể âm quỹ", result["downgraded_reasons"])
+
+    def test_never_downgrades_below_worst_level(self):
+        self.conn.execute("UPDATE accounts SET current_balance = 100_000 WHERE id = 1")
+        insert_tx(self.conn, "2026-06-20 10:00:00", 5_000_000, "out", category_id=1)
+        self.conn.execute(
+            """INSERT INTO recurring (name, amount, direction, account_id, frequency, day_of_period, next_due, is_active)
+               VALUES ('Big bill', 50000000, 'out', 1, 'monthly', 1, '2026-07-25', 1)"""
+        )
+        self.conn.commit()
+        runway = risk.runway_months(self.cursor)
+        self.assertEqual(runway["level"], "nguy_hiem")
+        result = risk.get_health_score(self.cursor, as_of=self.as_of)
+        self.assertEqual(result["level"], "nguy_hiem")  # can't go any lower than this
 
 
 def transaction_get_goal(cursor, goal_id):

@@ -116,8 +116,14 @@ def delete_transaction(cursor, transaction_id):
 
 
 def update_transaction_category(cursor, transaction_id, category_id):
+    """Also marks the transaction as reviewed (is_reviewed = 1) -- editing its
+    category IS a human reviewing it, the same "chờ duyệt" concept the design
+    doc describes for a not-yet-built dedicated review screen (see CLAUDE.md).
+    Logging the transaction_reviewed behavior event itself is left to the two
+    callers (CLI/web), right alongside their existing category_overridden
+    log call -- both already have transaction_id in scope there."""
     cursor.execute(
-        "UPDATE transactions SET category_id = ? WHERE id = ?",
+        "UPDATE transactions SET category_id = ?, is_reviewed = 1 WHERE id = ?",
         (category_id, transaction_id),
     )
 
@@ -337,7 +343,12 @@ def create_event_plan(cursor, *, name, template_id=None, event_date=None):
         "INSERT INTO event_plans (name, template_id, event_date) VALUES (?, ?, ?)",
         (name, template_id, event_date),
     )
-    return cursor.lastrowid
+    plan_id = cursor.lastrowid
+    # event_plan_created has no transaction_id of its own (event_plans isn't
+    # transactions) -- payload carries the plan id instead. Logged here, once,
+    # since both the CLI and web callers share this same function.
+    log_behavior_event(cursor, "event_plan_created", payload={"event_plan_id": plan_id, "name": name})
+    return plan_id
 
 
 def add_event_plan_item(cursor, *, event_plan_id, name, expected_amount):
@@ -671,6 +682,7 @@ def edit_transaction_category_interactive():
         cursor, "category_overridden", transaction_id=transaction_id,
         payload={"old_category_id": old_category_id, "new_category_id": new_category_id},
     )
+    log_behavior_event(cursor, "transaction_reviewed", transaction_id=transaction_id)
     conn.commit()
     print("\n✔ Đã cập nhật danh mục.")
 

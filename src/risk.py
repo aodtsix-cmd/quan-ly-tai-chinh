@@ -829,3 +829,252 @@ def compute_cashflow_forecast(cursor, periods_ahead, goal_contribution_per_perio
         })
 
     return results
+
+
+# ---------- Health-score dashboard (Mốc 5) ----------
+
+HEALTH_LEVELS = ("nguy_hiem", "mong_manh", "on", "vung")  # worst to best, same order/labels as runway_months
+BURN_RATE_DANGER_RATIO = 1.5
+
+
+def get_total_net_worth(cursor):
+    """Tổng tài sản = tổng số dư MỌI tài khoản đang hoạt động (không chỉ
+    is_liquid — khác với get_liquid_balance, cái này trả lời "tổng tài sản
+    tôi có", không phải "bao nhiêu dùng được ngay") + tổng giá trị
+    investment_assets (Giai đoạn 7 — bảng luôn rỗng cho tới khi giai đoạn đó
+    được xây, nên số hạng này chỉ là 0 hôm nay, nhưng phép cộng đã sẵn sàng
+    không cần sửa lại khi Giai đoạn 7 có dữ liệu thật). Tuyệt đối KHÔNG dùng
+    số này cho bất kỳ phép tính an toàn/thanh khoản nào (liquidity_risk,
+    runway_months, short_term_forecast) — tài sản không lỏng (đầu tư, sổ
+    tiết kiệm dài hạn) trộn vào đó sẽ khiến các chỉ số đó trông an toàn hơn
+    thực tế, đúng loại lỗi nguy hiểm nhất cho một chỉ số an toàn."""
+    cursor.execute("SELECT COALESCE(SUM(current_balance), 0) AS total FROM accounts WHERE is_active = 1")
+    accounts_total = cursor.fetchone()["total"]
+    cursor.execute("SELECT COALESCE(SUM(current_value), 0) AS total FROM investment_assets WHERE is_active = 1")
+    investments_total = cursor.fetchone()["total"]
+    return accounts_total + investments_total
+
+
+def get_average_daily_total_spend(cursor, days=SPEND_LOOKBACK_DAYS, as_of=None):
+    """Average daily 'out' spend from EVERY source (recurring included) over
+    the trailing `days` — deliberately not the same as
+    get_average_daily_variable_spend (which excludes recurring on purpose,
+    for short_term_forecast's own math). "Số ngày cầm cự" wants the whole
+    picture: recurring bills still consume cash and shorten how long you'd
+    survive, so excluding them here would overstate survival time."""
+    as_of_date = as_of or date.today()
+    start_date = as_of_date - timedelta(days=days)
+    cursor.execute(
+        """SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
+           WHERE direction = 'out' AND date(occurred_at) > ? AND date(occurred_at) <= ?""",
+        (start_date.isoformat(), as_of_date.isoformat()),
+    )
+    return cursor.fetchone()["total"] / days
+
+
+def get_survival_days(cursor, as_of=None):
+    """Tài sản lỏng ÷ chi tiêu trung bình một ngày (mọi nguồn) — Mốc 5's
+    own "số ngày cầm cự" component, expressed in days rather than
+    runway_months' periods, using the full daily spend rate rather than
+    just the essential-category average. None if there's no spending
+    history to estimate a daily rate from."""
+    daily_spend = get_average_daily_total_spend(cursor, as_of=as_of)
+    if daily_spend <= 0:
+        return None
+    return get_liquid_balance(cursor) / daily_spend
+
+
+def get_financial_rigidity(cursor, periods=ESSENTIAL_LOOKBACK_PERIODS, as_of=None):
+    """Độ cứng tài chính = chi phí CỐ ĐỊNH (categories.stability = 'fixed' —
+    the first real read of this column for anything beyond Mốc 1's budget-
+    suggestion formula, which used it for a different purpose) ÷ thu nhập,
+    trung bình `periods` kỳ gần nhất đã hoàn tất (not the in-progress
+    current period, which would understate fixed costs not yet due this
+    period — same "completed periods only" convention used throughout
+    risk.py). Returns None if none of those periods had any income."""
+    start_day = period.get_period_start_day(cursor)
+    as_of_date = as_of or date.today()
+    current_id = period.current_period_id(cursor, as_of_date)
+    recent_ids = period.recent_period_ids_for(current_id, periods, start_day, include_current=False)
+
+    total_fixed = 0
+    total_income = 0
+    for pid in recent_ids:
+        p_start, p_end = period.period_bounds_for_id(pid, start_day)
+        cursor.execute(
+            """SELECT COALESCE(SUM(t.amount), 0) AS total FROM transactions t
+               JOIN categories c ON t.category_id = c.id
+               WHERE t.direction = 'out' AND c.stability = 'fixed'
+                 AND date(t.occurred_at) BETWEEN ? AND ?""",
+            (p_start.isoformat(), p_end.isoformat()),
+        )
+        total_fixed += cursor.fetchone()["total"]
+        cursor.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE direction = 'in' AND date(occurred_at) BETWEEN ? AND ?",
+            (p_start.isoformat(), p_end.isoformat()),
+        )
+        total_income += cursor.fetchone()["total"]
+
+    if total_income <= 0:
+        return None
+    return total_fixed / total_income * 100
+
+
+def get_burn_rate_vs_elapsed(cursor, as_of=None):
+    """Tốc độ đốt tiền = % tổng ngân sách (period_budgets) đã tiêu trong kỳ
+    hiện tại so với % thời gian đã qua trong kỳ. ratio > 1 nghĩa là tiêu
+    nhanh hơn tốc độ "đều" theo thời gian. has_data=False nếu chưa đặt ngân
+    sách nào cho kỳ hiện tại — không có gì để so tốc độ đốt."""
+    as_of_date = as_of or date.today()
+    start_day = period.get_period_start_day(cursor)
+    period_id = period.current_period_id(cursor, as_of_date)
+    statuses = get_period_budget_status(cursor, period_id)
+    if not statuses:
+        return {"has_data": False, "pct_used": None, "pct_elapsed": None, "ratio": None}
+
+    total_budget = sum(s["amount"] for s in statuses)
+    total_spent = sum(s["spent"] for s in statuses)
+    pct_used = (total_spent / total_budget * 100) if total_budget else 0
+
+    days_info = period.days_elapsed_and_remaining_for(as_of_date, start_day)
+    pct_elapsed = days_info["elapsed_days"] / days_info["total_days"] * 100
+
+    return {
+        "has_data": True,
+        "pct_used": pct_used,
+        "pct_elapsed": pct_elapsed,
+        "ratio": (pct_used / pct_elapsed) if pct_elapsed else None,
+    }
+
+
+def get_current_period_savings_rate(cursor, as_of=None):
+    """(thu − chi) ÷ thu, tính trong PHẦN KỲ ĐÃ QUA của kỳ hiện tại (tới
+    as_of, không phải toàn bộ kỳ vì kỳ hiện tại chưa kết thúc) — một chỉ số
+    "hôm nay đang thế nào", khác với get_savings_rate_trend vốn chỉ nhìn
+    các kỳ đã hoàn tất. None nếu chưa có thu nhập nào trong phần kỳ đã qua."""
+    as_of_date = as_of or date.today()
+    start_day = period.get_period_start_day(cursor)
+    period_id = period.current_period_id(cursor, as_of_date)
+    period_start, _ = period.period_bounds_for_id(period_id, start_day)
+
+    cursor.execute(
+        """SELECT direction, COALESCE(SUM(amount), 0) AS total FROM transactions
+           WHERE date(occurred_at) BETWEEN ? AND ?
+           GROUP BY direction""",
+        (period_start.isoformat(), as_of_date.isoformat()),
+    )
+    totals = {row["direction"]: row["total"] for row in cursor.fetchall()}
+    income = totals.get("in", 0)
+    expense = totals.get("out", 0)
+    if income <= 0:
+        return None
+    return (income - expense) / income * 100
+
+
+def get_spending_concentration(cursor, as_of=None):
+    """Danh mục CHA nào (con cộng dồn vào cha, qua COALESCE(parent_id, id))
+    chiếm % lớn nhất trong tổng chi của phần kỳ hiện tại đã qua. None nếu
+    chưa có chi tiêu nào trong kỳ này."""
+    as_of_date = as_of or date.today()
+    start_day = period.get_period_start_day(cursor)
+    period_id = period.current_period_id(cursor, as_of_date)
+    period_start, _ = period.period_bounds_for_id(period_id, start_day)
+
+    cursor.execute(
+        """SELECT COALESCE(c.parent_id, c.id) AS top_category_id, SUM(t.amount) AS total
+           FROM transactions t JOIN categories c ON t.category_id = c.id
+           WHERE t.direction = 'out' AND date(t.occurred_at) BETWEEN ? AND ?
+           GROUP BY top_category_id
+           ORDER BY total DESC""",
+        (period_start.isoformat(), as_of_date.isoformat()),
+    )
+    rows = cursor.fetchall()
+    if not rows:
+        return None
+
+    total_expense = sum(r["total"] for r in rows)
+    top = rows[0]
+    cursor.execute("SELECT name_vi FROM categories WHERE id = ?", (top["top_category_id"],))
+    name_row = cursor.fetchone()
+    return {
+        "category_name": name_row["name_vi"] if name_row else "?",
+        "amount": top["total"],
+        "pct_of_total": (top["total"] / total_expense * 100) if total_expense else 0,
+    }
+
+
+def get_income_stability(cursor, periods=SAVINGS_TREND_LOOKBACK_PERIODS, as_of=None):
+    """Độ ổn định thu nhập = hệ số biến thiên (độ lệch chuẩn ÷ trung bình,
+    tính bằng %) của thu nhập qua các kỳ đã hoàn tất — thấp hơn = ổn định
+    hơn. Reuses get_savings_rate_trend's own period data rather than
+    re-querying. None nếu chưa đủ 2 kỳ có thu nhập để so sánh (1 điểm dữ
+    liệu không nói lên được gì về "biến động")."""
+    trend = get_savings_rate_trend(cursor, periods=periods, as_of=as_of)
+    incomes = [p["income"] for p in trend["periods"] if p["income"] > 0]
+    if len(incomes) < 2:
+        return None
+    mean = sum(incomes) / len(incomes)
+    if mean <= 0:
+        return None
+    return statistics.stdev(incomes) / mean * 100
+
+
+def get_budget_streak(cursor, as_of=None, max_periods_checked=24):
+    """Số kỳ liên tiếp (tính lùi từ kỳ gần nhất đã HOÀN TẤT — kỳ hiện tại
+    đang chạy dở không tính) mà không danh mục nào trong period_budgets bị
+    vượt hạn mức. Dừng đếm ở kỳ đầu tiên hoặc không có ngân sách nào được
+    đặt (không phá chuỗi, chỉ là hết dữ liệu để nhìn xa hơn) hoặc bị vượt.
+    has_data=False nếu kỳ gần nhất đã hoàn tất còn chưa từng đặt ngân sách
+    (không có gì để bắt đầu đếm chuỗi)."""
+    start_day = period.get_period_start_day(cursor)
+    as_of_date = as_of or date.today()
+    current_id = period.current_period_id(cursor, as_of_date)
+
+    streak = 0
+    has_data = False
+    pid = period.shift_period_id(current_id, -1, start_day)
+    for _ in range(max_periods_checked):
+        statuses = get_period_budget_status(cursor, pid)
+        if not statuses:
+            break
+        has_data = True
+        if any(s["over_budget"] for s in statuses):
+            break
+        streak += 1
+        pid = period.shift_period_id(pid, -1, start_day)
+
+    return {"has_data": has_data, "streak": streak}
+
+
+def get_health_score(cursor, as_of=None):
+    """Mốc 5's headline number: MỘT chỉ số sức khỏe tổng hợp, dựa trên
+    runway_months() (chỉ số quan trọng nhất theo THIET-KE.md 4.3) làm nền,
+    chỉ HẠ THẤP thêm (không bao giờ nâng lên) khi có tín hiệu cấp bách hơn:
+      - hạ 1 bậc nếu short_term_forecast() báo at_risk (nguy cơ âm quỹ
+        NGAY kỳ này — cấp bách hơn một con số runway dài hạn)
+      - hạ 1 bậc nếu tốc độ đốt tiền > BURN_RATE_DANGER_RATIO lần tốc độ
+        "đều" theo thời gian đã qua trong kỳ
+    Không có tín hiệu nào được phép NÂNG bậc — chỉ runway_months (dữ liệu
+    dài hạn nhất, ổn định nhất) mới được nói "vững", giữ tinh thần thận
+    trọng hơn là lạc quan quá mức (Loss Aversion, THIET-KE.md 7.2) khi hai
+    chỉ số có vẻ mâu thuẫn nhau.
+
+    Returns {"level": ...|None, "has_data": bool, "downgraded_reasons": [...]}."""
+    runway = runway_months(cursor)
+    if runway["level"] is None:
+        return {"level": None, "has_data": False, "downgraded_reasons": []}
+
+    level_index = HEALTH_LEVELS.index(runway["level"])
+    reasons = []
+
+    forecast = short_term_forecast(cursor, as_of=as_of)
+    if forecast["at_risk"] and level_index > 0:
+        level_index -= 1
+        reasons.append("Dự báo cuối kỳ có thể âm quỹ")
+
+    burn = get_burn_rate_vs_elapsed(cursor, as_of=as_of)
+    if burn["has_data"] and burn["ratio"] is not None and burn["ratio"] > BURN_RATE_DANGER_RATIO and level_index > 0:
+        level_index -= 1
+        reasons.append("Tốc độ chi tiêu nhanh hơn nhiều so với tiến độ kỳ")
+
+    return {"level": HEALTH_LEVELS[level_index], "has_data": True, "downgraded_reasons": reasons}

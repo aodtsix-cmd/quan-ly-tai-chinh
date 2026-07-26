@@ -130,6 +130,10 @@ TRAFFIC_LIGHT_LABELS = {"green": "An toàn", "yellow": "Cân nhắc", "red": "R�
 TRAFFIC_LIGHT_COLORS = {"green": "bg-emerald-100 text-emerald-700", "yellow": "bg-amber-100 text-amber-700", "red": "bg-rose-100 text-rose-700"}
 
 
+class DailySummaryResult(BaseModel):
+    summary: str = Field(description="Nhận xét ngắn gọn 2-3 câu, tiếng Việt, về tình hình tài chính hôm nay.")
+
+
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 if not APP_PASSWORD:
     raise RuntimeError(
@@ -174,7 +178,7 @@ def login():
         if request.form.get("password") == APP_PASSWORD:
             session.permanent = True
             session["authenticated"] = True
-            return redirect(url_for("index"))
+            return redirect(url_for("dashboard"))
         error = "Mã không đúng, thử lại."
     return render_template_string(LOGIN_TEMPLATE, error=error)
 
@@ -207,7 +211,114 @@ def category_tree_as_json(cursor, kind):
 
 
 @app.route("/")
-def index():
+def dashboard():
+    """Mốc 5's health-score dashboard — the new home page, replacing what
+    used to be the add-transaction form at "/" (that form now lives at
+    /add, see add_transaction_page below). This is "the first thing I look
+    at every day" per the user's own stated daily habit loop (see balance →
+    know where I stand → enter today's transaction → see the plan) — so
+    proactive alerts moved here too (from the old index()), since this is
+    now the real "moment the app opens", not /add."""
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    active_alerts = alerts.get_active_alerts(cursor)
+    if active_alerts:
+        alerts.log_shown_alerts(cursor, active_alerts)
+        conn.commit()
+
+    health = risk.get_health_score(cursor)
+    net_worth = risk.get_total_net_worth(cursor)
+    survival_days = risk.get_survival_days(cursor)
+    rigidity = risk.get_financial_rigidity(cursor)
+    burn = risk.get_burn_rate_vs_elapsed(cursor)
+    savings_rate = risk.get_current_period_savings_rate(cursor)
+    concentration = risk.get_spending_concentration(cursor)
+    income_stability = risk.get_income_stability(cursor)
+    budget_streak = risk.get_budget_streak(cursor)
+
+    period_id = period.current_period_id(cursor)
+    days_info = period.days_elapsed_and_remaining(cursor)
+    budget_statuses = risk.get_period_budget_status(cursor, period_id)
+
+    # Proactive reminders (THIET-KE.md 1.3's "Phòng ngừa" pillar again, this
+    # time about the ENVELOPE budgets rather than the whole-account alerts
+    # above): most-used-first, top 3 — over-budget categories get a plainer
+    # "already over" message instead of a remaining-amount one.
+    reminders = []
+    for s in sorted(budget_statuses, key=lambda row: -row["pct_used"])[:3]:
+        if s["over_budget"]:
+            reminders.append(f"Đã vượt ngân sách {s['category_name']}: {s['spent']:,} đ / {s['amount']:,} đ.")
+        else:
+            reminders.append(
+                f"Còn {s['remaining']:,} đ cho {s['category_name']} trong "
+                f"{days_info['remaining_days']} ngày còn lại của kỳ."
+            )
+
+    conn.close()
+
+    return render_template_string(
+        DASHBOARD_TEMPLATE,
+        alerts=active_alerts,
+        health={
+            "has_data": health["has_data"],
+            "level": health["level"],
+            "level_label": RUNWAY_LEVEL_LABELS.get(health["level"], "Chưa đủ dữ liệu"),
+            "color": HEALTH_LEVEL_COLORS.get(health["level"], "bg-slate-300"),
+            "downgraded_reasons": health["downgraded_reasons"],
+        },
+        net_worth_display=f"{net_worth:,} đ",
+        period_id=period_id,
+        days_remaining=days_info["remaining_days"],
+        reminders=reminders,
+        metrics=[
+            {
+                "label": "Số ngày cầm cự",
+                "value": f"{survival_days:,.0f} ngày" if survival_days is not None else "Chưa đủ dữ liệu",
+                "hint": "Tài sản lỏng chia cho chi tiêu trung bình mỗi ngày.",
+            },
+            {
+                "label": "Độ cứng tài chính",
+                "value": f"{rigidity:.0f}% thu nhập" if rigidity is not None else "Chưa đủ dữ liệu",
+                "hint": "Chi phí cố định (nhà, trả góp, ...) chiếm bao nhiêu % thu nhập.",
+            },
+            {
+                "label": "Tốc độ đốt tiền",
+                "value": (
+                    f"{burn['pct_used']:.0f}% ngân sách / {burn['pct_elapsed']:.0f}% kỳ đã qua"
+                    if burn["has_data"] else "Chưa đặt ngân sách kỳ này"
+                ),
+                "hint": "So tốc độ tiêu ngân sách với tốc độ thời gian trôi qua trong kỳ.",
+            },
+            {
+                "label": "Tỉ lệ tiết kiệm (kỳ này, tới hôm nay)",
+                "value": f"{savings_rate:.0f}%" if savings_rate is not None else "Chưa có thu nhập kỳ này",
+                "hint": "(Thu − chi) ÷ thu, tính từ đầu kỳ tới hôm nay.",
+            },
+            {
+                "label": "Độ tập trung chi tiêu",
+                "value": (
+                    f"{concentration['category_name']} ({concentration['pct_of_total']:.0f}%)"
+                    if concentration is not None else "Chưa có chi tiêu kỳ này"
+                ),
+                "hint": "Danh mục lớn nhất đang chiếm bao nhiêu % tổng chi kỳ này.",
+            },
+            {
+                "label": "Độ ổn định thu nhập",
+                "value": f"{income_stability:.0f}% biến thiên" if income_stability is not None else "Chưa đủ dữ liệu",
+                "hint": "Độ lệch chuẩn thu nhập giữa các kỳ — thấp hơn là ổn định hơn.",
+            },
+            {
+                "label": "Chuỗi kỳ đạt ngân sách",
+                "value": f"{budget_streak['streak']} kỳ liên tiếp" if budget_streak["has_data"] else "Chưa có dữ liệu",
+                "hint": "Số kỳ liên tiếp gần nhất không danh mục nào vượt ngân sách.",
+            },
+        ],
+    )
+
+
+@app.route("/add")
+def add_transaction_page():
     conn = connect_db()
     cursor = conn.cursor()
     accounts = accounts_as_json(cursor)
@@ -215,14 +326,60 @@ def index():
         "expense": category_tree_as_json(cursor, "expense"),
         "income": category_tree_as_json(cursor, "income"),
     }
-    active_alerts = alerts.get_active_alerts(cursor)
-    if active_alerts:
-        alerts.log_shown_alerts(cursor, active_alerts)
-        conn.commit()
     conn.close()
     return render_template_string(
-        PAGE_TEMPLATE, accounts=accounts, categories_by_kind=categories_by_kind, alerts=active_alerts
+        PAGE_TEMPLATE, accounts=accounts, categories_by_kind=categories_by_kind
     )
+
+
+@app.route("/alerts/<code>/dismiss", methods=["POST"])
+def dismiss_alert(code):
+    conn = connect_db()
+    cursor = conn.cursor()
+    log_behavior_event(cursor, "alert_acted_on", payload={"code": code})
+    conn.commit()
+    conn.close()
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/api/ai/daily-summary")
+def api_ai_daily_summary():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    health = risk.get_health_score(cursor)
+    if not health["has_data"]:
+        conn.close()
+        return jsonify({"available": False, "reason": "no_data", "data": None})
+
+    period_id = period.current_period_id(cursor)
+    budget_statuses = risk.get_period_budget_status(cursor, period_id)
+
+    data = {
+        "date": date.today().isoformat(),
+        "health_level": health["level"],
+        "health_downgraded_reasons": health["downgraded_reasons"],
+        "net_worth": risk.get_total_net_worth(cursor),
+        "survival_days": risk.get_survival_days(cursor),
+        "financial_rigidity_pct": risk.get_financial_rigidity(cursor),
+        "current_period_savings_rate_pct": risk.get_current_period_savings_rate(cursor),
+        "budget_categories_over_limit": [s["category_name"] for s in budget_statuses if s["over_budget"]],
+    }
+
+    prompt_template = (PROMPTS_DIR / "daily_summary.md").read_text(encoding="utf-8")
+    prompt = prompt_template.format(data_json=json.dumps(data, ensure_ascii=False))
+
+    # `date` inside input_data naturally busts the cache once a day (a new
+    # hash every calendar day) — ttl_seconds is just a backstop, not the
+    # actual mechanism keeping this to one real call/day.
+    result = get_ai_suggestion(
+        cursor, task="daily_summary", input_data=data,
+        response_schema=DailySummaryResult, prompt=prompt,
+        ttl_seconds=24 * 60 * 60,
+    )
+    conn.commit()
+    conn.close()
+    return jsonify(result)
 
 
 @app.route("/transactions")
@@ -277,6 +434,7 @@ def edit_transaction_page(transaction_id):
             cursor, "category_overridden", transaction_id=transaction_id,
             payload={"old_category_id": old_category_id, "new_category_id": new_category_id},
         )
+        log_behavior_event(cursor, "transaction_reviewed", transaction_id=transaction_id)
 
         if new_category_id is not None and request.form.get("create_rule"):
             pattern = (request.form.get("pattern") or "").strip()
@@ -1125,6 +1283,13 @@ RUNWAY_LEVEL_LABELS = {
     "vung": "Vững",
 }
 
+HEALTH_LEVEL_COLORS = {
+    "nguy_hiem": "bg-rose-500",
+    "mong_manh": "bg-amber-500",
+    "on": "bg-sky-500",
+    "vung": "bg-emerald-500",
+}
+
 SAVINGS_TREND_LABELS = {
     "improving": "↑ Đang cải thiện",
     "declining": "↓ Đang giảm",
@@ -1316,6 +1481,7 @@ def import_confirm():
                 account_id=account_id, category_id=category_id, description=note,
                 source="ocr", is_reviewed=0, external_ref=external_ref,
             )
+            new_transaction_id = cursor.lastrowid
             # User corrected the AI's category guess for this note — learn a rule
             # from it, same mechanism as correcting a transaction's category
             # manually (transaction.py's add_rule with created_from="learned").
@@ -1323,6 +1489,17 @@ def import_confirm():
             # in, instead of every note being judged fresh by the AI each time.
             if category_id is not None and category_id != suggested_category_id and note:
                 add_rule(cursor, pattern=note, category_id=category_id, created_from="learned")
+            # Only log accept/reject when Gemini actually suggested something —
+            # no suggestion means there's nothing the user is accepting/rejecting.
+            if suggested_category_id is not None:
+                event_type = (
+                    "ai_suggestion_accepted" if category_id == suggested_category_id
+                    else "ai_suggestion_rejected"
+                )
+                log_behavior_event(
+                    cursor, event_type, transaction_id=new_transaction_id,
+                    payload={"suggested_category_id": suggested_category_id, "final_category_id": category_id},
+                )
             conn.commit()
             saved += 1
         except sqlite3.IntegrityError:
@@ -1553,10 +1730,10 @@ TAILWIND_HEAD = """<meta charset="utf-8">
 """
 
 
-# Segmented pill nav shared by the three Tailwind pages. {active} is one of
-# "add" (never used here — "/" stays on the old vanilla design), "list",
-# "summary", "rules". Built as a plain function (not Jinja) since it never
-# needs request-time data, just which page is currently active.
+# Segmented pill nav shared by the Tailwind pages. {active} is one of
+# "dashboard", "add", "list", "summary", "budgets", "goals", "rules". Built as
+# a plain function (not Jinja) since it never needs request-time data, just
+# which page is currently active.
 def tailwind_nav(active):
     def link(href, label, key):
         classes = "flex-1 text-center py-2.5 rounded-xl text-[13px] font-medium "
@@ -1564,7 +1741,8 @@ def tailwind_nav(active):
         return f'<a href="{href}" class="{classes}">{label}</a>'
 
     links = "\n    ".join([
-        link("/", "Nhập", "add"),
+        link("/", "Trang chủ", "dashboard"),
+        link("/add", "Nhập", "add"),
         link("/transactions", "Danh sách", "list"),
         link("/summary", "Tổng quan", "summary"),
         link("/budgets", "Ngân sách", "budgets"),
@@ -1645,22 +1823,12 @@ PAGE_TEMPLATE = """<!doctype html>
   }
   #message.ok { display: block; background: #e6f9ea; color: #1e7a34; }
   #message.error { display: block; background: #fdecea; color: #c0392b; }
-  .alert-banner {
-    max-width: 480px;
-    margin: 0 auto 12px;
-    padding: 12px 14px;
-    border-radius: 10px;
-    font-size: 0.9rem;
-    font-weight: 600;
-  }
-  .alert-banner.danger { background: #fdecea; color: #c0392b; }
-  .alert-banner.warning { background: #fff4e5; color: #b9770e; }
-  .alert-banner + .alert-banner { margin-top: -4px; }
 </style>
 </head>
 <body>
 <div class="nav">
-  <a href="/" class="active">Thêm</a>
+  <a href="/">Trang chủ</a>
+  <a href="/add" class="active">Thêm</a>
   <a href="/transactions">Danh sách</a>
   <a href="/summary">Tổng quan</a>
   <a href="/risk">Sức khỏe TC</a>
@@ -1669,9 +1837,6 @@ PAGE_TEMPLATE = """<!doctype html>
   <a href="/budgets">Ngân sách</a>
   <a href="/goals">Mục tiêu</a>
 </div>
-{% for alert in alerts %}
-<div class="alert-banner {{ alert.level }}">{{ alert.message }}</div>
-{% endfor %}
 <div class="card">
   <h1>Thêm giao dịch</h1>
   <form id="tx-form">
@@ -2713,6 +2878,85 @@ FORECAST_TEMPLATE = """<!doctype html>
 """
 
 
+DASHBOARD_TEMPLATE = """<!doctype html>
+<html lang="vi">
+<head>
+""" + TAILWIND_HEAD + """
+<title>Trang chủ</title>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+""" + tailwind_nav("dashboard") + """
+<main class="max-w-lg mx-auto px-4 pb-10 pt-3 space-y-4">
+
+  {% for alert in alerts %}
+  <div class="rounded-2xl p-4 flex items-start justify-between gap-3 {{ 'bg-rose-50 text-rose-700' if alert.level == 'danger' else 'bg-amber-50 text-amber-700' }}">
+    <p class="text-[13px] font-medium leading-snug">{{ alert.message }}</p>
+    <form method="post" action="/alerts/{{ alert.code }}/dismiss">
+      <button type="submit" class="text-[12px] font-semibold opacity-70 shrink-0">Đã xem</button>
+    </form>
+  </div>
+  {% endfor %}
+
+  <a href="/risk" class="block rounded-2xl {{ health.color }} p-5 text-white shadow-sm">
+    <p class="text-[13px] font-medium opacity-90 mb-1">Điểm sức khỏe tài chính</p>
+    <p class="text-2xl font-bold">{{ health.level_label }}</p>
+    {% if health.downgraded_reasons %}
+    <ul class="mt-2 text-[12px] opacity-90 space-y-0.5">
+      {% for reason in health.downgraded_reasons %}
+      <li>• {{ reason }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <p class="text-[12px] opacity-80 mt-2">Xem chi tiết ›</p>
+  </a>
+
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4 flex items-center justify-between">
+    <span class="text-[13px] text-slate-500">Tổng tài sản</span>
+    <span class="text-lg font-semibold">{{ net_worth_display }}</span>
+  </div>
+
+  <div id="ai-panel" class="bg-indigo-50 rounded-2xl p-4 text-[13px] text-indigo-900 hidden">
+    <p class="font-semibold mb-1">Nhận xét từ AI</p>
+    <p id="ai-panel-text"></p>
+  </div>
+
+  {% if reminders %}
+  <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4">
+    <p class="text-[13px] font-medium text-slate-500 mb-2">Kỳ {{ period_id }} · còn {{ days_remaining }} ngày</p>
+    <ul class="space-y-1.5 text-[13px] text-slate-700">
+      {% for reminder in reminders %}
+      <li>• {{ reminder }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <div class="grid grid-cols-2 gap-3">
+    {% for m in metrics %}
+    <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-3.5">
+      <p class="text-[11px] text-slate-400 mb-1">{{ m.label }}</p>
+      <p class="text-[14px] font-semibold text-slate-900 leading-snug">{{ m.value }}</p>
+    </div>
+    {% endfor %}
+  </div>
+
+  <a href="/add" class="block w-full py-3.5 rounded-xl bg-brand text-white font-medium text-center">+ Thêm giao dịch</a>
+</main>
+<script>
+  fetch("/api/ai/daily-summary")
+    .then((r) => r.json())
+    .then((result) => {
+      if (!result.available || !result.data) return;
+      document.getElementById("ai-panel-text").textContent = result.data.summary;
+      document.getElementById("ai-panel").classList.remove("hidden");
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>
+"""
+
+
 EDIT_TEMPLATE = """<!doctype html>
 <html lang="vi">
 <head>
@@ -2766,7 +3010,8 @@ EDIT_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <div class="nav">
-  <a href="/">Thêm</a>
+  <a href="/">Trang chủ</a>
+  <a href="/add">Thêm</a>
   <a href="/transactions" class="active">Danh sách</a>
   <a href="/summary">Tổng quan</a>
   <a href="/risk">Sức khỏe TC</a>
@@ -2868,7 +3113,8 @@ RISK_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <div class="nav">
-  <a href="/">Thêm</a>
+  <a href="/">Trang chủ</a>
+  <a href="/add">Thêm</a>
   <a href="/transactions">Danh sách</a>
   <a href="/summary">Tổng quan</a>
   <a href="/risk" class="active">Sức khỏe TC</a>
@@ -3001,7 +3247,8 @@ IMPORT_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <div class="nav">
-  <a href="/">Thêm</a>
+  <a href="/">Trang chủ</a>
+  <a href="/add">Thêm</a>
   <a href="/transactions">Danh sách</a>
   <a href="/summary">Tổng quan</a>
   <a href="/risk">Sức khỏe TC</a>
@@ -3072,7 +3319,8 @@ IMPORT_REVIEW_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <div class="nav">
-  <a href="/">Thêm</a>
+  <a href="/">Trang chủ</a>
+  <a href="/add">Thêm</a>
   <a href="/transactions">Danh sách</a>
   <a href="/summary">Tổng quan</a>
   <a href="/risk">Sức khỏe TC</a>
