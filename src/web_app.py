@@ -31,6 +31,7 @@ from transaction import (
     create_cashflow_forecast,
     create_event_plan,
     create_goal,
+    deactivate_goal,
     create_spending_simulation,
     delete_rule,
     delete_transaction,
@@ -502,8 +503,12 @@ def export_transactions_csv():
         ])
 
     filename = f"giao-dich-{date.today().isoformat()}.csv"
+    # UTF-8 BOM prefix: without it, Excel on Windows (a very plausible CSV
+    # consumer for this user) renders Vietnamese diacritics as mojibake —
+    # every other consumer (text editors, Google Sheets, Numbers) tolerates
+    # or ignores a leading BOM, so this is a pure compatibility improvement.
     return Response(
-        buffer.getvalue(),
+        "﻿" + buffer.getvalue(),
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
@@ -833,6 +838,7 @@ def goals_new():
         goal_type = request.form.get("goal_type") or "custom"
         deadline = request.form.get("deadline")
         target_amount_raw = request.form.get("target_amount") or ""
+        event_plan_id_raw = request.form.get("event_plan_id") or ""
 
         # On any validation failure, redirect back to THIS same form with
         # what was typed preserved via query params + a clear reason why —
@@ -844,6 +850,7 @@ def goals_new():
             return redirect(url_for(
                 "goals_new", error=message, name=name,
                 target_amount=target_amount_raw, deadline=deadline or "",
+                event_plan_id=event_plan_id_raw,
             ))
 
         if not name:
@@ -861,8 +868,20 @@ def goals_new():
         except (TypeError, ValueError):
             return back_with_error("Vui lòng chọn tài khoản.")
 
-        create_goal(cursor, name=name, goal_type=goal_type, target_amount=target_amount,
-                    deadline=deadline, account_id=account_id)
+        new_goal_id = create_goal(cursor, name=name, goal_type=goal_type, target_amount=target_amount,
+                                   deadline=deadline, account_id=account_id)
+        # Completes the goal↔event_plan linkage the "Tạo mục tiêu" button on
+        # /events/<id>'s goal-prompt promises — found broken (Mốc 2, predates
+        # this hardening pass) while auditing: that link only ever pre-filled
+        # this form via query params, it never actually passed event_plan_id
+        # through or called link_event_plan_to_goal, so linked_goal_id never
+        # got set and the same prompt would silently reappear on every later
+        # visit to that event even after "accepting" it.
+        if event_plan_id_raw:
+            try:
+                link_event_plan_to_goal(cursor, int(event_plan_id_raw), new_goal_id)
+            except ValueError:
+                pass
         conn.commit()
         conn.close()
         return redirect(url_for("goals_page"))
@@ -879,6 +898,7 @@ def goals_new():
         prefill_name=request.args.get("name", ""),
         prefill_target=request.args.get("target_amount", ""),
         prefill_deadline=request.args.get("deadline", ""),
+        prefill_event_plan_id=request.args.get("event_plan_id", ""),
         error=request.args.get("error"),
         today=date.today().isoformat(),
     )
@@ -895,6 +915,21 @@ def goal_detail(goal_id):
     row = _goal_row_display(goal, risk.get_goal_progress(cursor, goal))
     conn.close()
     return render_template_string(GOAL_DETAIL_TEMPLATE, goal=row)
+
+
+@app.route("/goals/<int:goal_id>/deactivate", methods=["POST"])
+def deactivate_goal_route(goal_id):
+    """transaction.deactivate_goal existed since Mốc 2 but had no CLI menu
+    option or web route ever calling it — found while auditing: once
+    created, a goal had NO way to ever be marked done/abandoned short of
+    editing the SQLite file directly, since get_goals() only ever lists
+    is_active = 1 rows. This is the first caller."""
+    conn = connect_db()
+    cursor = conn.cursor()
+    deactivate_goal(cursor, goal_id)
+    conn.commit()
+    conn.close()
+    return redirect(url_for("goals_page"))
 
 
 @app.route("/api/ai/goal-priority")
@@ -2713,6 +2748,7 @@ GOALS_NEW_TEMPLATE = """<!doctype html>
   <h1 class="text-sm font-medium text-slate-500 px-1 mb-3">Tạo mục tiêu mới</h1>
   """ + ERROR_BANNER + """
   <form method="post" class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4 space-y-4">
+    {% if prefill_event_plan_id %}<input type="hidden" name="event_plan_id" value="{{ prefill_event_plan_id }}">{% endif %}
     <div>
       <label class="block text-[13px] text-slate-500 mb-1">Tên mục tiêu</label>
       <input type="text" name="name" required value="{{ prefill_name }}" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
@@ -2805,6 +2841,11 @@ GOAL_DETAIL_TEMPLATE = """<!doctype html>
       <p class="text-[12px] text-slate-400">Cần để dành mỗi kỳ</p>
       <p class="text-[15px] font-semibold">{{ goal.required_per_period_display }}</p>
     </div>
+
+    <form method="post" action="/goals/{{ goal.id }}/deactivate" class="mt-4"
+          onsubmit="return confirm('Ẩn mục tiêu này? Dùng khi đã hoàn thành hoặc không theo đuổi nữa — không xóa lịch sử, chỉ ẩn khỏi danh sách Mục tiêu.');">
+      <button type="submit" class="w-full py-2.5 rounded-xl bg-slate-100 text-slate-500 text-[13px] font-medium">Ẩn mục tiêu này (đã hoàn thành / không theo đuổi nữa)</button>
+    </form>
   </div>
 </main>
 </body>
@@ -2922,7 +2963,7 @@ EVENT_DETAIL_TEMPLATE = """<!doctype html>
   <div class="bg-indigo-50 rounded-2xl p-4 my-3 text-[13px] text-indigo-900">
     <p class="mb-2">Kế hoạch này có tổng dự kiến {{ total_display }}{% if plan.event_date %}, diễn ra {{ plan.event_date }}{% endif %} — bạn có muốn tạo một mục tiêu tích lũy tương ứng không?</p>
     <div class="flex gap-2">
-      <a href="/goals/new?name={{ plan.name | urlencode }}&target_amount={{ total_amount }}&deadline={{ plan.event_date }}" class="flex-1 text-center py-2 rounded-lg bg-brand text-white text-[13px] font-medium">Tạo mục tiêu</a>
+      <a href="/goals/new?name={{ plan.name | urlencode }}&target_amount={{ total_amount }}&deadline={{ plan.event_date }}&event_plan_id={{ plan.id }}" class="flex-1 text-center py-2 rounded-lg bg-brand text-white text-[13px] font-medium">Tạo mục tiêu</a>
       <form method="post" action="/events/{{ plan.id }}/dismiss-goal-prompt" class="flex-1">
         <button type="submit" class="w-full py-2 rounded-lg bg-white text-slate-500 text-[13px] font-medium">Không, cảm ơn</button>
       </form>

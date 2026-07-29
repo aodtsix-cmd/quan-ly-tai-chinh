@@ -130,6 +130,20 @@ test("actionAddTransaction_ parses shorthand and updates the account balance", (
   assert.strictEqual(accRow[3], 0);
 });
 
+test("actionAddTransaction_ rejects an invalid account WITHOUT leaving a phantom transaction row", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  sheets.Categories.push([1, "An uong", "expense", ""]);
+  assert.throws(() => actionAddTransaction_({ direction: "out", account_id: 999, category_id: 1, amount: "1tr" }));
+  assert.strictEqual(sheets.Transactions.length, 1, "only the header row - no orphaned transaction was appended");
+});
+
+test("actionAddTransaction_ rejects an inactive account WITHOUT leaving a phantom transaction row", () => {
+  sheets.Accounts.push([1, "Old", "cash", 1000000, "FALSE"]);
+  sheets.Categories.push([1, "An uong", "expense", ""]);
+  assert.throws(() => actionAddTransaction_({ direction: "out", account_id: 1, category_id: 1, amount: "1tr" }));
+  assert.strictEqual(sheets.Transactions.length, 1);
+});
+
 test("actionAddTransfer_ moves balance between accounts without touching income/expense", () => {
   sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
   sheets.Accounts.push([2, "MoMo", "ewallet", 0, true]);
@@ -142,6 +156,20 @@ test("actionAddTransfer_ moves balance between accounts without touching income/
   const boot = actionBootstrap_();
   assert.strictEqual(boot.summary.income, 0, "transfer must not inflate income");
   assert.strictEqual(boot.summary.expense, 0, "transfer must not inflate expense");
+});
+
+test("actionAddTransfer_ with a valid source but invalid destination touches NEITHER balance nor writes any row", () => {
+  // Regression test for a real bug found live: the original code validated
+  // accounts only inside adjustAccountBalance_, called AFTER both
+  // transaction rows were already appended - so a valid fromId would
+  // already have money deducted, with no matching credit anywhere, by the
+  // time the invalid toId was ever caught. Money would simply disappear.
+  sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  sheets.Categories.push([1, "Chuyen khoan", "transfer", ""]);
+  assert.throws(() => actionAddTransfer_({ from_account_id: 1, to_account_id: 999, amount: "500k" }));
+  const bank = sheets.Accounts.find((r) => r[0] === 1);
+  assert.strictEqual(bank[3], 1000000, "fromId's balance must be untouched");
+  assert.strictEqual(sheets.Transactions.length, 1, "only the header row - no orphaned transaction rows");
 });
 
 test("actionAddTransfer_ rejects same source and destination account", () => {

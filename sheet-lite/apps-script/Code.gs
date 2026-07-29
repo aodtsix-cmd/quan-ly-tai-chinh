@@ -249,10 +249,27 @@ function actionAddCategory_(params) {
   return { id: id };
 }
 
+// Validates an account exists AND is active, returning its sheet row index.
+// Deliberately called BEFORE any appendRow in the actions below (found and
+// fixed live: the original order validated the account only inside
+// adjustAccountBalance_, AFTER the transaction row(s) were already
+// appended - Sheets writes can't be rolled back like a SQLite transaction,
+// so an invalid account left a phantom transaction row pointing nowhere,
+// and in actionAddTransfer_'s case specifically, a *valid* fromId could
+// already have money deducted before an invalid toId was ever caught,
+// with no matching credit anywhere - a real money-disappears bug).
+function findActiveAccountRowIndex_(accountId) {
+  var sheet = getSheet_(SHEET_ACCOUNTS);
+  var rows = sheetRowsAsObjects_(sheet, ACCOUNTS_HEADER);
+  for (var i = 0; i < rows.length; i++) {
+    if (Number(rows[i].id) === Number(accountId) && isActive_(rows[i].is_active)) return i + 2;
+  }
+  throw new Error("Tai khoan khong hop le.");
+}
+
 function adjustAccountBalance_(accountId, delta) {
   var sheet = getSheet_(SHEET_ACCOUNTS);
-  var rowIndex = findRowIndexById_(sheet, ACCOUNTS_HEADER, accountId);
-  if (rowIndex === -1) throw new Error("Tai khoan khong hop le.");
+  var rowIndex = findActiveAccountRowIndex_(accountId);
   var balanceCol = ACCOUNTS_HEADER.indexOf("balance") + 1;
   var cell = sheet.getRange(rowIndex, balanceCol);
   cell.setValue(Number(cell.getValue()) + delta);
@@ -264,6 +281,7 @@ function actionAddTransaction_(params) {
   var amount = parseAmountVnd_(params.amount);
   if (amount <= 0) throw new Error("So tien phai lon hon 0.");
   var accountId = Number(params.account_id);
+  findActiveAccountRowIndex_(accountId); // throws before any write if invalid
 
   var sheet = getSheet_(SHEET_TRANSACTIONS);
   var id = nextId_(sheet, TRANSACTIONS_HEADER);
@@ -280,6 +298,10 @@ function actionAddTransfer_(params) {
   if (fromId === toId) throw new Error("Tai khoan nguon va dich phai khac nhau.");
   var amount = parseAmountVnd_(params.amount);
   if (amount <= 0) throw new Error("So tien phai lon hon 0.");
+  // Validate BOTH accounts before any write - see findActiveAccountRowIndex_'s
+  // own comment for why this order matters.
+  findActiveAccountRowIndex_(fromId);
+  findActiveAccountRowIndex_(toId);
 
   var categories = sheetRowsAsObjects_(getSheet_(SHEET_CATEGORIES), CATEGORIES_HEADER);
   var transferCategory = categories.filter(function (c) { return c.kind === "transfer"; })[0];

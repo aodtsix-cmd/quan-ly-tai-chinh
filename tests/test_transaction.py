@@ -12,7 +12,17 @@ from pathlib import Path
 SRC_DIR = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC_DIR))
 
-from transaction import get_monthly_totals, get_transfer_category_id, insert_transfer, parse_amount_vnd
+from transaction import (
+    create_event_plan,
+    create_goal,
+    deactivate_goal,
+    get_goals,
+    get_monthly_totals,
+    get_transfer_category_id,
+    insert_transfer,
+    link_event_plan_to_goal,
+    parse_amount_vnd,
+)
 
 
 class ParseAmountVndTests(unittest.TestCase):
@@ -87,6 +97,16 @@ def build_test_db():
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     conn.executescript((SRC_DIR / "schema.sql").read_text(encoding="utf-8"))
+    return conn
+
+
+def build_test_db_with_goals():
+    """build_test_db() plus migration 004 (goals + event_plans.linked_goal_id/
+    event_date/goal_prompt_dismissed) — kept as a separate helper rather than
+    changing build_test_db() itself, since most tests in this file only need
+    the base schema."""
+    conn = build_test_db()
+    conn.executescript((SRC_DIR / "migrations" / "004_goals.sql").read_text(encoding="utf-8"))
     return conn
 
 
@@ -165,6 +185,69 @@ class InsertTransferTests(unittest.TestCase):
         totals = get_monthly_totals(self.cursor, "2026-07")
         self.assertEqual(totals["income"], 1_000_000)
         self.assertEqual(totals["expense"], 0)
+
+
+class LinkEventPlanToGoalTests(unittest.TestCase):
+    """transaction.link_event_plan_to_goal — found never actually called
+    anywhere (Mốc 2, predates the 2026-07-27/29 hardening pass) while
+    auditing /events/<id>'s goal-prompt: the "Tạo mục tiêu" link only ever
+    pre-filled /goals/new via query params, it never passed event_plan_id
+    through or called this function, so linked_goal_id never got set and
+    the same prompt would silently reappear on every later visit even after
+    the user "accepted" it. Fixed in web_app.py's goals_new(); this covers
+    the data-layer half."""
+
+    def setUp(self):
+        self.conn = build_test_db_with_goals()
+        self.conn.execute(
+            "INSERT INTO accounts (id, name, type, current_balance, is_liquid) VALUES (1, 'Test', 'bank', 0, 1)"
+        )
+        self.conn.commit()
+        self.cursor = self.conn.cursor()
+
+    def test_sets_linked_goal_id(self):
+        plan_id = create_event_plan(self.cursor, name="Cuoi hoi", event_date="2027-06-01")
+        goal_id = create_goal(
+            self.cursor, name="Cuoi hoi", goal_type="savings", target_amount=15_000_000,
+            deadline="2027-06-01", account_id=1,
+        )
+        self.conn.commit()
+        link_event_plan_to_goal(self.cursor, plan_id, goal_id)
+        self.conn.commit()
+        self.cursor.execute("SELECT linked_goal_id FROM event_plans WHERE id = ?", (plan_id,))
+        self.assertEqual(self.cursor.fetchone()["linked_goal_id"], goal_id)
+
+    def test_noop_for_nonexistent_event_plan(self):
+        # Matches this app's existing convention elsewhere (e.g.
+        # delete_transaction) of not raising for a stale/missing id.
+        link_event_plan_to_goal(self.cursor, 999, 1)  # must not raise
+
+
+class DeactivateGoalTests(unittest.TestCase):
+    """transaction.deactivate_goal — found never actually called anywhere
+    (Mốc 2, predates the hardening pass) while auditing for dead code: once
+    created, a goal had NO way to ever be marked done/abandoned, since
+    get_goals() only ever lists is_active = 1 rows. Wired up to a new
+    /goals/<id>/deactivate web route."""
+
+    def setUp(self):
+        self.conn = build_test_db_with_goals()
+        self.conn.execute(
+            "INSERT INTO accounts (id, name, type, current_balance, is_liquid) VALUES (1, 'Test', 'bank', 0, 1)"
+        )
+        self.conn.commit()
+        self.cursor = self.conn.cursor()
+
+    def test_deactivated_goal_no_longer_listed(self):
+        goal_id = create_goal(
+            self.cursor, name="Done goal", goal_type="savings", target_amount=1_000_000,
+            deadline="2027-01-01", account_id=1,
+        )
+        self.conn.commit()
+        self.assertEqual(len(get_goals(self.cursor)), 1)
+        deactivate_goal(self.cursor, goal_id)
+        self.conn.commit()
+        self.assertEqual(len(get_goals(self.cursor)), 0)
 
 
 if __name__ == "__main__":
