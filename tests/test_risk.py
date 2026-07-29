@@ -844,6 +844,95 @@ class HealthScoreTests(unittest.TestCase):
         self.assertEqual(result["level"], "nguy_hiem")  # can't go any lower than this
 
 
+class TransferExclusionTests(unittest.TestCase):
+    """A transaction tagged with a categories.kind='transfer' category (see
+    transaction.insert_transfer) is money moved between the user's OWN
+    accounts -- not real income or expense. Every risk.py aggregate that
+    sums 'in'/'out' transactions without already filtering on something
+    else (necessity, parent rollup) must exclude it, confirmed by seeding a
+    large transfer alongside small real income/expense and checking the
+    transfer's amount never leaks into the result."""
+
+    def setUp(self):
+        self.conn = build_test_db()
+        seed_account_and_categories(self.conn)
+        self.conn.execute(
+            "INSERT INTO categories (id, name_vi, name_en, kind, stability) VALUES (4, 'Chuyen khoan', 'Transfer', 'transfer', 'variable')"
+        )
+        self.cursor = self.conn.cursor()
+        self.as_of = date(2026, 7, 20)
+
+    def test_savings_rate_trend_ignores_transfer(self):
+        insert_tx(self.conn, "2026-06-20 10:00:00", 1_000_000, "in", category_id=3)
+        insert_tx(self.conn, "2026-06-21 10:00:00", 500_000, "out", category_id=1)
+        # A transfer dwarfing the real income/expense above -- if it leaked
+        # in, the savings rate here would be wildly different from 50%.
+        insert_tx(self.conn, "2026-06-22 10:00:00", 50_000_000, "out", category_id=4)
+        insert_tx(self.conn, "2026-06-22 10:00:00", 50_000_000, "in", category_id=4)
+        self.conn.commit()
+        trend = risk.get_savings_rate_trend(self.cursor, periods=3, as_of=self.as_of)
+        self.assertEqual(len(trend["periods"]), 1)
+        self.assertEqual(trend["periods"][0]["income"], 1_000_000)
+        self.assertEqual(trend["periods"][0]["expense"], 500_000)
+        self.assertAlmostEqual(trend["periods"][0]["savings_rate"], 50.0)
+
+    def test_current_period_savings_rate_ignores_transfer(self):
+        insert_tx(self.conn, "2026-07-16 10:00:00", 1_000_000, "in", category_id=3)
+        insert_tx(self.conn, "2026-07-17 10:00:00", 400_000, "out", category_id=1)
+        insert_tx(self.conn, "2026-07-17 10:00:00", 20_000_000, "out", category_id=4)
+        insert_tx(self.conn, "2026-07-17 10:00:00", 20_000_000, "in", category_id=4)
+        self.conn.commit()
+        rate = risk.get_current_period_savings_rate(self.cursor, as_of=self.as_of)
+        self.assertAlmostEqual(rate, 60.0)
+
+    def test_budget_balance_50_30_20_ignores_transfer_income(self):
+        insert_tx(self.conn, "2026-07-16 10:00:00", 1_000_000, "in", category_id=3)
+        insert_tx(self.conn, "2026-07-17 10:00:00", 20_000_000, "in", category_id=4)
+        self.conn.commit()
+        result = risk.budget_balance_50_30_20(self.cursor, "2026-07")
+        self.assertEqual(result["income"], 1_000_000)
+
+    def test_average_daily_variable_spend_ignores_transfer(self):
+        insert_tx(self.conn, "2026-07-10 10:00:00", 300_000, "out", category_id=1)
+        insert_tx(self.conn, "2026-07-11 10:00:00", 10_000_000, "out", category_id=4)
+        self.conn.commit()
+        avg = risk.get_average_daily_variable_spend(self.cursor, as_of=date(2026, 7, 20))
+        self.assertAlmostEqual(avg, 300_000 / 30)
+
+    def test_average_daily_total_spend_ignores_transfer(self):
+        insert_tx(self.conn, "2026-07-10 10:00:00", 300_000, "out", category_id=1)
+        insert_tx(self.conn, "2026-07-11 10:00:00", 10_000_000, "out", category_id=4)
+        self.conn.commit()
+        avg = risk.get_average_daily_total_spend(self.cursor, as_of=date(2026, 7, 20))
+        self.assertAlmostEqual(avg, 300_000 / 30)
+
+    def test_spending_concentration_ignores_transfer(self):
+        insert_tx(self.conn, "2026-07-16 10:00:00", 100_000, "out", category_id=1)
+        insert_tx(self.conn, "2026-07-17 10:00:00", 10_000_000, "out", category_id=4)
+        self.conn.commit()
+        result = risk.get_spending_concentration(self.cursor, as_of=self.as_of)
+        self.assertEqual(result["amount"], 100_000)
+        self.assertAlmostEqual(result["pct_of_total"], 100.0)
+
+    def test_financial_rigidity_ignores_transfer_income(self):
+        insert_tx(self.conn, "2026-06-20 10:00:00", 1_000_000, "in", category_id=3)
+        insert_tx(self.conn, "2026-06-20 10:00:00", 20_000_000, "in", category_id=4)
+        self.conn.commit()
+        # No fixed-stability category exists in this fixture, so total_fixed
+        # is 0 regardless -- this test only checks total_income (the
+        # denominator) isn't inflated by the transfer's 'in' leg.
+        rigidity = risk.get_financial_rigidity(self.cursor, periods=1, as_of=self.as_of)
+        self.assertAlmostEqual(rigidity, 0.0)
+
+    def test_detect_seasonality_ignores_transfer(self):
+        # A single huge transfer, with no other expense history at all,
+        # must not itself be enough to register as a period of "out" spend.
+        insert_tx(self.conn, "2026-06-20 10:00:00", 10_000_000, "out", category_id=4)
+        self.conn.commit()
+        result = risk.detect_seasonality(self.cursor, as_of=self.as_of)
+        self.assertEqual(result["periods_analyzed"], 0)
+
+
 def transaction_get_goal(cursor, goal_id):
     """Mirrors transaction.get_goal_by_id's SELECT — duplicated here (not
     imported) so this test file has no dependency on transaction.py, matching

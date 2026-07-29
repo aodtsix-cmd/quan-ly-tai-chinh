@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Sổ tài chính (Sheet-lite)</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f4f5f7;
+    color: #1c1c1e;
+  }
+  .card {
+    max-width: 480px;
+    margin: 0 auto 14px;
+    background: #fff;
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  h1 { font-size: 1.1rem; margin: 0 0 4px; }
+  .subtitle { font-size: 0.8rem; color: #8e8e93; margin: 0 0 14px; }
+  .balance { font-size: 1.8rem; font-weight: 700; margin: 4px 0; }
+  .accounts-list { font-size: 0.85rem; color: #555; }
+  .accounts-list div { display: flex; justify-content: space-between; padding: 4px 0; }
+  .segmented { display: flex; gap: 8px; margin-bottom: 14px; }
+  .segmented input { display: none; }
+  .segmented label {
+    flex: 1; text-align: center; padding: 12px 0; border-radius: 10px;
+    border: 1px solid #d1d1d6; font-weight: 600; font-size: 0.95rem; user-select: none;
+  }
+  #dir-out:checked + label { background: #ff3b30; color: #fff; border-color: #ff3b30; }
+  #dir-in:checked + label { background: #34c759; color: #fff; border-color: #34c759; }
+  #dir-transfer:checked + label { background: #007aff; color: #fff; border-color: #007aff; }
+  label.field-label { display: block; font-size: 0.85rem; color: #555; margin: 12px 0 5px; }
+  select, input[type="text"] {
+    width: 100%; padding: 11px; font-size: 16px; border: 1px solid #d1d1d6;
+    border-radius: 10px; background: #fff;
+  }
+  button {
+    width: 100%; margin-top: 16px; padding: 14px; font-size: 1rem; font-weight: 600;
+    color: #fff; background: #007aff; border: none; border-radius: 12px;
+  }
+  button:disabled { opacity: 0.5; }
+  button.secondary { background: #e5e5ea; color: #1c1c1e; }
+  #message, #setup-message {
+    margin-top: 12px; padding: 10px; border-radius: 10px; font-size: 0.9rem;
+    text-align: center; display: none;
+  }
+  .ok { display: block; background: #e6f9ea; color: #1e7a34; }
+  .error { display: block; background: #fdecea; color: #c0392b; }
+  .tx-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid #f0f0f0; gap: 8px;
+  }
+  .tx-row:last-child { border-bottom: none; }
+  .tx-meta { font-size: 0.78rem; color: #8e8e93; }
+  .tx-amount.in { color: #1e7a34; font-weight: 700; }
+  .tx-amount.out { color: #c0392b; font-weight: 700; }
+  .tx-del { background: none; border: none; color: #c0392b; font-size: 0.8rem; width: auto; margin: 0; padding: 4px 8px; }
+  .summary-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 0.9rem; }
+  a.settings-link { display: block; text-align: center; font-size: 0.78rem; color: #8e8e93; margin-top: 10px; text-decoration: none; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div id="setup-card" class="card hidden">
+  <h1>Thiết lập kết nối</h1>
+  <p class="subtitle">Dán URL Web App (Apps Script) và mật khẩu (token) bạn đã đặt — xem hướng dẫn trong README.md.</p>
+  <label class="field-label" for="setup-url">Web App URL</label>
+  <input type="text" id="setup-url" placeholder="https://script.google.com/macros/s/xxx/exec">
+  <label class="field-label" for="setup-token">Token</label>
+  <input type="text" id="setup-token" placeholder="Mật khẩu bạn đặt trong Script Properties">
+  <button id="setup-save">Lưu và bắt đầu</button>
+  <div id="setup-message"></div>
+</div>
+
+<div id="app" class="hidden">
+
+  <div class="card">
+    <h1>Tổng số dư</h1>
+    <p class="subtitle" id="month-label"></p>
+    <p class="balance" id="total-balance">—</p>
+    <div class="accounts-list" id="accounts-list"></div>
+    <div class="summary-row"><span>Thu tháng này</span><span id="month-income">—</span></div>
+    <div class="summary-row"><span>Chi tháng này</span><span id="month-expense">—</span></div>
+  </div>
+
+  <div class="card">
+    <h1>Thêm giao dịch</h1>
+    <form id="tx-form">
+      <div class="segmented">
+        <input type="radio" id="dir-out" name="direction" value="out" checked>
+        <label for="dir-out">Chi tiền</label>
+        <input type="radio" id="dir-in" name="direction" value="in">
+        <label for="dir-in">Thu tiền</label>
+        <input type="radio" id="dir-transfer" name="direction" value="transfer">
+        <label for="dir-transfer">Chuyển khoản</label>
+      </div>
+
+      <label class="field-label" id="account-label" for="account">Tài khoản</label>
+      <select id="account" required></select>
+
+      <div id="to-account-wrap" class="hidden">
+        <label class="field-label" for="to-account">Đến tài khoản</label>
+        <select id="to-account"></select>
+      </div>
+
+      <div id="category-wrap">
+        <label class="field-label" for="category">Danh mục</label>
+        <select id="category"></select>
+      </div>
+
+      <label class="field-label" for="amount">Số tiền (đ) — hỗ trợ 500k, 1tr, 2tr5</label>
+      <input type="text" inputmode="numeric" id="amount" placeholder="0" required>
+
+      <label class="field-label" for="description">Mô tả</label>
+      <input type="text" id="description" placeholder="VD: Ăn trưa Highlands">
+
+      <button type="submit" id="save">Lưu</button>
+      <div id="message"></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h1>Giao dịch gần đây</h1>
+    <div id="tx-list"></div>
+  </div>
+
+  <a href="#" class="settings-link" id="reset-settings">Đổi kết nối / cài đặt lại</a>
+</div>
+
+<script>
+  var STORAGE_KEY = "sheet_lite_config";
+
+  function loadConfig() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); } catch (e) { return null; }
+  }
+  function saveConfig(cfg) { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
+
+  var config = loadConfig();
+  var setupCard = document.getElementById("setup-card");
+  var appDiv = document.getElementById("app");
+
+  if (!config || !config.url || !config.token) {
+    setupCard.classList.remove("hidden");
+  } else {
+    appDiv.classList.remove("hidden");
+    initApp();
+  }
+
+  document.getElementById("setup-save").addEventListener("click", function () {
+    var url = document.getElementById("setup-url").value.trim();
+    var token = document.getElementById("setup-token").value.trim();
+    var msg = document.getElementById("setup-message");
+    if (!url || !token) {
+      msg.textContent = "Vui lòng nhập đủ URL và token.";
+      msg.className = "error";
+      msg.style.display = "block";
+      return;
+    }
+    saveConfig({ url: url, token: token });
+    location.reload();
+  });
+
+  document.getElementById("reset-settings").addEventListener("click", function (e) {
+    e.preventDefault();
+    if (confirm("Xóa thông tin kết nối đã lưu trên máy này?")) {
+      localStorage.removeItem(STORAGE_KEY);
+      location.reload();
+    }
+  });
+
+  // ---------- Main app ----------
+  function initApp() {
+    var state = { accounts: [], categories: [], transactions: [] };
+
+    var accountSelect = document.getElementById("account");
+    var toAccountSelect = document.getElementById("to-account");
+    var accountLabel = document.getElementById("account-label");
+    var toAccountWrap = document.getElementById("to-account-wrap");
+    var categoryWrap = document.getElementById("category-wrap");
+    var categorySelect = document.getElementById("category");
+    var amountInput = document.getElementById("amount");
+    var descriptionInput = document.getElementById("description");
+    var form = document.getElementById("tx-form");
+    var saveBtn = document.getElementById("save");
+    var message = document.getElementById("message");
+
+    function formatVND(n) { return new Intl.NumberFormat("vi-VN").format(n); }
+
+    // Same shorthand-aware parsing as the main Flask app's JS layer
+    // (transaction.parse_amount_vnd is the authoritative version server-
+    // side in that app; here Code.gs's parseAmountVnd_ is authoritative —
+    // this copy is only a preview/pre-check, same non-authoritative role).
+    function tryParseAmount(text) {
+      var raw = (text || "").trim().toLowerCase().replace(/\s+/g, "");
+      if (!raw) return null;
+      var trailingDigit = raw.match(/^(\d+)(tr|trieu|triệu)(\d)$/);
+      if (trailingDigit) return Math.round((Number(trailingDigit[1]) + Number(trailingDigit[3]) / 10) * 1e6);
+      var unitMatch = raw.match(/^(\d+(?:[.,]\d+)?)(k|nghin|nghìn|tr|trieu|triệu|ty|tỷ)$/);
+      if (unitMatch) {
+        var mult = { k: 1e3, nghin: 1e3, "nghìn": 1e3, tr: 1e6, trieu: 1e6, "triệu": 1e6, ty: 1e9, "tỷ": 1e9 }[unitMatch[2]];
+        return Math.round(parseFloat(unitMatch[1].replace(",", ".")) * mult);
+      }
+      var digits = raw.replace(/[.,]/g, "");
+      return /^\d+$/.test(digits) ? parseInt(digits, 10) : null;
+    }
+
+    function apiGet(action, extraParams) {
+      var params = new URLSearchParams(Object.assign({ action: action, token: config.token }, extraParams || {}));
+      return fetch(config.url + "?" + params.toString()).then(function (r) { return r.json(); });
+    }
+
+    // POST body sent as text/plain (NOT application/json) on purpose: Apps
+    // Script Web Apps don't handle CORS preflight (OPTIONS) requests, and a
+    // custom application/json Content-Type triggers one from the browser.
+    // text/plain is a CORS "simple request" so no preflight happens; Code.gs
+    // parses the body as JSON regardless of the declared Content-Type.
+    function apiPost(action, body) {
+      return fetch(config.url, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(Object.assign({ action: action, token: config.token }, body)),
+      }).then(function (r) { return r.json(); });
+    }
+
+    function showMessage(text, ok) {
+      message.textContent = text;
+      message.className = ok ? "ok" : "error";
+    }
+
+    function renderAccounts() {
+      var selected = accountSelect.value, toSelected = toAccountSelect.value;
+      accountSelect.innerHTML = "";
+      toAccountSelect.innerHTML = "";
+      var total = 0;
+      var listHtml = "";
+      state.accounts.forEach(function (acc) {
+        total += Number(acc.balance);
+        listHtml += "<div><span>" + acc.name + "</span><span>" + formatVND(acc.balance) + " đ</span></div>";
+        var label = acc.name + " (" + formatVND(acc.balance) + " đ)";
+        var opt = document.createElement("option");
+        opt.value = acc.id; opt.textContent = label;
+        accountSelect.appendChild(opt);
+        var toOpt = opt.cloneNode(true);
+        toAccountSelect.appendChild(toOpt);
+      });
+      if (selected) accountSelect.value = selected;
+      if (toSelected) toAccountSelect.value = toSelected;
+      document.getElementById("accounts-list").innerHTML = listHtml;
+      document.getElementById("total-balance").textContent = formatVND(total) + " đ";
+    }
+
+    function currentKind() {
+      var dir = document.querySelector('input[name="direction"]:checked').value;
+      return dir === "out" ? "expense" : "income";
+    }
+
+    function renderCategories() {
+      var kind = currentKind();
+      categorySelect.innerHTML = '<option value="">-- Chưa phân loại --</option>';
+      state.categories.filter(function (c) { return c.kind === kind; }).forEach(function (c) {
+        var opt = document.createElement("option");
+        opt.value = c.id; opt.textContent = c.name;
+        categorySelect.appendChild(opt);
+      });
+    }
+
+    function renderTransactions() {
+      var html = "";
+      state.transactions.forEach(function (t) {
+        var sign = t.direction === "in" ? "+" : "-";
+        html += '<div class="tx-row">' +
+          '<div><div>' + (t.category_name || "(chưa phân loại)") + '</div>' +
+          '<div class="tx-meta">' + t.occurred_at + " · " + t.account_name + (t.description ? " · " + t.description : "") + '</div></div>' +
+          '<div style="text-align:right"><div class="tx-amount ' + t.direction + '">' + sign + formatVND(t.amount) + ' đ</div>' +
+          '<button class="tx-del" data-id="' + t.id + '">Xóa</button></div></div>';
+      });
+      document.getElementById("tx-list").innerHTML = html || '<p class="subtitle">Chưa có giao dịch nào.</p>';
+      document.querySelectorAll(".tx-del").forEach(function (btn) {
+        btn.addEventListener("click", function () { deleteTransaction(btn.getAttribute("data-id")); });
+      });
+    }
+
+    function deleteTransaction(id) {
+      if (!confirm("Xóa giao dịch này? Số dư sẽ được cập nhật lại.")) return;
+      apiPost("delete_transaction", { id: id }).then(function (res) {
+        if (res.ok) loadBootstrap();
+        else alert(res.message);
+      });
+    }
+
+    function updateFormForDirection() {
+      var direction = document.querySelector('input[name="direction"]:checked').value;
+      if (direction === "transfer") {
+        accountLabel.textContent = "Từ tài khoản";
+        toAccountWrap.classList.remove("hidden");
+        categoryWrap.classList.add("hidden");
+      } else {
+        accountLabel.textContent = "Tài khoản";
+        toAccountWrap.classList.add("hidden");
+        categoryWrap.classList.remove("hidden");
+        renderCategories();
+      }
+    }
+    document.querySelectorAll('input[name="direction"]').forEach(function (el) {
+      el.addEventListener("change", updateFormForDirection);
+    });
+
+    amountInput.addEventListener("input", function () {
+      if (/[a-zA-Z]/.test(amountInput.value)) return;
+      var digits = amountInput.value.replace(/\D/g, "");
+      amountInput.value = digits ? formatVND(Number(digits)) : "";
+    });
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var direction = document.querySelector('input[name="direction"]:checked').value;
+      var rawAmount = amountInput.value.trim();
+      var preview = tryParseAmount(rawAmount);
+      if (!rawAmount || (preview !== null && preview <= 0)) {
+        showMessage("Vui lòng nhập số tiền hợp lệ.", false);
+        return;
+      }
+      if (direction === "transfer" && accountSelect.value === toAccountSelect.value) {
+        showMessage("Tài khoản nguồn và đích phải khác nhau.", false);
+        return;
+      }
+
+      saveBtn.disabled = true;
+      var request = direction === "transfer"
+        ? apiPost("add_transfer", { from_account_id: accountSelect.value, to_account_id: toAccountSelect.value, amount: rawAmount, description: descriptionInput.value })
+        : apiPost("add_transaction", { direction: direction, account_id: accountSelect.value, category_id: categorySelect.value, amount: rawAmount, description: descriptionInput.value });
+
+      request.then(function (res) {
+        if (res.ok) {
+          showMessage("Đã lưu.", true);
+          amountInput.value = "";
+          descriptionInput.value = "";
+          loadBootstrap();
+        } else {
+          showMessage(res.message, false);
+        }
+      }).catch(function () {
+        showMessage("Không kết nối được với Apps Script.", false);
+      }).finally(function () {
+        saveBtn.disabled = false;
+      });
+    });
+
+    function loadBootstrap() {
+      apiGet("bootstrap").then(function (res) {
+        if (!res.ok) {
+          showMessage(res.message, false);
+          return;
+        }
+        state.accounts = res.data.accounts;
+        state.categories = res.data.categories;
+        state.transactions = res.data.transactions;
+        renderAccounts();
+        updateFormForDirection();
+        renderTransactions();
+        document.getElementById("month-label").textContent = "Tháng " + res.data.summary.month;
+        document.getElementById("month-income").textContent = formatVND(res.data.summary.income) + " đ";
+        document.getElementById("month-expense").textContent = formatVND(res.data.summary.expense) + " đ";
+      }).catch(function () {
+        showMessage("Không kết nối được với Apps Script — kiểm tra lại URL/token.", false);
+      });
+    }
+
+    loadBootstrap();
+  }
+</script>
+</body>
+</html>

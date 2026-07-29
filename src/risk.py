@@ -10,6 +10,19 @@ SAVINGS_TREND_LOOKBACK_PERIODS = 6
 
 RUNWAY_LEVELS = ("nguy_hiem", "mong_manh", "on", "vung")
 
+# Moving money between the user's OWN accounts (transaction.insert_transfer)
+# is neither real income nor real expense — it's the same money, just
+# relocated — so every query below that sums 'in'/'out' transactions without
+# already joining categories on something else (necessity, parent rollup)
+# must exclude it explicitly, or a transfer would silently inflate income,
+# expense, or "biggest spending category" the same amount twice over (once
+# per leg). `category_id IS NULL OR ...` matters: plain `NOT IN (...)` would
+# also wrongly exclude every UNcategorized transaction, since SQL's
+# `NULL NOT IN (subquery)` evaluates to NULL/false, not true.
+NOT_TRANSFER_CLAUSE = (
+    "(category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE kind = 'transfer'))"
+)
+
 
 def get_liquid_balance(cursor):
     cursor.execute(
@@ -82,8 +95,8 @@ def get_average_daily_variable_spend(cursor, days=SPEND_LOOKBACK_DAYS, as_of=Non
     as_of_date = as_of or date.today()
     start_date = as_of_date - timedelta(days=days)
     cursor.execute(
-        """SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
-           WHERE direction = 'out' AND source != 'recurring'
+        f"""SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
+           WHERE direction = 'out' AND source != 'recurring' AND {NOT_TRANSFER_CLAUSE}
              AND date(occurred_at) > ? AND date(occurred_at) <= ?""",
         (start_date.isoformat(), as_of_date.isoformat()),
     )
@@ -219,6 +232,9 @@ def budget_balance_50_30_20(cursor, period_id):
     start_day = period.get_period_start_day(cursor)
     period_start, period_end = period.period_bounds_for_id(period_id, start_day)
 
+    # No explicit transfer exclusion needed here: a transfer category's
+    # necessity is always NULL (only expense categories set it), so its
+    # 'out' leg lands in by_necessity[None] below, which nothing ever reads.
     cursor.execute(
         """SELECT c.necessity AS necessity, SUM(t.amount) AS total
            FROM transactions t
@@ -232,8 +248,8 @@ def budget_balance_50_30_20(cursor, period_id):
     optional = by_necessity.get("optional", 0)
 
     cursor.execute(
-        """SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
-           WHERE direction = 'in' AND date(occurred_at) BETWEEN ? AND ?""",
+        f"""SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
+           WHERE direction = 'in' AND {NOT_TRANSFER_CLAUSE} AND date(occurred_at) BETWEEN ? AND ?""",
         (period_start.isoformat(), period_end.isoformat()),
     )
     income = cursor.fetchone()["total"]
@@ -281,7 +297,10 @@ def get_savings_rate_trend(cursor, periods=SAVINGS_TREND_LOOKBACK_PERIODS, as_of
     as_of_date = as_of or date.today()
     current_id = period.current_period_id(cursor, as_of_date)
 
-    cursor.execute("SELECT occurred_at, amount, direction FROM transactions")
+    cursor.execute("SELECT id FROM categories WHERE kind = 'transfer'")
+    transfer_category_ids = {row["id"] for row in cursor.fetchall()}
+
+    cursor.execute("SELECT occurred_at, amount, direction, category_id FROM transactions")
     income_by_period = {}
     expense_by_period = {}
     seen_periods = set()
@@ -291,6 +310,8 @@ def get_savings_rate_trend(cursor, periods=SAVINGS_TREND_LOOKBACK_PERIODS, as_of
         if period_id >= current_id:
             continue
         seen_periods.add(period_id)
+        if row["category_id"] in transfer_category_ids:
+            continue  # moved between own accounts -- not real income or expense
         if row["direction"] == "in":
             income_by_period[period_id] = income_by_period.get(period_id, 0) + row["amount"]
         else:
@@ -713,7 +734,7 @@ def detect_seasonality(cursor, as_of=None):
     as_of_date = as_of or date.today()
     current_id = period.current_period_id(cursor, as_of_date)
 
-    cursor.execute("SELECT occurred_at, amount FROM transactions WHERE direction = 'out'")
+    cursor.execute(f"SELECT occurred_at, amount FROM transactions WHERE direction = 'out' AND {NOT_TRANSFER_CLAUSE}")
     expense_by_period = {}
     for row in cursor.fetchall():
         occurred_date = date.fromisoformat(row["occurred_at"][:10])
@@ -865,8 +886,8 @@ def get_average_daily_total_spend(cursor, days=SPEND_LOOKBACK_DAYS, as_of=None):
     as_of_date = as_of or date.today()
     start_date = as_of_date - timedelta(days=days)
     cursor.execute(
-        """SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
-           WHERE direction = 'out' AND date(occurred_at) > ? AND date(occurred_at) <= ?""",
+        f"""SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
+           WHERE direction = 'out' AND {NOT_TRANSFER_CLAUSE} AND date(occurred_at) > ? AND date(occurred_at) <= ?""",
         (start_date.isoformat(), as_of_date.isoformat()),
     )
     return cursor.fetchone()["total"] / days
@@ -910,7 +931,7 @@ def get_financial_rigidity(cursor, periods=ESSENTIAL_LOOKBACK_PERIODS, as_of=Non
         )
         total_fixed += cursor.fetchone()["total"]
         cursor.execute(
-            "SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE direction = 'in' AND date(occurred_at) BETWEEN ? AND ?",
+            f"SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE direction = 'in' AND {NOT_TRANSFER_CLAUSE} AND date(occurred_at) BETWEEN ? AND ?",
             (p_start.isoformat(), p_end.isoformat()),
         )
         total_income += cursor.fetchone()["total"]
@@ -958,8 +979,8 @@ def get_current_period_savings_rate(cursor, as_of=None):
     period_start, _ = period.period_bounds_for_id(period_id, start_day)
 
     cursor.execute(
-        """SELECT direction, COALESCE(SUM(amount), 0) AS total FROM transactions
-           WHERE date(occurred_at) BETWEEN ? AND ?
+        f"""SELECT direction, COALESCE(SUM(amount), 0) AS total FROM transactions
+           WHERE {NOT_TRANSFER_CLAUSE} AND date(occurred_at) BETWEEN ? AND ?
            GROUP BY direction""",
         (period_start.isoformat(), as_of_date.isoformat()),
     )
@@ -983,7 +1004,7 @@ def get_spending_concentration(cursor, as_of=None):
     cursor.execute(
         """SELECT COALESCE(c.parent_id, c.id) AS top_category_id, SUM(t.amount) AS total
            FROM transactions t JOIN categories c ON t.category_id = c.id
-           WHERE t.direction = 'out' AND date(t.occurred_at) BETWEEN ? AND ?
+           WHERE t.direction = 'out' AND c.kind != 'transfer' AND date(t.occurred_at) BETWEEN ? AND ?
            GROUP BY top_category_id
            ORDER BY total DESC""",
         (period_start.isoformat(), as_of_date.isoformat()),

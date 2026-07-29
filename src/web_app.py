@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import os
 import sqlite3
@@ -5,7 +7,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template_string, request, session, url_for
 from pydantic import BaseModel, Field
 
 # Must run before any os.environ.get() below — lets APP_PASSWORD/GEMINI_API_KEY/etc.
@@ -35,6 +37,7 @@ from transaction import (
     dismiss_event_plan_goal_prompt,
     generate_due_recurring,
     get_active_accounts,
+    get_all_transactions_for_export,
     get_cashflow_forecast_by_id,
     get_cashflow_forecasts,
     get_categories,
@@ -55,8 +58,10 @@ from transaction import (
     get_spending_simulations,
     get_transaction_by_id,
     insert_transaction,
+    insert_transfer,
     link_event_plan_to_goal,
     log_behavior_event,
+    parse_amount_vnd,
     resolve_category,
     set_period_budget,
     set_simulation_ai_recommendation,
@@ -241,6 +246,32 @@ def dashboard():
     days_info = period.days_elapsed_and_remaining(cursor)
     budget_statuses = risk.get_period_budget_status(cursor, period_id)
 
+    # Goals/events existed as full features since Mốc 2 but were never once
+    # referenced from the dashboard that later became the app's home page —
+    # a real interconnection gap: the page you look at every day said
+    # nothing about either. Both sections below are read-only summaries
+    # (goals/events pages remain the actual CRUD surface) built from the
+    # same shared helpers api_ai_daily_summary() uses, so the dashboard
+    # card and the AI's synthesis always agree with each other.
+    goals_status = _goals_status_summary(cursor)
+    goals_summary = None
+    if goals_status["total"] > 0:
+        most_urgent = None
+        if goals_status["off_track"]:
+            g = goals_status["off_track"][0]
+            reason = "đã quá hạn" if g["reason"] == "overdue" else "đang chậm tiến độ"
+            most_urgent = {"message": f"{g['name']}: {reason}, còn thiếu {g['remaining_amount']:,} đ"}
+        goals_summary = {
+            "total": goals_status["total"],
+            "on_track_count": goals_status["on_track_count"],
+            "most_urgent": most_urgent,
+        }
+
+    nearest_event_raw = _nearest_upcoming_event(cursor)
+    nearest_event = None
+    if nearest_event_raw:
+        nearest_event = dict(nearest_event_raw, total_display=f"{nearest_event_raw['total_expected']:,} đ")
+
     # Proactive reminders (THIET-KE.md 1.3's "Phòng ngừa" pillar again, this
     # time about the ENVELOPE budgets rather than the whole-account alerts
     # above): most-used-first, top 3 — over-budget categories get a plainer
@@ -271,6 +302,8 @@ def dashboard():
         period_id=period_id,
         days_remaining=days_info["remaining_days"],
         reminders=reminders,
+        goals_summary=goals_summary,
+        nearest_event=nearest_event,
         metrics=[
             {
                 "label": "Số ngày cầm cự",
@@ -355,6 +388,16 @@ def api_ai_daily_summary():
     period_id = period.current_period_id(cursor)
     budget_statuses = risk.get_period_budget_status(cursor, period_id)
 
+    # Deep AI integration (Mốc 5 originally only handed this task the health
+    # score + net worth + a few risk.py metrics — every other feature was
+    # invisible to it, so the "daily summary" couldn't actually reflect the
+    # user's full financial picture). Now synthesizes across every major
+    # feature in one call: risk metrics, envelope budgets, goals, AND
+    # upcoming event plans — still just more Python-computed facts handed
+    # to the prompt, never a new number the AI itself works out.
+    goals_status = _goals_status_summary(cursor)
+    nearest_event = _nearest_upcoming_event(cursor)
+
     data = {
         "date": date.today().isoformat(),
         "health_level": health["level"],
@@ -364,6 +407,10 @@ def api_ai_daily_summary():
         "financial_rigidity_pct": risk.get_financial_rigidity(cursor),
         "current_period_savings_rate_pct": risk.get_current_period_savings_rate(cursor),
         "budget_categories_over_limit": [s["category_name"] for s in budget_statuses if s["over_budget"]],
+        "goals_total": goals_status["total"],
+        "goals_on_track_count": goals_status["on_track_count"],
+        "goals_off_track": goals_status["off_track"],
+        "nearest_event": nearest_event,
     }
 
     prompt_template = (PROMPTS_DIR / "daily_summary.md").read_text(encoding="utf-8")
@@ -386,8 +433,19 @@ def api_ai_daily_summary():
 def transactions_page():
     conn = connect_db()
     cursor = conn.cursor()
-    rows = get_recent_transactions(cursor, limit=50)
+    # Was a hardcoded limit=50 with no way at all to see anything older —
+    # a real dead end for an app people are expected to keep using for
+    # months. "Xem thêm" just re-requests with a bigger limit each time
+    # (peeking one extra row to know whether there's still more beyond it),
+    # rather than building out real pagination/search, which is a bigger,
+    # not-yet-requested feature.
+    limit = request.args.get("limit", 50, type=int) or 50
+    limit = max(10, min(limit, 1000))
+    rows = get_recent_transactions(cursor, limit=limit + 1)
     conn.close()
+
+    has_more = len(rows) > limit
+    rows = rows[:limit]
 
     transactions = []
     for row in rows:
@@ -402,7 +460,53 @@ def transactions_page():
             "description": row["description"] or "",
         })
 
-    return render_template_string(LIST_TEMPLATE, transactions=transactions)
+    # /import/confirm redirects here with these three counts so the user
+    # actually sees what happened to their upload — previously tracked
+    # server-side and then silently discarded, no confirmation shown at all.
+    import_saved = request.args.get("import_saved", type=int)
+    import_summary = None
+    if import_saved is not None:
+        skipped_dup = request.args.get("import_skipped_duplicate", 0, type=int)
+        skipped_invalid = request.args.get("import_skipped_invalid", 0, type=int)
+        parts = [f"Đã lưu {import_saved} giao dịch từ ảnh"]
+        if skipped_dup:
+            parts.append(f"{skipped_dup} trùng lặp đã bỏ qua")
+        if skipped_invalid:
+            parts.append(f"{skipped_invalid} không hợp lệ đã bỏ qua")
+        import_summary = ", ".join(parts) + "."
+
+    return render_template_string(
+        LIST_TEMPLATE, transactions=transactions, has_more=has_more, next_limit=limit + 50,
+        import_summary=import_summary,
+    )
+
+
+@app.route("/transactions/export.csv")
+def export_transactions_csv():
+    """The only way out of this app for a user's own data besides copying
+    the raw SQLite file by hand — real portability/backup, not an internal
+    display feature. Every transaction, not just what's shown on
+    /transactions (which is paginated)."""
+    conn = connect_db()
+    cursor = conn.cursor()
+    rows = get_all_transactions_for_export(cursor)
+    conn.close()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["occurred_at", "amount", "direction", "account", "category", "description", "source"])
+    for row in rows:
+        writer.writerow([
+            row["occurred_at"], row["amount"], row["direction"], row["account_name"],
+            row["category_name"] or "", row["description"] or "", row["source"],
+        ])
+
+    filename = f"giao-dich-{date.today().isoformat()}.csv"
+    return Response(
+        buffer.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.route("/transactions/<int:transaction_id>/delete", methods=["POST"])
@@ -548,6 +652,12 @@ def budgets_page():
     suggestions = risk.suggest_period_budget_amounts(cursor, period_id)
     status_by_category = {s["category_id"]: s for s in risk.get_period_budget_status(cursor, period_id)}
     categories = _flatten_categories(category_tree_as_json(cursor, "expense"))
+    # Cross-references goals ↔ budgets (previously two entirely separate
+    # features that never referenced each other): purely informational —
+    # doesn't fold into or validate the budget numbers, just lets the user
+    # visually check whether what they're about to budget still leaves room
+    # for what their goals need each period.
+    goal_contribution_per_period = _total_goal_contribution_per_period(cursor)
 
     conn.close()
 
@@ -577,6 +687,8 @@ def budgets_page():
             "over_budget": status["over_budget"] if status else False,
         })
 
+    total_budgeted = sum(r["amount_value"] for r in rows if r["amount_value"])
+
     return render_template_string(
         BUDGETS_TEMPLATE,
         period_id=period_id,
@@ -584,6 +696,11 @@ def budgets_page():
         next_period=next_period,
         period_range_display=f"{period_start.strftime('%d/%m')} – {period_end.strftime('%d/%m/%Y')}",
         rows=rows,
+        error=request.args.get("error"),
+        goal_contribution_display=(
+            f"{goal_contribution_per_period:,} đ" if goal_contribution_per_period > 0 else None
+        ),
+        total_budgeted_display=f"{total_budgeted:,} đ",
     )
 
 
@@ -593,24 +710,44 @@ def budgets_save():
     conn = connect_db()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id FROM categories WHERE kind = 'expense'")
-    valid_category_ids = {row["id"] for row in cursor.fetchall()}
+    cursor.execute("SELECT id, name_vi FROM categories WHERE kind = 'expense'")
+    category_names_by_id = {row["id"]: row["name_vi"] for row in cursor.fetchall()}
 
+    # Blank fields are expected (not every category gets a budget every
+    # period) and skipped silently — but a NON-blank amount that fails to
+    # parse (e.g. "500k" typed where the field used to require bare digits)
+    # is a real mistake, confirmed live to previously vanish with zero
+    # feedback: the category was just silently left unsaved, indistinguishable
+    # from the user never having touched that field at all.
+    failed_category_names = []
     for key, raw_value in request.form.items():
         if not key.startswith("amount_"):
             continue
+        if not raw_value or not raw_value.strip():
+            continue
         try:
             category_id = int(key[len("amount_"):])
-            amount = int((raw_value or "").replace(",", "").replace(".", ""))
         except ValueError:
             continue
-        if category_id not in valid_category_ids or amount <= 0:
+        if category_id not in category_names_by_id:
+            continue
+        try:
+            amount = parse_amount_vnd(raw_value)
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            failed_category_names.append(category_names_by_id[category_id])
             continue
         set_period_budget(cursor, category_id=category_id, period_id=period_id, amount=amount, source="manual")
 
     conn.commit()
     conn.close()
-    return redirect(url_for("budgets_page", period=period_id))
+    redirect_kwargs = {"period": period_id}
+    if failed_category_names:
+        redirect_kwargs["error"] = (
+            "Không hiểu số tiền cho: " + ", ".join(failed_category_names) + " — chưa được lưu."
+        )
+    return redirect(url_for("budgets_page", **redirect_kwargs))
 
 
 @app.route("/api/ai/budget-suggestion")
@@ -695,17 +832,38 @@ def goals_new():
         name = (request.form.get("name") or "").strip()
         goal_type = request.form.get("goal_type") or "custom"
         deadline = request.form.get("deadline")
+        target_amount_raw = request.form.get("target_amount") or ""
+
+        # On any validation failure, redirect back to THIS same form with
+        # what was typed preserved via query params + a clear reason why —
+        # confirmed live that the old bare `except: redirect(url_for(...))`
+        # (no params) silently wiped the whole form on e.g. "1tr" typed into
+        # the amount field, with no error shown at all.
+        def back_with_error(message):
+            conn.close()
+            return redirect(url_for(
+                "goals_new", error=message, name=name,
+                target_amount=target_amount_raw, deadline=deadline or "",
+            ))
+
+        if not name:
+            return back_with_error("Vui lòng nhập tên mục tiêu.")
+        if not deadline:
+            return back_with_error("Vui lòng chọn hạn chót.")
         try:
-            target_amount = int((request.form.get("target_amount") or "").replace(",", "").replace(".", ""))
+            target_amount = parse_amount_vnd(target_amount_raw)
+            if target_amount <= 0:
+                raise ValueError("Số tiền đích phải lớn hơn 0.")
+        except ValueError as exc:
+            return back_with_error(str(exc))
+        try:
             account_id = int(request.form.get("account_id"))
         except (TypeError, ValueError):
-            conn.close()
-            return redirect(url_for("goals_new"))
+            return back_with_error("Vui lòng chọn tài khoản.")
 
-        if name and deadline and target_amount > 0:
-            create_goal(cursor, name=name, goal_type=goal_type, target_amount=target_amount,
-                        deadline=deadline, account_id=account_id)
-            conn.commit()
+        create_goal(cursor, name=name, goal_type=goal_type, target_amount=target_amount,
+                    deadline=deadline, account_id=account_id)
+        conn.commit()
         conn.close()
         return redirect(url_for("goals_page"))
 
@@ -721,6 +879,8 @@ def goals_new():
         prefill_name=request.args.get("name", ""),
         prefill_target=request.args.get("target_amount", ""),
         prefill_deadline=request.args.get("deadline", ""),
+        error=request.args.get("error"),
+        today=date.today().isoformat(),
     )
 
 
@@ -805,25 +965,39 @@ def events_new():
         name = (request.form.get("name") or "").strip()
         event_date_value = request.form.get("event_date") or None
         template_id_raw = request.form.get("template_id")
-        template_id = int(template_id_raw) if template_id_raw else None
 
         if not name:
             conn.close()
-            return redirect(url_for("events_new"))
+            return redirect(url_for(
+                "events_new", error="Vui lòng nhập tên kế hoạch.",
+                template=template_id_raw or "",
+            ))
+        try:
+            template_id = int(template_id_raw) if template_id_raw else None
+        except ValueError:
+            template_id = None
 
         plan_id = create_event_plan(cursor, name=name, template_id=template_id, event_date=event_date_value)
 
+        # Item rows are tolerant by design (a blank amount just means "no
+        # estimate yet for this item", per THIET-KE.md's own "chỉ gợi ý
+        # khoản mục, giá tự nhập" flow) — but a NON-blank amount that fails
+        # to parse (e.g. "1tr" typed instead of "1000000") is a real mistake,
+        # not an intentional blank, so it's collected and reported back
+        # instead of just vanishing with no explanation.
+        failed_item_names = []
         for key, raw_value in request.form.items():
             if not key.startswith("item_name_"):
                 continue
             index = key[len("item_name_"):]
             item_name = (raw_value or "").strip()
             amount_raw = request.form.get(f"item_amount_{index}")
-            if not item_name or not amount_raw:
+            if not item_name or not amount_raw or not amount_raw.strip():
                 continue
             try:
-                amount = int(amount_raw.replace(",", "").replace(".", ""))
+                amount = parse_amount_vnd(amount_raw)
             except ValueError:
+                failed_item_names.append(item_name)
                 continue
             if amount > 0:
                 add_event_plan_item(cursor, event_plan_id=plan_id, name=item_name, expected_amount=amount)
@@ -843,9 +1017,14 @@ def events_new():
                 suggest_goal = True
 
         conn.close()
+        redirect_kwargs = {"event_plan_id": plan_id}
         if suggest_goal:
-            return redirect(url_for("event_detail", event_plan_id=plan_id, suggest_goal=1))
-        return redirect(url_for("event_detail", event_plan_id=plan_id))
+            redirect_kwargs["suggest_goal"] = 1
+        if failed_item_names:
+            redirect_kwargs["item_error"] = (
+                "Không hiểu số tiền cho: " + ", ".join(failed_item_names) + " — các khoản này chưa được lưu."
+            )
+        return redirect(url_for("event_detail", **redirect_kwargs))
 
     templates = get_event_templates(cursor)
     template_id_raw = request.args.get("template")
@@ -856,6 +1035,8 @@ def events_new():
         templates=templates,
         selected_template_id=template_id_raw,
         template_items=template_items,
+        prefill_name=request.args.get("name", ""),
+        error=request.args.get("error"),
     )
 
 
@@ -888,6 +1069,7 @@ def event_detail(event_plan_id):
         total_display=f"{total:,} đ",
         total_amount=total,
         show_goal_prompt=show_goal_prompt,
+        error=request.args.get("item_error"),
     )
 
 
@@ -909,21 +1091,31 @@ def simulate_page():
     if request.method == "POST":
         name = (request.form.get("name") or "").strip()
         note = (request.form.get("note") or "").strip() or None
-        try:
-            item_amount = int((request.form.get("item_amount") or "").replace(",", "").replace(".", ""))
-            maintenance_raw = (request.form.get("maintenance_cost_per_period") or "0").replace(",", "").replace(".", "")
-            maintenance_cost_per_period = int(maintenance_raw) if maintenance_raw else 0
-            expected_lifetime_periods = int(request.form.get("expected_lifetime_periods") or "0")
-        except ValueError:
-            conn.close()
-            return redirect(url_for("simulate_page"))
-
+        item_amount_raw = request.form.get("item_amount") or ""
+        maintenance_raw = request.form.get("maintenance_cost_per_period") or ""
         triggered_by_raw = request.form.get("triggered_by_transaction_id")
-        triggered_by_transaction_id = int(triggered_by_raw) if triggered_by_raw else None
 
-        if not name or item_amount <= 0:
+        def back_with_error(message):
             conn.close()
-            return redirect(url_for("simulate_page"))
+            return redirect(url_for(
+                "simulate_page", error=message, name=name, amount=item_amount_raw,
+                maintenance=maintenance_raw,
+                lifetime=request.form.get("expected_lifetime_periods") or "",
+                triggered_by_transaction_id=triggered_by_raw or "",
+            ))
+
+        if not name:
+            return back_with_error("Vui lòng đặt tên cho mô phỏng này.")
+        try:
+            item_amount = parse_amount_vnd(item_amount_raw)
+            if item_amount <= 0:
+                raise ValueError("Số tiền phải lớn hơn 0.")
+            maintenance_cost_per_period = parse_amount_vnd(maintenance_raw) if maintenance_raw.strip() else 0
+            expected_lifetime_periods = int(request.form.get("expected_lifetime_periods") or "0")
+        except ValueError as exc:
+            return back_with_error(str(exc))
+
+        triggered_by_transaction_id = int(triggered_by_raw) if triggered_by_raw else None
 
         liquidity_snapshot = risk.get_liquid_balance(cursor)
         scenarios, baseline_balances = risk.compute_spending_scenarios(
@@ -952,13 +1144,18 @@ def simulate_page():
 
     prefill_amount = request.args.get("amount", "")
     prefill_name = request.args.get("name", "")
+    prefill_maintenance = request.args.get("maintenance", "")
+    prefill_lifetime = request.args.get("lifetime", "")
     triggered_by = request.args.get("triggered_by_transaction_id", "")
     conn.close()
     return render_template_string(
         SIMULATE_TEMPLATE,
         prefill_amount=prefill_amount,
         prefill_name=prefill_name,
+        prefill_maintenance=prefill_maintenance,
+        prefill_lifetime=prefill_lifetime,
         triggered_by=triggered_by,
+        error=request.args.get("error"),
     )
 
 
@@ -1093,6 +1290,49 @@ def _total_goal_contribution_per_period(cursor):
     return total
 
 
+def _nearest_upcoming_event(cursor):
+    """The soonest event_plan whose event_date hasn't passed yet, or None —
+    shared by dashboard() (a card the user sees) and api_ai_daily_summary()
+    (so the AI's synthesis references the same upcoming event, not two
+    independently-computed answers to "what's coming up")."""
+    today_date = date.today()
+    upcoming = [
+        p for p in get_event_plans(cursor)
+        if p["event_date"] and date.fromisoformat(p["event_date"]) >= today_date
+    ]
+    if not upcoming:
+        return None
+    upcoming.sort(key=lambda p: p["event_date"])
+    p = upcoming[0]
+    items = get_event_plan_items(cursor, p["id"])
+    return {
+        "id": p["id"],
+        "name": p["name"],
+        "days_remaining": (date.fromisoformat(p["event_date"]) - today_date).days,
+        "total_expected": sum(i["expected_amount"] for i in items),
+    }
+
+
+def _goals_status_summary(cursor):
+    """{"total", "on_track_count", "off_track": [{"name", "remaining_amount",
+    "reason"}]} — shared by dashboard() and api_ai_daily_summary() for the
+    same reason as _nearest_upcoming_event above."""
+    goals = get_goals(cursor)
+    on_track_count = 0
+    off_track = []
+    for g in goals:
+        progress = risk.get_goal_progress(cursor, g)
+        if progress["is_overdue"] or progress["is_off_track"]:
+            off_track.append({
+                "name": g["name"],
+                "remaining_amount": progress["remaining_amount"],
+                "reason": "overdue" if progress["is_overdue"] else "off_track",
+            })
+        else:
+            on_track_count += 1
+    return {"total": len(goals), "on_track_count": on_track_count, "off_track": off_track}
+
+
 def _seasonality_patterns_display(patterns):
     return [
         {
@@ -1122,10 +1362,10 @@ def forecast_page():
 
         irregular_income_by_offset = {}
         for i in range(periods_ahead):
-            raw = (request.form.get(f"irregular_income_{i}") or "").replace(",", "").replace(".", "")
-            if raw:
+            raw = request.form.get(f"irregular_income_{i}") or ""
+            if raw.strip():
                 try:
-                    irregular_income_by_offset[i] = int(raw)
+                    irregular_income_by_offset[i] = parse_amount_vnd(raw)
                 except ValueError:
                     pass
 
@@ -1227,9 +1467,9 @@ def forecast_macro_scenario(forecast_id):
         conn.close()
         return "Không tìm thấy dự báo.", 404
 
-    raw = (request.form.get("macro_adjustment") or "0").replace(",", "").replace(".", "")
+    raw = request.form.get("macro_adjustment") or ""
     try:
-        macro_adjustment = int(raw) if raw else 0
+        macro_adjustment = parse_amount_vnd(raw) if raw.strip() else 0
     except ValueError:
         macro_adjustment = 0
 
@@ -1454,16 +1694,19 @@ def import_confirm():
 
     saved = 0
     skipped_duplicate = 0
+    skipped_invalid = 0
 
     for i in request.form.getlist("include"):
         try:
-            amount = int(request.form.get(f"amount_{i}", "").replace(",", "").replace(".", ""))
+            amount = parse_amount_vnd(request.form.get(f"amount_{i}", ""))
             account_id = int(request.form.get(f"account_{i}"))
         except (TypeError, ValueError):
+            skipped_invalid += 1
             continue
 
         direction = request.form.get(f"direction_{i}")
         if amount <= 0 or direction not in ("in", "out"):
+            skipped_invalid += 1
             continue
 
         category_id_raw = request.form.get(f"category_{i}")
@@ -1507,7 +1750,14 @@ def import_confirm():
             skipped_duplicate += 1
 
     conn.close()
-    return redirect(url_for("transactions_page"))
+    # Previously a bare redirect with zero summary of what actually
+    # happened — `saved`/`skipped_duplicate` were tracked but never shown
+    # anywhere, so uploading e.g. 5 screenshots gave no confirmation of how
+    # many were really saved vs. silently skipped as duplicates/invalid.
+    return redirect(url_for(
+        "transactions_page", import_saved=saved,
+        import_skipped_duplicate=skipped_duplicate, import_skipped_invalid=skipped_invalid,
+    ))
 
 
 @app.route("/api/transactions", methods=["POST"])
@@ -1526,12 +1776,18 @@ def create_transaction():
     category_id_raw = data.get("category_id")
     category_id = int(category_id_raw) if category_id_raw not in (None, "") else None
 
+    raw_amount = data.get("amount")
     try:
-        amount = int(data.get("amount"))
+        # amount arrives as free text from the JS amount field, which allows
+        # Vietnamese shorthand ("1tr", "500k", "2tr5") through untouched
+        # rather than stripping it to digits-only — see PAGE_TEMPLATE's own
+        # comment on why the old digit-strip-as-you-type approach silently
+        # turned "1tr" into "1" (1 đồng) with no warning at all.
+        amount = int(raw_amount) if isinstance(raw_amount, (int, float)) else parse_amount_vnd(str(raw_amount))
         if amount <= 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        return jsonify(ok=False, message="Số tiền không hợp lệ."), 400
+            raise ValueError("Số tiền phải lớn hơn 0.")
+    except (TypeError, ValueError) as exc:
+        return jsonify(ok=False, message=str(exc) or "Số tiền không hợp lệ."), 400
 
     description = (data.get("description") or "").strip()
 
@@ -1571,6 +1827,59 @@ def create_transaction():
     if auto_categorized:
         message += " (tự động phân loại)"
     return jsonify(ok=True, message=message)
+
+
+@app.route("/api/transactions/transfer", methods=["POST"])
+def create_transfer():
+    """Moving money between the user's OWN accounts (topping up MoMo from a
+    bank transfer, an ATM cash withdrawal, paying off a credit card, ...) —
+    categories.kind='transfer' has existed since Stage 1's schema but had no
+    CLI/web screen ever using it until now, meaning there was no way to
+    correctly record this extremely common personal-finance action without
+    it silently inflating income or expense totals (a plain 'out' from one
+    account, or worse, one leg entered and the other forgotten). See
+    transaction.insert_transfer and risk.NOT_TRANSFER_CLAUSE."""
+    data = request.get_json(silent=True) or {}
+
+    try:
+        from_account_id = int(data.get("from_account_id"))
+        to_account_id = int(data.get("to_account_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, message="Vui lòng chọn tài khoản nguồn và đích."), 400
+
+    raw_amount = data.get("amount")
+    try:
+        amount = int(raw_amount) if isinstance(raw_amount, (int, float)) else parse_amount_vnd(str(raw_amount))
+        if amount <= 0:
+            raise ValueError("Số tiền phải lớn hơn 0.")
+    except (TypeError, ValueError) as exc:
+        return jsonify(ok=False, message=str(exc) or "Số tiền không hợp lệ."), 400
+
+    description = (data.get("description") or "").strip()
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT COUNT(*) AS n FROM accounts WHERE id IN (?, ?) AND is_active = 1",
+        (from_account_id, to_account_id),
+    )
+    if cursor.fetchone()["n"] != 2:
+        conn.close()
+        return jsonify(ok=False, message="Tài khoản không hợp lệ."), 400
+
+    try:
+        insert_transfer(
+            cursor, from_account_id=from_account_id, to_account_id=to_account_id,
+            amount=amount, description=description,
+        )
+    except ValueError as exc:
+        conn.close()
+        return jsonify(ok=False, message=str(exc)), 400
+
+    conn.commit()
+    conn.close()
+    return jsonify(ok=True, message=f"Đã chuyển khoản: {amount:,} đ")
 
 
 LOGIN_TEMPLATE = """<!doctype html>
@@ -1756,6 +2065,15 @@ def tailwind_nav(active):
 </nav>"""
 
 
+# Shared error banner for forms that redirect back to themselves on
+# validation failure (goals_new, events_new, simulate_page, budgets_page) —
+# `error` is passed as a plain query-param string, not session-based flash,
+# matching this app's existing "prefill via query params on redirect" idiom.
+ERROR_BANNER = """{% if error %}
+  <div class="bg-rose-50 text-rose-700 rounded-2xl p-3 mb-3 text-[13px] font-medium">{{ error }}</div>
+  {% endif %}"""
+
+
 PAGE_TEMPLATE = """<!doctype html>
 <html lang="vi">
 <head>
@@ -1801,6 +2119,7 @@ PAGE_TEMPLATE = """<!doctype html>
   }
   #dir-out:checked + label { background: #ff3b30; color: #fff; border-color: #ff3b30; }
   #dir-in:checked + label { background: #34c759; color: #fff; border-color: #34c759; }
+  #dir-transfer:checked + label { background: #007aff; color: #fff; border-color: #007aff; }
   button#save {
     width: 100%;
     margin-top: 22px;
@@ -1845,13 +2164,22 @@ PAGE_TEMPLATE = """<!doctype html>
       <label for="dir-out">Chi tiền</label>
       <input type="radio" id="dir-in" name="direction" value="in">
       <label for="dir-in">Thu tiền</label>
+      <input type="radio" id="dir-transfer" name="direction" value="transfer">
+      <label for="dir-transfer">Chuyển khoản</label>
     </div>
 
-    <label class="field-label" for="account">Tài khoản</label>
+    <label class="field-label" for="account" id="account-label">Tài khoản</label>
     <select id="account" required></select>
 
-    <label class="field-label" for="category">Danh mục</label>
-    <select id="category"></select>
+    <div id="to-account-wrap" style="display:none;">
+      <label class="field-label" for="to_account">Đến tài khoản</label>
+      <select id="to_account"></select>
+    </div>
+
+    <div id="category-wrap">
+      <label class="field-label" for="category">Danh mục</label>
+      <select id="category"></select>
+    </div>
 
     <label class="field-label" for="amount">Số tiền (đ)</label>
     <input type="text" inputmode="numeric" id="amount" placeholder="0" required>
@@ -1869,6 +2197,10 @@ PAGE_TEMPLATE = """<!doctype html>
   const categoriesByKind = {{ categories_by_kind|tojson }};
 
   const accountSelect = document.getElementById("account");
+  const toAccountSelect = document.getElementById("to_account");
+  const accountLabel = document.getElementById("account-label");
+  const toAccountWrap = document.getElementById("to-account-wrap");
+  const categoryWrap = document.getElementById("category-wrap");
   const categorySelect = document.getElementById("category");
   const amountInput = document.getElementById("amount");
   const descriptionInput = document.getElementById("description");
@@ -1882,13 +2214,23 @@ PAGE_TEMPLATE = """<!doctype html>
   }
 
   function renderAccounts() {
+    const selected = accountSelect.value;
+    const toSelected = toAccountSelect.value;
     accountSelect.innerHTML = "";
+    toAccountSelect.innerHTML = "";
     for (const acc of accounts) {
+      const label = `${acc.name} (${formatVND(acc.balance)} đ)`;
       const opt = document.createElement("option");
       opt.value = acc.id;
-      opt.textContent = `${acc.name} (${formatVND(acc.balance)} đ)`;
+      opt.textContent = label;
       accountSelect.appendChild(opt);
+      const toOpt = document.createElement("option");
+      toOpt.value = acc.id;
+      toOpt.textContent = label;
+      toAccountSelect.appendChild(toOpt);
     }
+    if (selected) accountSelect.value = selected;
+    if (toSelected) toAccountSelect.value = toSelected;
   }
 
   function renderCategories(kind) {
@@ -1924,11 +2266,53 @@ PAGE_TEMPLATE = """<!doctype html>
       : "income";
   }
 
+  function updateFormForDirection() {
+    const direction = document.querySelector('input[name="direction"]:checked').value;
+    if (direction === "transfer") {
+      accountLabel.textContent = "Từ tài khoản";
+      toAccountWrap.style.display = "";
+      categoryWrap.style.display = "none";
+    } else {
+      accountLabel.textContent = "Tài khoản";
+      toAccountWrap.style.display = "none";
+      categoryWrap.style.display = "";
+      renderCategories(currentKind());
+    }
+  }
+
   document.querySelectorAll('input[name="direction"]').forEach((el) => {
-    el.addEventListener("change", () => renderCategories(currentKind()));
+    el.addEventListener("change", updateFormForDirection);
   });
 
+  // Best-effort, NON-authoritative mirror of transaction.parse_amount_vnd —
+  // only used here to drive the "amount looks empty/too small" pre-check and
+  // the >=1,000,000đ simulate-prompt trigger. The server's parse_amount_vnd
+  // is what actually decides the saved amount; this never needs to be exact.
+  function tryParseAmount(text) {
+    const raw = (text || "").trim().toLowerCase().replace(/\\s+/g, "");
+    if (!raw) return null;
+    const trailingDigit = raw.match(/^(\\d+)(tr|trieu|triệu)(\\d)$/);
+    if (trailingDigit) {
+      return Math.round((Number(trailingDigit[1]) + Number(trailingDigit[3]) / 10) * 1000000);
+    }
+    const unitMatch = raw.match(/^(\\d+(?:[.,]\\d+)?)(k|nghin|nghìn|tr|trieu|triệu|ty|tỷ)$/);
+    if (unitMatch) {
+      const mult = { k: 1e3, nghin: 1e3, "nghìn": 1e3, tr: 1e6, trieu: 1e6, "triệu": 1e6, ty: 1e9, "tỷ": 1e9 }[unitMatch[2]];
+      return Math.round(parseFloat(unitMatch[1].replace(",", ".")) * mult);
+    }
+    const digits = raw.replace(/[.,]/g, "");
+    return /^\\d+$/.test(digits) ? parseInt(digits, 10) : null;
+  }
+
+  // Reformats live to "1.234.567" while the field is pure digits (the
+  // common case, nice for a numeric keypad) — but pauses the moment a
+  // letter shows up, so someone typing Vietnamese shorthand like "1tr" or
+  // "500k" gets to finish typing it instead of having every keystroke
+  // stripped down to just the leading digit (previously: typing "1tr" was
+  // silently recorded as "1" — 1 đồng instead of 1,000,000 — with no
+  // warning at all, confirmed live before this fix).
   amountInput.addEventListener("input", () => {
+    if (/[a-zA-Z]/.test(amountInput.value)) return;
     const digits = amountInput.value.replace(/\\D/g, "");
     amountInput.value = digits ? formatVND(Number(digits)) : "";
   });
@@ -1943,19 +2327,25 @@ PAGE_TEMPLATE = """<!doctype html>
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const direction = document.querySelector('input[name="direction"]:checked').value;
-    const amount = parseInt(amountInput.value.replace(/\\D/g, ""), 10);
+    const rawAmount = amountInput.value.trim();
+    const previewAmount = tryParseAmount(rawAmount);
 
-    if (!amount || amount <= 0) {
+    if (!rawAmount || (previewAmount !== null && previewAmount <= 0)) {
       showMessage("Vui lòng nhập số tiền hợp lệ.", false);
       return;
     }
 
-    if (direction === "out" && amount >= 1000000) {
+    if (direction === "transfer" && accountSelect.value === toAccountSelect.value) {
+      showMessage("Tài khoản nguồn và đích phải khác nhau.", false);
+      return;
+    }
+
+    if (direction === "out" && previewAmount !== null && previewAmount >= 1000000) {
       const wantsToSimulate = confirm(
-        `Khoản chi ${formatVND(amount)} đ khá lớn. Bạn có muốn mô phỏng tác động trước khi lưu không?`
+        `Khoản chi ${formatVND(previewAmount)} đ khá lớn. Bạn có muốn mô phỏng tác động trước khi lưu không?`
       );
       if (wantsToSimulate) {
-        const params = new URLSearchParams({ amount: amount, name: descriptionInput.value || "" });
+        const params = new URLSearchParams({ amount: previewAmount, name: descriptionInput.value || "" });
         window.location.href = "/simulate?" + params.toString();
         return;
       }
@@ -1963,20 +2353,45 @@ PAGE_TEMPLATE = """<!doctype html>
 
     saveBtn.disabled = true;
     try {
-      const resp = await fetch("/api/transactions", {
+      const endpoint = direction === "transfer" ? "/api/transactions/transfer" : "/api/transactions";
+      const body = direction === "transfer"
+        ? {
+            from_account_id: accountSelect.value,
+            to_account_id: toAccountSelect.value,
+            amount: rawAmount,
+            description: descriptionInput.value,
+          }
+        : {
+            direction: direction,
+            account_id: accountSelect.value,
+            category_id: categorySelect.value,
+            amount: rawAmount,
+            description: descriptionInput.value,
+          };
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          direction: direction,
-          account_id: accountSelect.value,
-          category_id: categorySelect.value,
-          amount: amount,
-          description: descriptionInput.value,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await resp.json();
       showMessage(data.message, data.ok);
       if (data.ok) {
+        // Keep the account dropdown balance labels current across several
+        // entries in a row within the same page load — previously these
+        // froze at whatever they were on page load, so logging 2-3
+        // transactions back to back showed an increasingly stale balance.
+        if (previewAmount !== null) {
+          if (direction === "transfer") {
+            const fromAcc = accounts.find((a) => String(a.id) === String(accountSelect.value));
+            const toAcc = accounts.find((a) => String(a.id) === String(toAccountSelect.value));
+            if (fromAcc) fromAcc.balance -= previewAmount;
+            if (toAcc) toAcc.balance += previewAmount;
+          } else {
+            const acc = accounts.find((a) => String(a.id) === String(accountSelect.value));
+            if (acc) acc.balance += direction === "in" ? previewAmount : -previewAmount;
+          }
+          renderAccounts();
+        }
         amountInput.value = "";
         descriptionInput.value = "";
         amountInput.focus();
@@ -1989,7 +2404,7 @@ PAGE_TEMPLATE = """<!doctype html>
   });
 
   renderAccounts();
-  renderCategories(currentKind());
+  updateFormForDirection();
 </script>
 </body>
 </html>
@@ -2005,6 +2420,9 @@ LIST_TEMPLATE = """<!doctype html>
 <body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
 """ + tailwind_nav("list") + """
 <main class="max-w-lg mx-auto px-4 pb-10 pt-3">
+  {% if import_summary %}
+  <div class="bg-emerald-50 text-emerald-700 rounded-2xl p-3 mb-3 text-[13px] font-medium">{{ import_summary }}</div>
+  {% endif %}
   <h1 class="text-sm font-medium text-slate-500 px-1 mb-3">{{ transactions|length }} giao dịch gần đây</h1>
 
   {% if transactions %}
@@ -2027,11 +2445,18 @@ LIST_TEMPLATE = """<!doctype html>
     </div>
     {% endfor %}
   </div>
+  {% if has_more %}
+  <p class="text-center mt-4"><a href="/transactions?limit={{ next_limit }}" class="text-[13px] text-brand font-medium">Xem thêm giao dịch cũ hơn</a></p>
+  {% endif %}
   {% else %}
   <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-8 text-center text-slate-400 text-sm">Chưa có giao dịch nào.</div>
   {% endif %}
 
-  <p class="text-center mt-4"><a href="/simulate" class="text-[13px] text-slate-400">Mô phỏng một khoản chi lớn →</a></p>
+  <p class="text-center mt-4">
+    <a href="/simulate" class="text-[13px] text-slate-400">Mô phỏng một khoản chi lớn →</a>
+    ·
+    <a href="/transactions/export.csv" class="text-[13px] text-slate-400">Xuất CSV toàn bộ giao dịch</a>
+  </p>
 </main>
 </body>
 </html>
@@ -2131,6 +2556,15 @@ BUDGETS_TEMPLATE = """<!doctype html>
     </div>
     <a href="/budgets?period={{ next_period }}" class="text-slate-400 text-sm px-2 py-1">›</a>
   </div>
+  """ + ERROR_BANNER + """
+
+  {% if goal_contribution_display %}
+  <div class="bg-slate-100 rounded-2xl p-3 mb-3 text-[12px] text-slate-600">
+    Mục tiêu của bạn cần để dành <span class="font-semibold">{{ goal_contribution_display }}</span>/kỳ.
+    Tổng ngân sách bạn đã đặt cho kỳ này: <span class="font-semibold">{{ total_budgeted_display }}</span>.
+    Hãy cân nhắc để ngân sách vẫn còn chỗ cho mục tiêu.
+  </div>
+  {% endif %}
 
   <div id="ai-panel" class="bg-indigo-50 rounded-2xl p-4 mb-4 text-[13px] text-indigo-900 hidden"></div>
 
@@ -2277,6 +2711,7 @@ GOALS_NEW_TEMPLATE = """<!doctype html>
 """ + tailwind_nav("goals") + """
 <main class="max-w-lg mx-auto px-4 pb-10 pt-3">
   <h1 class="text-sm font-medium text-slate-500 px-1 mb-3">Tạo mục tiêu mới</h1>
+  """ + ERROR_BANNER + """
   <form method="post" class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4 space-y-4">
     <div>
       <label class="block text-[13px] text-slate-500 mb-1">Tên mục tiêu</label>
@@ -2297,7 +2732,7 @@ GOALS_NEW_TEMPLATE = """<!doctype html>
     </div>
     <div>
       <label class="block text-[13px] text-slate-500 mb-1">Hạn chót</label>
-      <input type="date" name="deadline" required value="{{ prefill_deadline }}" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+      <input type="date" name="deadline" required min="{{ today }}" value="{{ prefill_deadline }}" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
     </div>
     <div>
       <label class="block text-[13px] text-slate-500 mb-1">Tài khoản gắn với mục tiêu</label>
@@ -2421,6 +2856,7 @@ EVENTS_NEW_TEMPLATE = """<!doctype html>
 """ + tailwind_nav("goals") + """
 <main class="max-w-lg mx-auto px-4 pb-10 pt-3">
   <h1 class="text-sm font-medium text-slate-500 px-1 mb-3">Tạo kế hoạch sự kiện</h1>
+  """ + ERROR_BANNER + """
 
   <div class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4 mb-3">
     <p class="text-[13px] text-slate-500 mb-2">Chọn mẫu có sẵn (chỉ gợi ý khoản mục, giá do bạn tự nhập):</p>
@@ -2436,7 +2872,7 @@ EVENTS_NEW_TEMPLATE = """<!doctype html>
     {% if selected_template_id %}<input type="hidden" name="template_id" value="{{ selected_template_id }}">{% endif %}
     <div>
       <label class="block text-[13px] text-slate-500 mb-1">Tên kế hoạch</label>
-      <input type="text" name="name" required placeholder="VD: Chuyển nhà tháng 9" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+      <input type="text" name="name" required value="{{ prefill_name }}" placeholder="VD: Chuyển nhà tháng 9" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
     </div>
     <div>
       <label class="block text-[13px] text-slate-500 mb-1">Ngày diễn ra (nếu biết)</label>
@@ -2480,6 +2916,7 @@ EVENT_DETAIL_TEMPLATE = """<!doctype html>
 """ + tailwind_nav("goals") + """
 <main class="max-w-lg mx-auto px-4 pb-10 pt-3">
   <a href="/events" class="text-[13px] text-slate-400 px-1">‹ Kế hoạch sự kiện</a>
+  """ + ERROR_BANNER + """
 
   {% if show_goal_prompt %}
   <div class="bg-indigo-50 rounded-2xl p-4 my-3 text-[13px] text-indigo-900">
@@ -2532,6 +2969,7 @@ SIMULATE_TEMPLATE = """<!doctype html>
     <h1 class="text-sm font-medium text-slate-500">Mô phỏng một khoản chi</h1>
     <a href="/simulations" class="text-brand text-sm font-medium">Lịch sử</a>
   </div>
+  """ + ERROR_BANNER + """
 
   <form method="post" class="bg-white rounded-2xl ring-1 ring-slate-900/5 p-4 space-y-4">
     {% if triggered_by %}<input type="hidden" name="triggered_by_transaction_id" value="{{ triggered_by }}">{% endif %}
@@ -2540,7 +2978,7 @@ SIMULATE_TEMPLATE = """<!doctype html>
       <input type="text" name="name" required value="{{ prefill_name }}" placeholder="VD: Mua laptop mới" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
     </div>
     <div>
-      <label class="block text-[13px] text-slate-500 mb-1">Số tiền (đ)</label>
+      <label class="block text-[13px] text-slate-500 mb-1">Số tiền (đ) — hỗ trợ viết tắt như 500k, 1tr, 2tr5</label>
       <input type="text" inputmode="numeric" id="item_amount" name="item_amount" required value="{{ prefill_amount }}" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
     </div>
 
@@ -2548,11 +2986,11 @@ SIMULATE_TEMPLATE = """<!doctype html>
       <p class="text-[12px] text-slate-400">Khoản chi lớn — cho biết thêm để tính tổng chi phí sở hữu:</p>
       <div>
         <label class="block text-[13px] text-slate-500 mb-1">Chi phí duy trì mỗi kỳ (nếu có)</label>
-        <input type="text" inputmode="numeric" name="maintenance_cost_per_period" placeholder="0" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+        <input type="text" inputmode="numeric" name="maintenance_cost_per_period" value="{{ prefill_maintenance }}" placeholder="0" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
       </div>
       <div>
         <label class="block text-[13px] text-slate-500 mb-1">Tuổi thọ dự kiến (số kỳ)</label>
-        <input type="text" inputmode="numeric" name="expected_lifetime_periods" placeholder="0" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
+        <input type="text" inputmode="numeric" name="expected_lifetime_periods" value="{{ prefill_lifetime }}" placeholder="0" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-[15px]">
       </div>
     </div>
 
@@ -2567,10 +3005,27 @@ SIMULATE_TEMPLATE = """<!doctype html>
 <script>
   const amountInput = document.getElementById("item_amount");
   const bigFields = document.getElementById("big-item-fields");
+  // Best-effort mirror of transaction.parse_amount_vnd, just for deciding
+  // whether to reveal the "big item" fields below — the server's own parse
+  // is what actually matters for what gets saved, so this only needs to be
+  // close enough to recognize shorthand like "1tr" as >= 1,000,000.
+  function tryParseAmount(text) {
+    const raw = (text || "").trim().toLowerCase().replace(/\\s+/g, "");
+    if (!raw) return 0;
+    const trailingDigit = raw.match(/^(\\d+)(tr|trieu|triệu)(\\d)$/);
+    if (trailingDigit) {
+      return Math.round((Number(trailingDigit[1]) + Number(trailingDigit[3]) / 10) * 1000000);
+    }
+    const unitMatch = raw.match(/^(\\d+(?:[.,]\\d+)?)(k|nghin|nghìn|tr|trieu|triệu|ty|tỷ)$/);
+    if (unitMatch) {
+      const mult = { k: 1e3, nghin: 1e3, "nghìn": 1e3, tr: 1e6, trieu: 1e6, "triệu": 1e6, ty: 1e9, "tỷ": 1e9 }[unitMatch[2]];
+      return Math.round(parseFloat(unitMatch[1].replace(",", ".")) * mult);
+    }
+    const digits = raw.replace(/[.,]/g, "");
+    return /^\\d+$/.test(digits) ? parseInt(digits, 10) : 0;
+  }
   function toggleBigFields() {
-    const digits = amountInput.value.replace(/\\D/g, "");
-    const amount = digits ? parseInt(digits, 10) : 0;
-    bigFields.classList.toggle("hidden", amount < 1000000);
+    bigFields.classList.toggle("hidden", tryParseAmount(amountInput.value) < 1000000);
   }
   amountInput.addEventListener("input", toggleBigFields);
   toggleBigFields();
@@ -2929,6 +3384,29 @@ DASHBOARD_TEMPLATE = """<!doctype html>
       {% endfor %}
     </ul>
   </div>
+  {% endif %}
+
+  {% if goals_summary %}
+  <a href="/goals" class="block bg-white rounded-2xl ring-1 ring-slate-900/5 p-4">
+    <div class="flex items-center justify-between mb-1">
+      <span class="text-[13px] font-medium text-slate-500">Mục tiêu</span>
+      <span class="text-[12px] text-brand font-medium">Xem tất cả ›</span>
+    </div>
+    <p class="text-[13px] text-slate-700">{{ goals_summary.on_track_count }}/{{ goals_summary.total }} mục tiêu đúng tiến độ</p>
+    {% if goals_summary.most_urgent %}
+    <p class="text-[12px] text-rose-600 mt-1">{{ goals_summary.most_urgent.message }}</p>
+    {% endif %}
+  </a>
+  {% endif %}
+
+  {% if nearest_event %}
+  <a href="/events/{{ nearest_event.id }}" class="block bg-white rounded-2xl ring-1 ring-slate-900/5 p-4">
+    <div class="flex items-center justify-between mb-1">
+      <span class="text-[13px] font-medium text-slate-500">Sự kiện sắp tới</span>
+      <span class="text-[12px] text-brand font-medium">Xem ›</span>
+    </div>
+    <p class="text-[13px] text-slate-700">{{ nearest_event.name }} — còn {{ nearest_event.days_remaining }} ngày, dự kiến {{ nearest_event.total_display }}</p>
+  </a>
   {% endif %}
 
   <div class="grid grid-cols-2 gap-3">

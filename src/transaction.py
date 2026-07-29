@@ -1,5 +1,6 @@
 import calendar
 import json
+import re
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -11,6 +12,65 @@ PROJECT_ROOT = Path(__file__).parent.parent
 DB_PATH = PROJECT_ROOT / "data" / "finance.db"
 
 FREQUENCY_MONTHS = {"monthly": 1, "quarterly": 3, "yearly": 12}
+
+_AMOUNT_UNIT_MULTIPLIERS = {
+    "k": 1_000, "nghin": 1_000, "nghìn": 1_000,
+    "tr": 1_000_000, "trieu": 1_000_000, "triệu": 1_000_000,
+    "ty": 1_000_000_000, "tỷ": 1_000_000_000,
+}
+# "<number><unit>" (500k, 1.5tr, 2,5tr) and the colloquial "<number>tr<digit>"
+# shorthand (2tr5 == 2.5 triệu == 2,500,000 — one digit after "tr" means
+# tenths of a million, a real pattern in everyday Vietnamese chat/SMS, never
+# used with "k"/"ty" so only wired up for "tr" below).
+_AMOUNT_UNIT_RE = re.compile(
+    r"^(\d+(?:[.,]\d+)?)\s*(k|nghin|nghìn|tr|trieu|triệu|ty|tỷ)$"
+)
+_AMOUNT_TRIEU_TRAILING_DIGIT_RE = re.compile(r"^(\d+)(tr|trieu|triệu)(\d)$")
+
+
+def parse_amount_vnd(raw):
+    """Parses a VNĐ amount the way a real Vietnamese user actually types one,
+    not just a bare digit string. On top of plain digits with "," or "."
+    as a thousands separator (e.g. "1.500.000" / "1,500,000" -> 1500000,
+    the pre-existing behavior everywhere this replaces
+    `int(x.replace(",", "").replace(".", ""))`), this also understands the
+    shorthand people reach for by habit in everyday messaging: "500k" (nghìn,
+    ×1,000), "1tr" / "1.5tr" / "1,5tr" (triệu, ×1,000,000), "2ty"/"2tỷ" (tỷ,
+    ×1,000,000,000), and the colloquial "2tr5" form (== 2.5 triệu ==
+    2,500,000 — one trailing digit after "tr" means tenths of a million).
+
+    Raises ValueError with a Vietnamese message describing the problem on
+    anything else, so a caller can show it directly instead of silently
+    dropping or misreading the user's input — found necessary after
+    confirming live that the naive digit-strip parsing this replaced would
+    either silently truncate a shorthand amount (e.g. "1tr" -> "1", read as
+    1 đồng instead of 1,000,000) or silently discard the whole field with no
+    feedback (raising ValueError to a bare `except: continue`)."""
+    if raw is None:
+        raise ValueError("Chưa nhập số tiền.")
+    text = raw.strip().lower().replace(" ", "")
+    if not text:
+        raise ValueError("Chưa nhập số tiền.")
+
+    trailing_digit_match = _AMOUNT_TRIEU_TRAILING_DIGIT_RE.match(text)
+    if trailing_digit_match:
+        whole, _unit, tenths = trailing_digit_match.groups()
+        return round((int(whole) + int(tenths) / 10) * 1_000_000)
+
+    unit_match = _AMOUNT_UNIT_RE.match(text)
+    if unit_match:
+        number_part, unit = unit_match.groups()
+        # With a unit suffix, "." / "," is always a DECIMAL point (1,5tr ==
+        # 1.5tr), never a thousands separator — the opposite convention from
+        # the no-unit branch below, since a shorthand amount is never itself
+        # in the thousands (that's the whole point of the shorthand).
+        value = float(number_part.replace(",", "."))
+        return round(value * _AMOUNT_UNIT_MULTIPLIERS[unit])
+
+    digits_only = text.replace(".", "").replace(",", "")
+    if not digits_only.isdigit():
+        raise ValueError(f"Không hiểu số tiền \"{raw}\" (vd: 500000, 500k, 1tr, 2tr5).")
+    return int(digits_only)
 
 
 def connect_db():
@@ -60,6 +120,56 @@ def insert_transaction(cursor, *, occurred_at, amount, direction, account_id,
     )
 
 
+def get_transfer_category_id(cursor):
+    """The seeded 'Chuyển khoản nội bộ' (kind='transfer') category — every
+    transfer is tagged with it so risk.py's income/expense aggregates (all
+    filtered on categories.kind != 'transfer') can tell it apart from real
+    spending/income. None if seed_data.py's transfer category was somehow
+    never seeded (shouldn't happen on a normally-set-up install)."""
+    cursor.execute("SELECT id FROM categories WHERE kind = 'transfer' LIMIT 1")
+    row = cursor.fetchone()
+    return row["id"] if row else None
+
+
+def insert_transfer(cursor, *, from_account_id, to_account_id, amount, description, occurred_at=None):
+    """Moving money between the user's OWN accounts (topping up MoMo from a
+    bank transfer, paying off a credit card, pulling cash from an ATM, ...)
+    — a real, common personal-finance action THIET-KE.md's schema already
+    anticipated (categories.kind has a 'transfer' value, seeded since Stage
+    1) but that no CLI/web screen ever actually exposed until now. Recorded
+    as two ordinary linked transactions (an 'out' leg from the source
+    account, an 'in' leg to the destination, both tagged with the transfer
+    category and the same occurred_at/description) rather than a new table
+    or a third `direction` value — deliberately reuses insert_transaction
+    twice instead of duplicating its balance-update logic.
+
+    Raises ValueError if the two accounts are the same (nothing moved) or if
+    the transfer category is somehow missing. Returns (out_transaction_id,
+    in_transaction_id)."""
+    if from_account_id == to_account_id:
+        raise ValueError("Tài khoản nguồn và tài khoản đích phải khác nhau.")
+
+    transfer_category_id = get_transfer_category_id(cursor)
+    if transfer_category_id is None:
+        raise ValueError("Chưa có danh mục Chuyển khoản nội bộ — chạy lại seed_data.py.")
+
+    occurred_at = occurred_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    insert_transaction(
+        cursor, occurred_at=occurred_at, amount=amount, direction="out",
+        account_id=from_account_id, category_id=transfer_category_id, description=description,
+    )
+    out_transaction_id = cursor.lastrowid
+
+    insert_transaction(
+        cursor, occurred_at=occurred_at, amount=amount, direction="in",
+        account_id=to_account_id, category_id=transfer_category_id, description=description,
+    )
+    in_transaction_id = cursor.lastrowid
+
+    return out_transaction_id, in_transaction_id
+
+
 def get_recent_transactions(cursor, limit=15):
     cursor.execute(
         """SELECT t.id, t.occurred_at, t.amount, t.direction, t.description,
@@ -70,6 +180,23 @@ def get_recent_transactions(cursor, limit=15):
            ORDER BY t.occurred_at DESC, t.id DESC
            LIMIT ?""",
         (limit,),
+    )
+    return cursor.fetchall()
+
+
+def get_all_transactions_for_export(cursor):
+    """Every transaction, oldest-first (natural reading order for a CSV/
+    spreadsheet import) — unlike get_recent_transactions, no LIMIT at all.
+    Added so a user's own financial history has at least one way out of
+    this app besides copying the raw SQLite file by hand — real portability/
+    backup, not just an internal display query."""
+    cursor.execute(
+        """SELECT t.occurred_at, t.amount, t.direction, t.description, t.source,
+                  a.name AS account_name, c.name_vi AS category_name
+           FROM transactions t
+           JOIN accounts a ON t.account_id = a.id
+           LEFT JOIN categories c ON t.category_id = c.id
+           ORDER BY t.occurred_at, t.id"""
     )
     return cursor.fetchall()
 
@@ -139,9 +266,9 @@ def log_behavior_event(cursor, event_type, transaction_id=None, payload=None):
 def get_monthly_totals(cursor, month):
     """Return {"income": ..., "expense": ...} for a 'YYYY-MM' month string."""
     cursor.execute(
-        """SELECT direction, SUM(amount) AS total
+        f"""SELECT direction, SUM(amount) AS total
            FROM transactions
-           WHERE strftime('%Y-%m', occurred_at) = ?
+           WHERE strftime('%Y-%m', occurred_at) = ? AND {risk.NOT_TRANSFER_CLAUSE}
            GROUP BY direction""",
         (month,),
     )
