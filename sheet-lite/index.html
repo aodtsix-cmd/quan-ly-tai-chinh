@@ -89,6 +89,34 @@
     <div class="accounts-list" id="accounts-list"></div>
     <div class="summary-row"><span>Thu tháng này</span><span id="month-income">—</span></div>
     <div class="summary-row"><span>Chi tháng này</span><span id="month-expense">—</span></div>
+    <a href="#" class="settings-link" id="toggle-add-account" style="margin-top:10px;">+ Thêm tài khoản mới</a>
+    <form id="add-account-form" class="hidden" style="margin-top:10px;">
+      <input type="text" id="new-account-name" placeholder="Tên tài khoản (VD: Ngân hàng ABC)">
+      <select id="new-account-type" style="margin-top:8px;">
+        <option value="bank">Ngân hàng</option>
+        <option value="ewallet">Ví điện tử</option>
+        <option value="cash">Tiền mặt</option>
+        <option value="credit_card">Thẻ tín dụng</option>
+        <option value="savings">Sổ tiết kiệm</option>
+      </select>
+      <button type="submit" class="secondary" style="margin-top:8px;">Thêm tài khoản</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h1 style="margin:0;">Danh mục</h1>
+      <a href="#" class="settings-link" id="toggle-add-category" style="margin:0;">+ Thêm danh mục</a>
+    </div>
+    <form id="add-category-form" class="hidden" style="margin-top:10px;">
+      <input type="text" id="new-category-name" placeholder="Tên danh mục (VD: Ăn uống)">
+      <select id="new-category-kind" style="margin-top:8px;">
+        <option value="expense">Chi tiêu</option>
+        <option value="income">Thu nhập</option>
+        <option value="transfer">Chuyển khoản nội bộ</option>
+      </select>
+      <button type="submit" class="secondary" style="margin-top:8px;">Thêm danh mục</button>
+    </form>
   </div>
 
   <div class="card">
@@ -373,6 +401,53 @@
         showMessage("Không kết nối được với Apps Script — kiểm tra lại URL/token.", false);
       });
     }
+
+    // ---------- Add account / add category (found missing: Code.gs already
+    // had add_account/add_category actions, but nothing in this page ever
+    // called them, so the only way to add an account or category was to
+    // edit the Google Sheet by hand). ----------
+    function wireToggle(linkId, formId) {
+      document.getElementById(linkId).addEventListener("click", function (e) {
+        e.preventDefault();
+        document.getElementById(formId).classList.toggle("hidden");
+      });
+    }
+    wireToggle("toggle-add-account", "add-account-form");
+    wireToggle("toggle-add-category", "add-category-form");
+
+    document.getElementById("add-account-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var nameInput = document.getElementById("new-account-name");
+      var name = nameInput.value.trim();
+      if (!name) return;
+      apiPost("add_account", { name: name, type: document.getElementById("new-account-type").value })
+        .then(function (res) {
+          if (res.ok) {
+            nameInput.value = "";
+            document.getElementById("add-account-form").classList.add("hidden");
+            loadBootstrap();
+          } else {
+            alert(res.message);
+          }
+        });
+    });
+
+    document.getElementById("add-category-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var nameInput = document.getElementById("new-category-name");
+      var name = nameInput.value.trim();
+      if (!name) return;
+      apiPost("add_category", { name: name, kind: document.getElementById("new-category-kind").value })
+        .then(function (res) {
+          if (res.ok) {
+            nameInput.value = "";
+            document.getElementById("add-category-form").classList.add("hidden");
+            loadBootstrap();
+          } else {
+            alert(res.message);
+          }
+        });
+    });
 
     loadBootstrap();
   }
