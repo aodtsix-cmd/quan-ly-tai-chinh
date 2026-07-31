@@ -49,11 +49,12 @@ Bạn sẽ thấy 3 thứ:
 2. Đổi tên file (góc trên bên trái) thành ví dụ "Tài chính của tôi".
 3. Dưới cùng màn hình có 1 tab tên "Sheet1" — click phải vào đó, chọn **Đổi tên**, đặt tên chính xác là `Accounts`.
 4. Bấm dấu **+** cạnh tab để thêm tab mới, đặt tên chính xác là `Categories`.
-5. Thêm 1 tab nữa, đặt tên chính xác là `Transactions`.
+5. Thêm tab nữa, đặt tên chính xác là `Transactions`.
+6. Thêm 2 tab nữa: `PeriodBudgets` và `Goals` (dùng cho tính năng ngân sách/mục tiêu).
 
    *(Viết hoa/thường phải đúng y như trên — đây là quy ước tên cố định trong code, không đổi được.)*
 
-6. Vào tab **Accounts**, gõ vào hàng đầu tiên (mỗi ô 1 cột):
+7. Vào tab **Accounts**, gõ vào hàng đầu tiên (mỗi ô 1 cột):
    ```
    id    name    type    balance    is_active
    ```
@@ -62,22 +63,32 @@ Bạn sẽ thấy 3 thứ:
    1     Ngân hàng ABC    bank    0    TRUE
    ```
 
-7. Vào tab **Categories**, hàng đầu tiên:
+8. Vào tab **Categories**, hàng đầu tiên:
    ```
-   id    name    kind    parent_id
+   id    name    kind    parent_id    necessity    stability
    ```
    Từ hàng thứ 2 trở đi, nhập vài danh mục ban đầu, ví dụ:
    ```
-   1     Ăn uống              expense
+   1     Ăn uống              expense            essential
    2     Lương                income
    3     Chuyển khoản nội bộ  transfer
    ```
-   Lưu ý: **bắt buộc phải có ít nhất 1 dòng `kind` là `transfer`** (như dòng số 3 ở trên) — nếu không, tính năng "Chuyển khoản" sẽ báo lỗi.
+   Lưu ý: **bắt buộc phải có ít nhất 1 dòng `kind` là `transfer`** (như dòng số 3 ở trên) — nếu không, tính năng "Chuyển khoản" sẽ báo lỗi. Cột `necessity` chỉ điền cho danh mục chi tiêu (`expense`) — điền `essential` cho chi tiêu bắt buộc (tiền nhà, ăn uống cơ bản...), để trống nếu không rõ hoặc là chi tiêu tùy chọn. Cột này cần thiết để tính năng **Cảnh báo rủi ro** hoạt động đúng.
 
-8. Vào tab **Transactions**, hàng đầu tiên (không cần nhập gì thêm, để trống bên dưới):
+9. Vào tab **Transactions**, hàng đầu tiên (không cần nhập gì thêm, để trống bên dưới):
    ```
    id    occurred_at    amount    direction    account_id    category_id    description    source
    ```
+
+10. Vào tab **PeriodBudgets**, hàng đầu tiên (để trống bên dưới, trang web tự ghi):
+    ```
+    id    category_id    period_id    amount
+    ```
+
+11. Vào tab **Goals**, hàng đầu tiên (để trống bên dưới, trang web tự ghi):
+    ```
+    id    name    goal_type    target_amount    deadline    account_id    created_at    is_active
+    ```
 
 ### Bước 3 — Dán code vào Apps Script
 
@@ -93,6 +104,7 @@ Bạn sẽ thấy 3 thứ:
 2. Kéo xuống mục **Script Properties**, bấm **Add script property**.
 3. Ô "Property": gõ đúng `APP_TOKEN`. Ô "Value": tự đặt 1 mật khẩu bất kỳ (chỉ mình bạn biết, dùng để khóa trang web không cho người lạ ghi dữ liệu).
 4. Cùng trang Project Settings, tìm mục **Time zone**, chọn **(GMT+07:00) Vietnam Time** — nếu bỏ qua bước này, tổng thu/chi "tháng này" có thể tính sai vài ngày đầu/cuối tháng.
+5. (Tùy chọn) Thêm property `GEMINI_API_KEY` nếu muốn dùng khung nhận xét AI (lấy miễn phí tại [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — bỏ qua vẫn dùng được mọi tính năng khác bình thường.
 
 ### Bước 5 — Xuất bản (Deploy) thành trang web
 
@@ -121,6 +133,11 @@ Bạn sẽ thấy 3 thứ:
 - **Thêm danh mục mới**: bấm "+ Thêm danh mục" ở thẻ thứ hai.
 - **Ghi giao dịch**: chọn Chi tiền / Thu tiền / Chuyển khoản, điền số tiền (gõ tắt được: `500k`, `1tr`, `2tr5` đều hiểu), bấm Lưu.
 - **Xóa giao dịch**: bấm nút "Xóa" cạnh giao dịch trong danh sách.
+- **Cảnh báo & Sức khỏe tài chính**: tự tính, hiện ngay đầu trang — báo động nếu thanh khoản yếu hoặc dự báo cuối kỳ có thể âm quỹ.
+- **Ngân sách kỳ này**: bấm "+ Đặt ngân sách cho danh mục", chọn danh mục + hạn mức — thanh tiến độ tự cập nhật theo chi tiêu thực tế.
+- **Mục tiêu tài chính**: bấm "+ Thêm mục tiêu", nhập tên/số tiền đích/hạn chót/tài khoản tích lũy — tiến độ tính theo số dư tài khoản đó. Bấm "Ẩn mục tiêu này" khi xong hoặc không cần theo dõi nữa (không xóa lịch sử).
+- **Dự báo dòng tiền**: bấm "Xem dự báo 6 kỳ tới" — ước tính đơn giản dựa trên thu/chi trung bình gần đây.
+- **Nhận xét AI**: tự hiện (nếu đã đặt `GEMINI_API_KEY`) ngay dưới khung Sức khỏe tài chính, không cần bấm gì.
 - Muốn xem/sửa dữ liệu thô: mở lại chính Google Sheet đã tạo ở Bước 2 — mọi thứ nằm ở đó, xem/sửa trực tiếp cũng được (nhưng nên ưu tiên dùng trang web để số dư luôn được tính đúng).
 
 ---
@@ -134,7 +151,7 @@ Vào lại Apps Script, dán đè bản code mới nhất từ GitHub vào, lưu
 Kiểm tra lại đã dán đúng URL và Token chưa (bấm "Đổi kết nối / cài đặt lại" ở cuối trang để nhập lại).
 
 **Muốn dùng bản Sheet-lite trên điện thoại?**
-Có thể đưa file `index.html` lên GitHub Pages (miễn phí, có link công khai) — phần này cần thêm bước, hỏi Claude khi bạn sẵn sàng làm.
+Đã có sẵn link công khai: `https://aodtsix-cmd.github.io/quan-ly-tai-chinh/sheet-lite/` — mở link này trên điện thoại, nhập URL + Token một lần đầu (như Bước 6), sau đó trình duyệt tự nhớ.
 
 **2 bản (app chính và Sheet-lite) có dùng chung dữ liệu không?**
 Không — đây là 2 nơi lưu dữ liệu hoàn toàn tách biệt (1 bên là file trên máy tính, 1 bên là Google Sheet). Ghi ở bên nào chỉ hiện ở bên đó.

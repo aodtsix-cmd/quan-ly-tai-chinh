@@ -13,3 +13,7 @@ venv/
 # Thông tin bí mật - TUYỆT ĐỐI không đẩy lên GitHub
 .env
 *.key
+
+# Bản index.html cá nhân hóa sẵn URL/token thật của sheet-lite - chỉ dùng
+# trên máy này, không bao giờ đưa lên GitHub (repo này là public)
+sheet-lite/index.local.html

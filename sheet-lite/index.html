@@ -65,6 +65,30 @@
   .summary-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 0.9rem; }
   a.settings-link { display: block; text-align: center; font-size: 0.78rem; color: #8e8e93; margin-top: 10px; text-decoration: none; }
   .hidden { display: none; }
+  .alert-banner {
+    max-width: 480px; margin: 0 auto 10px; padding: 12px 14px; border-radius: 12px;
+    font-size: 0.88rem; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  }
+  .alert-banner.danger { background: #fdecea; color: #c0392b; }
+  .alert-banner.warning { background: #fff4e5; color: #b9770e; }
+  .alert-banner button { width: auto; margin: 0; padding: 6px 10px; font-size: 0.75rem; background: rgba(0,0,0,0.08); color: inherit; }
+  .health-badge {
+    display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.85rem; font-weight: 700; color: #fff;
+  }
+  .health-badge.nguy_hiem { background: #c0392b; }
+  .health-badge.mong_manh { background: #b9770e; }
+  .health-badge.on { background: #007aff; }
+  .health-badge.vung { background: #1e7a34; }
+  .progress-bg { background: #eee; border-radius: 6px; height: 8px; overflow: hidden; margin-top: 6px; }
+  .progress-fill { background: #007aff; height: 100%; }
+  .progress-fill.over { background: #c0392b; }
+  .progress-fill.off-track { background: #b9770e; }
+  .list-item { padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+  .list-item:last-child { border-bottom: none; }
+  .list-item .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.9rem; }
+  .list-item .meta { font-size: 0.78rem; color: #8e8e93; margin-top: 2px; }
+  .ai-panel { background: #eef4ff; border-radius: 12px; padding: 14px; font-size: 0.88rem; color: #1c3d66; margin-top: 10px; }
+  .small-btn { width: auto; display: inline-block; padding: 6px 12px; font-size: 0.78rem; margin: 6px 4px 0 0; }
 </style>
 </head>
 <body>
@@ -81,6 +105,8 @@
 </div>
 
 <div id="app" class="hidden">
+
+  <div id="alerts-container"></div>
 
   <div class="card">
     <h1>Tổng số dư</h1>
@@ -103,6 +129,13 @@
     </form>
   </div>
 
+  <div class="card" id="health-card">
+    <h1>Sức khỏe tài chính</h1>
+    <p class="subtitle" id="health-subtitle">—</p>
+    <div id="health-body"></div>
+    <div id="ai-panel" class="ai-panel hidden"></div>
+  </div>
+
   <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center;">
       <h1 style="margin:0;">Danh mục</h1>
@@ -115,6 +148,12 @@
         <option value="income">Thu nhập</option>
         <option value="transfer">Chuyển khoản nội bộ</option>
       </select>
+      <select id="new-category-necessity" style="margin-top:8px;">
+        <option value="">Chi tiêu thiết yếu hay tùy chọn? (bỏ trống nếu không rõ)</option>
+        <option value="essential">Thiết yếu</option>
+        <option value="optional">Tùy chọn</option>
+      </select>
+      <p class="subtitle" style="margin:4px 0 0;">Chỉ áp dụng cho danh mục Chi tiêu — dùng để tính cảnh báo rủi ro bên dưới.</p>
       <button type="submit" class="secondary" style="margin-top:8px;">Thêm danh mục</button>
     </form>
   </div>
@@ -158,6 +197,41 @@
   <div class="card">
     <h1>Giao dịch gần đây</h1>
     <div id="tx-list"></div>
+  </div>
+
+  <div class="card">
+    <h1>Ngân sách kỳ này</h1>
+    <p class="subtitle" id="budget-period-label">—</p>
+    <div id="budget-list"></div>
+    <a href="#" class="settings-link" id="toggle-add-budget" style="margin-top:10px;">+ Đặt ngân sách cho danh mục</a>
+    <form id="add-budget-form" class="hidden" style="margin-top:10px;">
+      <select id="budget-category"></select>
+      <input type="text" inputmode="numeric" id="budget-amount" placeholder="Hạn mức (VD: 2tr)" style="margin-top:8px;">
+      <button type="submit" class="secondary" style="margin-top:8px;">Lưu ngân sách</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h1 style="margin:0;">Mục tiêu tài chính</h1>
+      <a href="#" class="settings-link" id="toggle-add-goal" style="margin:0;">+ Thêm mục tiêu</a>
+    </div>
+    <div id="goals-list"></div>
+    <form id="add-goal-form" class="hidden" style="margin-top:10px;">
+      <input type="text" id="new-goal-name" placeholder="Tên mục tiêu (VD: Quỹ khẩn cấp)">
+      <input type="text" inputmode="numeric" id="new-goal-target" placeholder="Số tiền đích (VD: 20tr)" style="margin-top:8px;">
+      <input type="date" id="new-goal-deadline" style="margin-top:8px;">
+      <label class="field-label" for="new-goal-account">Tài khoản tích lũy</label>
+      <select id="new-goal-account"></select>
+      <button type="submit" class="secondary" style="margin-top:8px;">Tạo mục tiêu</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h1>Dự báo dòng tiền</h1>
+    <p class="subtitle">Dự báo đơn giản dựa trên thu/chi trung bình 3 kỳ gần nhất — chưa tính khoản định kỳ hay mùa vụ.</p>
+    <button type="button" id="run-forecast" class="secondary">Xem dự báo 6 kỳ tới</button>
+    <div id="forecast-result" style="margin-top:10px;"></div>
   </div>
 
   <a href="#" class="settings-link" id="reset-settings">Đổi kết nối / cài đặt lại</a>
@@ -207,6 +281,7 @@
   // ---------- Main app ----------
   function initApp() {
     var state = { accounts: [], categories: [], transactions: [] };
+    var lastBootstrapPeriodId = null;
 
     var accountSelect = document.getElementById("account");
     var toAccountSelect = document.getElementById("to-account");
@@ -382,6 +457,102 @@
       });
     });
 
+    var HEALTH_LABELS = { nguy_hiem: "Nguy hiểm", mong_manh: "Mong manh", on: "Ổn", vung: "Vững" };
+
+    function renderAlerts(alerts) {
+      var container = document.getElementById("alerts-container");
+      container.innerHTML = "";
+      alerts.forEach(function (a) {
+        var div = document.createElement("div");
+        div.className = "alert-banner " + a.level;
+        div.innerHTML = "<span>" + a.message + "</span>";
+        var btn = document.createElement("button");
+        btn.textContent = "Đã xem";
+        btn.addEventListener("click", function () { div.remove(); });
+        div.appendChild(btn);
+        container.appendChild(div);
+      });
+    }
+
+    function renderHealth(risk) {
+      var subtitle = document.getElementById("health-subtitle");
+      var body = document.getElementById("health-body");
+      if (!risk.has_data) {
+        subtitle.textContent = "Chưa đủ dữ liệu (cần ít nhất 1 kỳ có chi tiêu ở danh mục Thiết yếu).";
+        body.innerHTML = "";
+        return;
+      }
+      subtitle.textContent = "Nền móng tài chính (số kỳ cầm cự nếu mất thu nhập):";
+      body.innerHTML =
+        '<span class="health-badge ' + risk.runway_level + '">' + HEALTH_LABELS[risk.runway_level] + " — " + risk.runway_months.toFixed(1) + " kỳ</span>" +
+        '<div class="summary-row" style="margin-top:10px;"><span>Dự báo số dư cuối kỳ</span><span style="color:' + (risk.at_risk ? "#c0392b" : "#1c1c1e") + ';font-weight:700;">' + formatVND(Math.round(risk.forecast_balance)) + " đ</span></div>" +
+        '<div class="summary-row"><span>Còn lại trong kỳ</span><span>' + risk.days_remaining + " ngày</span></div>";
+    }
+
+    function renderBudgets(statuses, periodId) {
+      document.getElementById("budget-period-label").textContent = "Kỳ " + periodId;
+      var html = "";
+      statuses.forEach(function (s) {
+        var pct = Math.min(s.pct_used, 100);
+        var fillClass = s.over_budget ? "over" : "";
+        html += '<div class="list-item">' +
+          '<div class="row"><span>' + s.category_name + "</span><span>" + formatVND(s.spent) + " / " + formatVND(s.amount) + " đ</span></div>" +
+          '<div class="progress-bg"><div class="progress-fill ' + fillClass + '" style="width:' + pct + '%;"></div></div>' +
+          (s.over_budget ? '<p class="meta" style="color:#c0392b;">Đã vượt ngân sách</p>' : "") +
+          "</div>";
+      });
+      document.getElementById("budget-list").innerHTML = html || '<p class="subtitle">Chưa đặt ngân sách nào cho kỳ này.</p>';
+
+      var categorySelect = document.getElementById("budget-category");
+      categorySelect.innerHTML = "";
+      state.categories.filter(function (c) { return c.kind === "expense"; }).forEach(function (c) {
+        var opt = document.createElement("option");
+        opt.value = c.id; opt.textContent = c.name;
+        categorySelect.appendChild(opt);
+      });
+    }
+
+    function renderGoals(goals) {
+      var html = "";
+      goals.forEach(function (g) {
+        var pct = Math.min(g.progress_pct, 100);
+        var fillClass = g.is_overdue ? "over" : (g.is_off_track ? "off-track" : "");
+        var statusText = g.is_overdue ? "Đã quá hạn" : (g.is_off_track ? "Đang chậm tiến độ" : "Đúng tiến độ");
+        html += '<div class="list-item">' +
+          '<div class="row"><span>' + g.name + "</span><span>" + formatVND(g.current_balance) + " / " + formatVND(g.target_amount) + " đ</span></div>" +
+          '<div class="progress-bg"><div class="progress-fill ' + fillClass + '" style="width:' + pct + '%;"></div></div>' +
+          '<p class="meta">' + statusText + " · còn " + g.periods_remaining + " kỳ · cần " + formatVND(g.required_per_period) + " đ/kỳ</p>" +
+          '<button type="button" class="small-btn secondary" data-goal-id="' + g.id + '">Ẩn mục tiêu này</button>' +
+          "</div>";
+      });
+      document.getElementById("goals-list").innerHTML = html || '<p class="subtitle">Chưa có mục tiêu nào.</p>';
+      document.querySelectorAll("[data-goal-id]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          if (!confirm("Ẩn mục tiêu này? (không xóa lịch sử, chỉ không hiển thị nữa)")) return;
+          apiPost("deactivate_goal", { id: btn.getAttribute("data-goal-id") }).then(function (res) {
+            if (res.ok) loadBootstrap(); else alert(res.message);
+          });
+        });
+      });
+
+      var goalAccountSelect = document.getElementById("new-goal-account");
+      goalAccountSelect.innerHTML = "";
+      state.accounts.forEach(function (a) {
+        var opt = document.createElement("option");
+        opt.value = a.id; opt.textContent = a.name;
+        goalAccountSelect.appendChild(opt);
+      });
+    }
+
+    function loadAiSummary() {
+      var panel = document.getElementById("ai-panel");
+      apiGet("get_ai_summary").then(function (res) {
+        if (!res.ok || !res.data.available) return;
+        panel.textContent = res.data.summary;
+        panel.classList.remove("hidden");
+      }).catch(function () {});
+    }
+
     function loadBootstrap() {
       apiGet("bootstrap").then(function (res) {
         if (!res.ok) {
@@ -394,9 +565,15 @@
         renderAccounts();
         updateFormForDirection();
         renderTransactions();
+        renderAlerts(res.data.alerts);
+        renderHealth(res.data.risk);
+        lastBootstrapPeriodId = res.data.period_id;
+        renderBudgets(res.data.budget_statuses, res.data.period_id);
+        renderGoals(res.data.goals);
         document.getElementById("month-label").textContent = "Tháng " + res.data.summary.month;
         document.getElementById("month-income").textContent = formatVND(res.data.summary.income) + " đ";
         document.getElementById("month-expense").textContent = formatVND(res.data.summary.expense) + " đ";
+        loadAiSummary();
       }).catch(function () {
         showMessage("Không kết nối được với Apps Script — kiểm tra lại URL/token.", false);
       });
@@ -414,6 +591,8 @@
     }
     wireToggle("toggle-add-account", "add-account-form");
     wireToggle("toggle-add-category", "add-category-form");
+    wireToggle("toggle-add-budget", "add-budget-form");
+    wireToggle("toggle-add-goal", "add-goal-form");
 
     document.getElementById("add-account-form").addEventListener("submit", function (e) {
       e.preventDefault();
@@ -437,16 +616,78 @@
       var nameInput = document.getElementById("new-category-name");
       var name = nameInput.value.trim();
       if (!name) return;
-      apiPost("add_category", { name: name, kind: document.getElementById("new-category-kind").value })
-        .then(function (res) {
-          if (res.ok) {
-            nameInput.value = "";
-            document.getElementById("add-category-form").classList.add("hidden");
-            loadBootstrap();
-          } else {
-            alert(res.message);
-          }
+      apiPost("add_category", {
+        name: name,
+        kind: document.getElementById("new-category-kind").value,
+        necessity: document.getElementById("new-category-necessity").value,
+      }).then(function (res) {
+        if (res.ok) {
+          nameInput.value = "";
+          document.getElementById("add-category-form").classList.add("hidden");
+          loadBootstrap();
+        } else {
+          alert(res.message);
+        }
+      });
+    });
+
+    document.getElementById("add-budget-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var amountInput = document.getElementById("budget-amount");
+      var raw = amountInput.value.trim();
+      if (!raw) return;
+      apiPost("set_period_budget", {
+        category_id: document.getElementById("budget-category").value,
+        period_id: lastBootstrapPeriodId,
+        amount: raw,
+      }).then(function (res) {
+        if (res.ok) {
+          amountInput.value = "";
+          document.getElementById("add-budget-form").classList.add("hidden");
+          loadBootstrap();
+        } else {
+          alert(res.message);
+        }
+      });
+    });
+
+    document.getElementById("add-goal-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var nameInput = document.getElementById("new-goal-name");
+      var name = nameInput.value.trim();
+      var target = document.getElementById("new-goal-target").value.trim();
+      var deadline = document.getElementById("new-goal-deadline").value;
+      if (!name || !target || !deadline) {
+        alert("Vui lòng nhập đủ tên, số tiền đích, và hạn chót.");
+        return;
+      }
+      apiPost("add_goal", {
+        name: name, target_amount: target, deadline: deadline,
+        account_id: document.getElementById("new-goal-account").value,
+      }).then(function (res) {
+        if (res.ok) {
+          nameInput.value = "";
+          document.getElementById("new-goal-target").value = "";
+          document.getElementById("new-goal-deadline").value = "";
+          document.getElementById("add-goal-form").classList.add("hidden");
+          loadBootstrap();
+        } else {
+          alert(res.message);
+        }
+      });
+    });
+
+    document.getElementById("run-forecast").addEventListener("click", function () {
+      var resultDiv = document.getElementById("forecast-result");
+      resultDiv.innerHTML = '<p class="subtitle">Đang tính...</p>';
+      apiGet("get_forecast", { periods_ahead: 6 }).then(function (res) {
+        if (!res.ok) { resultDiv.innerHTML = '<p class="subtitle">' + res.message + "</p>"; return; }
+        var html = '<p class="subtitle">Trung bình: thu ' + formatVND(res.data.avg_income) + " đ, chi " + formatVND(res.data.avg_expense) + " đ mỗi kỳ.</p>";
+        res.data.periods.forEach(function (p) {
+          html += '<div class="summary-row"><span>Kỳ ' + p.period_id + "</span><span>" + formatVND(p.projected_balance) + " đ</span></div>";
         });
+        resultDiv.innerHTML = html;
+      });
     });
 
     loadBootstrap();
