@@ -1,103 +1,181 @@
 # Sổ tài chính — bản Sheet-lite
 
-Một bản **song song, tách biệt hoàn toàn** với app Flask+SQLite chính trong repo này (thư mục `src/`). Bản này:
+Sổ tài chính cá nhân chạy hoàn toàn trên **Google Sheets** (làm cơ sở dữ liệu) +
+**Google Apps Script** (làm API) + **một trang HTML tĩnh** (làm giao diện).
+Không cần máy chủ, không cần cài đặt gì, không có bước build. Đưa lên GitHub
+Pages là dùng được từ điện thoại.
 
-- Dùng **Google Sheets** làm database — phù hợp vì chỉ dùng cho 1 người.
-- Dùng **Google Apps Script** (deploy dạng Web App) làm lớp API mỏng đứng giữa — vì 1 file HTML tĩnh không thể ghi thẳng vào Sheet một cách an toàn.
-- Là **1 file HTML tĩnh** (`index.html`), không cần build, không cần server chạy nền — mở trực tiếp trong trình duyệt hoặc host miễn phí trên GitHub Pages.
-- Dùng **cùng mô hình dữ liệu** (accounts / categories / transactions, `amount` luôn dương + `direction` mang dấu, chuyển khoản gắn danh mục `kind=transfer` thay vì thêm 1 direction thứ 3) như app chính — để sau này phát triển thêm (ngân sách, mục tiêu...) không phải làm lại từ đầu.
+Dữ liệu tài chính nằm trong bảng tính Google của chính bạn. Trang web chỉ là
+giao diện — nó không lưu gì ngoài địa chỉ kết nối trong trình duyệt máy bạn.
 
-**v1 (phạm vi gốc)**: tài khoản, danh mục, ghi/xem/xóa giao dịch, chuyển khoản giữa tài khoản, số dư, tổng thu/chi tháng này.
+**Bản đang chạy:** https://aodtsix-cmd.github.io/quan-ly-tai-chinh/sheet-lite/
 
-**v2 (bổ sung)**: cảnh báo rủi ro (thanh khoản, số kỳ cầm cự, dự báo cuối kỳ), ngân sách theo kỳ (đặt hạn mức theo danh mục), mục tiêu tài chính (tích lũy, theo dõi tiến độ), dự báo dòng tiền đơn giản (ngoại suy thu/chi trung bình), và 1 nhận xét bằng AI (Gemini) mỗi lần mở trang. Vẫn cố ý đơn giản hơn app Flask chính — dự báo chưa tính khoản định kỳ/mùa vụ, ngân sách chưa có gợi ý công thức, chưa có nhập ảnh OCR. Xem chú thích ngay trong `Code.gs` để biết chỗ nào bị cắt gọn và vì sao.
+---
 
-## Thiết lập (làm 1 lần)
+## Cài đặt lần đầu (khoảng 10 phút)
 
-### 1. Tạo Google Sheet
+### 1. Tạo bảng tính
 
-Tạo 1 Google Sheet mới, tạo đúng 5 tab với tên **chính xác** như sau (viết hoa/thường đúng):
+Tạo một Google Sheet mới. Không cần tạo tab nào bằng tay — bước 5 sẽ tự tạo.
 
-**Tab `Accounts`** — dòng đầu tiên (header) là:
+### 2. Dán mã Apps Script
+
+Trong bảng tính: **Tiện ích mở rộng → Apps Script**. Xóa hết nội dung mẫu, dán
+toàn bộ nội dung file [`apps-script/Code.gs`](apps-script/Code.gs) vào. Lưu lại.
+
+### 3. Đặt Script Properties
+
+Trong Apps Script: **Cài đặt dự án (⚙) → Thuộc tính tập lệnh → Thêm thuộc tính**.
+
+| Khóa | Bắt buộc | Ý nghĩa |
+| --- | --- | --- |
+| `APP_TOKEN` | ✅ | Mật khẩu dùng chung. Đặt gì cũng được, miễn khó đoán. |
+| `PERIOD_START_DAY` | — | Ngày bắt đầu "kỳ tài chính". Mặc định `15`. |
+| `GEMINI_API_KEY` | — | Chỉ cần cho phần nhận xét AI. Lấy miễn phí ở [aistudio.google.com/apikey](https://aistudio.google.com/apikey). |
+
+Cũng ở trang này, đặt **Múi giờ** thành `(GMT+07:00) Vietnam Time`.
+
+### 4. Triển khai Web App
+
+**Triển khai → Bản triển khai mới → chọn loại "Ứng dụng web"**:
+
+- Thực thi với tư cách: **Tôi**
+- Ai có quyền truy cập: **Bất kỳ ai có đường liên kết**
+
+Bấm Triển khai, cấp quyền, rồi **copy URL** (dạng
+`https://script.google.com/macros/s/…/exec`).
+
+> Cần chọn "Bất kỳ ai có đường liên kết" thì trang HTML mới gọi được. Script vẫn
+> chạy dưới quyền của bạn và vẫn chặn mọi request không có đúng `APP_TOKEN`.
+
+### 5. Mở trang và nối vào
+
+Mở [`index.html`](index.html) (trên GitHub Pages, hoặc mở thẳng file trên máy).
+Dán URL ở bước 4 và `APP_TOKEN` ở bước 3 vào, bấm **Bắt đầu**.
+
+Rồi vào tab **Cài đặt → Tạo + nạp danh mục mẫu**. Nút này tạo đủ 7 tab trong
+bảng tính và nạp sẵn bộ tài khoản + cây danh mục tiếng Việt (giống app Flask
+gốc). Xong — bắt đầu ghi giao dịch được rồi.
+
+### 6. (Tùy chọn) Thêm vào màn hình chính iPhone
+
+Mở trang bằng Safari → nút Chia sẻ → **Thêm vào MH chính**. Nó sẽ chạy như một
+app riêng, có icon, không thanh địa chỉ.
+
+---
+
+## Có gì trong này
+
+| Tab | Nội dung |
+| --- | --- |
+| **Nhà** | Điểm sức khỏe tài chính, tiền có thể dùng, dải kỳ (so nhịp tiêu với nhịp thời gian), cảnh báo rủi ro, 6 chỉ số thành phần, nhắc ngân sách, mục tiêu, xu hướng tiết kiệm, số dư từng tài khoản, nhận xét AI hằng ngày. |
+| **Nhập** | Ghi chi / thu / chuyển khoản nội bộ. Hiểu cách viết tắt `500k`, `1tr`, `2tr5`. Ghi lùi ngày được. Khoản chi từ 1 triệu trở lên sẽ hỏi có muốn mô phỏng trước không. |
+| **Sổ** | Toàn bộ giao dịch, nhóm theo ngày, tìm kiếm, lọc theo loại, sửa và xóa. |
+| **Kế hoạch** | Ngân sách theo kỳ (có gợi ý từ lịch sử), mục tiêu tài chính, khoản định kỳ, dự báo dòng tiền 6 kỳ, mô phỏng khoản chi lớn. |
+| **Cài đặt** | Kết nối, tạo tab, tài khoản, danh mục, luật tự động phân loại, tải CSV. |
+
+**Kỳ tài chính** là ý tưởng tổ chức của cả app: mặc định từ ngày 15 tháng này
+đến 14 tháng sau, không phải tháng dương lịch. Mọi phép tính theo chu kỳ —
+ngân sách, tỷ lệ tiết kiệm, số kỳ cầm cự, dự báo — đều tính theo kỳ này.
+
+**Khoản định kỳ** tự biến thành giao dịch khi đến hạn, ngay lần mở app kế tiếp.
+Nếu bỏ lỡ vài kỳ, nó ghi bù cho tới hiện tại.
+
+**Tự động phân loại**: đặt luật kiểu `highlands → Cà phê/Trà sữa` ở Cài đặt. Khi
+ghi giao dịch mà bỏ trống danh mục, mô tả chứa từ khóa đó sẽ được xếp tự động.
+
+**AI** chỉ diễn giải những con số đã tính sẵn bằng JavaScript, không bao giờ tự
+tính ra số mới. Không có `GEMINI_API_KEY` thì các phần AI tự ẩn đi, mọi thứ còn
+lại chạy bình thường.
+
+---
+
+## Các tab trong bảng tính
+
+Nút "Tạo tab còn thiếu" tự lo hết phần này — bảng dưới chỉ để tra cứu khi bạn
+muốn sửa dữ liệu trực tiếp trong Sheet.
+
+| Tab | Các cột |
+| --- | --- |
+| `Accounts` | `id, name, type, balance, is_active` |
+| `Categories` | `id, name, kind, parent_id, necessity, stability` |
+| `Transactions` | `id, occurred_at, amount, direction, account_id, category_id, description, source` |
+| `PeriodBudgets` | `id, category_id, period_id, amount` |
+| `Goals` | `id, name, goal_type, target_amount, deadline, account_id, created_at, is_active` |
+| `Recurring` | `id, name, amount, direction, account_id, category_id, frequency, next_due, is_active` |
+| `Rules` | `id, pattern, category_id, priority, hit_count, created_from` |
+
+Vài quy ước quan trọng nếu sửa tay:
+
+- `amount` **luôn dương**; dấu nằm ở `direction` (`in` / `out`).
+- Chuyển khoản nội bộ được ghi thành **hai giao dịch** (một `out`, một `in`),
+  cùng gắn danh mục có `kind = transfer`. Mọi phép tính thu/chi đều loại trừ
+  danh mục loại này, nên chuyển tiền giữa các tài khoản của bạn không làm phồng
+  thu nhập hay chi tiêu.
+- `necessity` (`essential`/`optional`) nuôi các chỉ số rủi ro; `stability`
+  (`fixed`/`variable`) nuôi gợi ý ngân sách và chỉ số "chi cố định". Điền hai
+  cột này cho danh mục chi tiêu thì app mới nói được nhiều điều.
+- Thẻ tín dụng (`type = credit_card`) không được tính vào "tiền có thể dùng".
+
+---
+
+## Sửa code
+
+Không có bước build. Sửa file, lưu, tải lại trang.
+
 ```
-id	name	type	balance	is_active
+sheet-lite/
+├── index.html                  khung trang + form nhập giao dịch
+├── assets/
+│   ├── app.css                 toàn bộ giao diện (biến màu ở đầu file)
+│   ├── core.js                 kết nối, gọi API, định dạng số, đọc "2tr5"
+│   ├── views.js                các hàm dựng HTML cho từng màn hình
+│   └── app.js                  trạng thái, chuyển tab, xử lý thao tác
+└── apps-script/
+    ├── Code.gs                 toàn bộ phần chạy trên máy chủ
+    └── test/test_code.js       bộ test chạy bằng Node
 ```
 
-**Tab `Categories`** — header:
+Đổi màu chủ đạo: sửa các biến `--brand`, `--out`, `--in` ở đầu `app.css`
+(nhớ sửa ở cả ba khối `:root`, `[data-theme="light"]`, `[data-theme="dark"]`).
+
+Sau khi sửa `Code.gs`, phải **Triển khai → Quản lý bản triển khai → sửa (✏) →
+Phiên bản: Mới → Triển khai** thì URL cũ mới chạy code mới.
+
+### Chạy test
+
+```bash
+node sheet-lite/apps-script/test/test_code.js
 ```
-id	name	kind	parent_id	necessity	stability
-```
-`kind` phải là `expense`, `income`, hoặc `transfer`. Thêm ít nhất 1 dòng `kind=transfer` (ví dụ `name=Chuyển khoản nội bộ`) — tính năng chuyển khoản cần dòng này để gắn danh mục. `necessity` chỉ áp dụng cho danh mục `expense`, để trống hoặc `essential`/`optional` — đặt `essential` cho các danh mục chi tiêu bắt buộc (tiền nhà, ăn uống cơ bản...), tính năng **Cảnh báo rủi ro** cần cột này mới hoạt động. `stability` để trống cũng được (chưa dùng ở v2).
 
-**Tab `Transactions`** — header:
-```
-id	occurred_at	amount	direction	account_id	category_id	description	source
-```
+Bộ test nạp `Code.gs` thật vào Node và giả lập môi trường Apps Script bằng một
+bảng tính trong bộ nhớ — không cần Sheet thật, không cần deploy. Nó phủ phần dễ
+sai nhất: phép tính tiền, ranh giới kỳ, cân đối số dư khi sửa/xóa giao dịch, và
+các trường hợp lỗi không được để lại dữ liệu rác.
 
-**Tab `PeriodBudgets`** (mới ở v2) — header:
-```
-id	category_id	period_id	amount
-```
-Để trống, không cần nhập gì thêm — trang web sẽ tự ghi vào khi bạn đặt ngân sách.
+---
 
-**Tab `Goals`** (mới ở v2) — header:
-```
-id	name	goal_type	target_amount	deadline	account_id	created_at	is_active
-```
-Cũng để trống — trang web tự ghi khi bạn tạo mục tiêu.
+## Quan hệ với app Flask trong repo này
 
-Sau khi tạo header, thêm sẵn vài dòng tài khoản/danh mục ban đầu (id tự đặt tăng dần từ 1) — ví dụ:
-- Accounts: `1, Tiền mặt, cash, 0, TRUE`
-- Categories: `1, Ăn uống, expense, , essential,` / `2, Lương, income,,,` / `3, Chuyển khoản nội bộ, transfer,,,`
+Thư mục `src/` là bản gốc: Python + SQLite, chạy bằng máy chủ Flask, nhiều tính
+năng hơn (nhập giao dịch từ ảnh chụp màn hình qua Gemini, kế hoạch sự kiện,
+phát hiện quy luật mùa vụ, ngữ cảnh vĩ mô).
 
-### 2. Tạo Apps Script
+Bản Sheet-lite cố ý dùng **cùng một mô hình dữ liệu** để có thể lớn dần theo
+hướng đó mà không phải viết lại. Chỗ nào đơn giản hơn thì có ghi rõ lý do ngay
+trong phần chú thích đầu file `Code.gs`.
 
-Trong Sheet vừa tạo: **Tiện ích mở rộng (Extensions) > Apps Script**. Xóa nội dung mặc định, dán toàn bộ nội dung file [`apps-script/Code.gs`](apps-script/Code.gs) vào.
+Hai bản **không chia sẻ dữ liệu** — chúng là hai sổ riêng biệt.
 
-**Đặt đúng múi giờ**: Project Settings (biểu tượng bánh răng bên trái) → Time zone → chọn `(GMT+07:00) Vietnam Time` — nếu để mặc định (thường là múi giờ Mỹ), "tổng thu/chi tháng này" sẽ tính sai ranh giới ngày/tháng.
+---
 
-**Đặt token (mật khẩu chia sẻ)**: Project Settings → Script Properties → Add script property:
-- Property: `APP_TOKEN` (bắt buộc)
-- Value: tự đặt 1 chuỗi bất kỳ, coi như mật khẩu (giống `APP_PASSWORD` của app Flask chính) — không cần phức tạp vì chỉ bạn dùng, nhưng đừng để trống.
+## Nếu gặp trục trặc
 
-Thêm 2 script property khác nếu muốn (cả 2 đều tùy chọn, để trống vẫn chạy bình thường với giá trị mặc định):
-- `PERIOD_START_DAY` — ngày bắt đầu "kỳ tài chính" mỗi tháng (mặc định `15`, giống app Flask chính — kỳ chạy từ ngày 15 tháng này tới ngày 14 tháng sau).
-- `GEMINI_API_KEY` — chỉ cần nếu muốn dùng tính năng nhận xét bằng AI. Lấy miễn phí tại [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Không đặt thì mọi tính năng khác vẫn chạy bình thường, chỉ riêng khung "AI" sẽ không hiện.
-
-### 3. Deploy Web App
-
-Trong trình soạn thảo Apps Script: **Deploy > New deployment**. Chọn loại **Web app**. Cấu hình:
-- Execute as: **Me**
-- Who has access: **Anyone with the link**
-
-Bấm Deploy, cấp quyền khi được hỏi (đây là script của chính bạn, chạy trên Sheet của chính bạn). Copy **URL** hiện ra (dạng `https://script.google.com/macros/s/AKfycb.../exec`).
-
-**Lưu ý khi sửa code sau này**: mỗi lần sửa `Code.gs`, phải tạo **New deployment** mới (hoặc "Manage deployments" → sửa deployment hiện có) để URL đang dùng nhận code mới — Apps Script không tự áp dụng thay đổi vào deployment cũ.
-
-### 4. Mở `index.html`
-
-Mở file [`index.html`](index.html) trực tiếp trong trình duyệt (double-click, hoặc host lên GitHub Pages). Lần đầu mở sẽ hỏi URL Web App + token — dán vào, bấm "Lưu và bắt đầu". Trình duyệt sẽ nhớ 2 thông tin này (qua `localStorage`), không cần nhập lại các lần sau (trừ khi đổi trình duyệt/máy khác).
-
-## Đã dùng bản v1 rồi, giờ nâng cấp lên v2 thế nào?
-
-Nếu Sheet của bạn đã có sẵn 3 tab cũ (`Accounts`/`Categories`/`Transactions`) và đang hoạt động, làm theo đúng thứ tự sau — **đừng bỏ qua bước 1 và 2**, vì `Code.gs` mới đọc thẳng vào 2 tab mới mỗi khi tải trang:
-
-1. Vào Sheet, tạo thêm 2 tab mới đúng tên: `PeriodBudgets` và `Goals`, với header đúng như mô tả ở Bước 1 phía trên (để trống bên dưới header, không cần nhập gì).
-2. Vào tab `Categories`, thêm 2 cột mới ở cuối (cột E và F): `necessity` và `stability`. Với các danh mục chi tiêu quan trọng (tiền nhà, ăn uống...), điền `essential` vào cột `necessity` — tính năng Cảnh báo rủi ro cần dữ liệu này mới tính được. Các dòng danh mục cũ để trống 2 cột này vẫn không lỗi gì, chỉ là chưa được tính vào cảnh báo.
-3. Vào Apps Script, dán đè toàn bộ nội dung `Code.gs` mới nhất (từ GitHub) vào, lưu lại.
-4. **Deploy → Manage deployments** → bấm bút chì cạnh bản đang dùng → **New version** → Deploy. Link cũ vẫn dùng được, không cần đổi.
-5. (Tùy chọn) Đặt thêm `GEMINI_API_KEY` nếu muốn dùng khung nhận xét AI, và `PERIOD_START_DAY` nếu muốn đổi ngày bắt đầu kỳ khác 15.
-6. Mở lại trang web — mọi thứ cũ (tài khoản, giao dịch) vẫn nguyên, các khung mới (Cảnh báo, Sức khỏe tài chính, Ngân sách, Mục tiêu, Dự báo, AI) sẽ xuất hiện thêm.
-
-**Nếu quên bước 1**: trang vẫn chạy bình thường (không vỡ) — `Code.gs` tự nhận ra tab chưa có và coi như chưa có ngân sách/mục tiêu nào, chỉ là 2 tính năng đó chưa dùng được cho tới khi bạn tạo tab.
-
-## Đưa lên GitHub Pages (tùy chọn)
-
-Repo này đã có sẵn trên GitHub. Vào **Settings → Pages** của repo, chọn build từ nhánh `main`, thư mục `/sheet-lite` (hoặc `/` rồi vào `sheet-lite/index.html`) — sau đó trang sẽ có URL công khai dạng `https://<username>.github.io/quan-ly-tai-chinh/sheet-lite/`. Vì mọi dữ liệu thật nằm trong Google Sheet (không nằm trong file HTML), việc trang HTML công khai không tự làm lộ dữ liệu — nhưng **token** (mật khẩu Apps Script) vẫn phải giữ kín, ai có token mới gọi được API ghi dữ liệu.
-
-## Kiểm thử `Code.gs`
-
-`apps-script/test/test_code.js` chạy được bằng Node thường (`node sheet-lite/apps-script/test/test_code.js`), không cần Sheet/deployment thật — nó giả lập `SpreadsheetApp`/`PropertiesService`/`LockService`/... bằng mảng JS thuần rồi gọi thẳng các hàm trong `Code.gs`. Chạy lại sau mỗi lần sửa `Code.gs`, đặc biệt phần tính tiền (`parseAmountVnd_`) và cập nhật số dư.
-
-## Vì sao POST gửi `Content-Type: text/plain`, không phải `application/json`?
-
-Apps Script Web App không xử lý được preflight request (`OPTIONS`) mà trình duyệt tự gửi trước một request `POST` có `Content-Type: application/json`. Gửi bằng `text/plain` tránh được preflight (CORS coi đây là "simple request"), còn phía `Code.gs` vẫn `JSON.parse()` được nội dung gửi lên bất kể `Content-Type` khai báo là gì. Đây là cách làm chuẩn khi dùng Apps Script làm API cho 1 trang tĩnh — đừng đổi lại `application/json` nếu không sẽ gặp lỗi CORS im lặng (request bị chặn, không có thông báo lỗi rõ ràng trong `fetch()`).
+| Hiện tượng | Nguyên nhân thường gặp |
+| --- | --- |
+| "Không kết nối được với Apps Script" | URL sai, hoặc bản triển khai chưa để "Bất kỳ ai có đường liên kết". |
+| "Sai token" | `APP_TOKEN` trong Script Properties khác với mật khẩu đã nhập. |
+| Sửa `Code.gs` rồi mà không thấy đổi | Chưa tạo **phiên bản mới** khi triển khai lại. |
+| Ngày lệch một hôm | Múi giờ dự án Apps Script chưa đặt về Vietnam Time. |
+| Phần AI không hiện | Chưa đặt `GEMINI_API_KEY`. Đây là hành vi bình thường, không phải lỗi. |
+| Mất kết nối sau khi đổi máy/trình duyệt | URL và mật khẩu lưu theo từng trình duyệt. Nhập lại ở màn hình đầu. |

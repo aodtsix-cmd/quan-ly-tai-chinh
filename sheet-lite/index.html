@@ -2,696 +2,162 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>Sổ tài chính (Sheet-lite)</title>
-<style>
-  :root { color-scheme: light; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    padding: 16px;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #f4f5f7;
-    color: #1c1c1e;
-  }
-  .card {
-    max-width: 480px;
-    margin: 0 auto 14px;
-    background: #fff;
-    border-radius: 14px;
-    padding: 18px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-  }
-  h1 { font-size: 1.1rem; margin: 0 0 4px; }
-  .subtitle { font-size: 0.8rem; color: #8e8e93; margin: 0 0 14px; }
-  .balance { font-size: 1.8rem; font-weight: 700; margin: 4px 0; }
-  .accounts-list { font-size: 0.85rem; color: #555; }
-  .accounts-list div { display: flex; justify-content: space-between; padding: 4px 0; }
-  .segmented { display: flex; gap: 8px; margin-bottom: 14px; }
-  .segmented input { display: none; }
-  .segmented label {
-    flex: 1; text-align: center; padding: 12px 0; border-radius: 10px;
-    border: 1px solid #d1d1d6; font-weight: 600; font-size: 0.95rem; user-select: none;
-  }
-  #dir-out:checked + label { background: #ff3b30; color: #fff; border-color: #ff3b30; }
-  #dir-in:checked + label { background: #34c759; color: #fff; border-color: #34c759; }
-  #dir-transfer:checked + label { background: #007aff; color: #fff; border-color: #007aff; }
-  label.field-label { display: block; font-size: 0.85rem; color: #555; margin: 12px 0 5px; }
-  select, input[type="text"] {
-    width: 100%; padding: 11px; font-size: 16px; border: 1px solid #d1d1d6;
-    border-radius: 10px; background: #fff;
-  }
-  button {
-    width: 100%; margin-top: 16px; padding: 14px; font-size: 1rem; font-weight: 600;
-    color: #fff; background: #007aff; border: none; border-radius: 12px;
-  }
-  button:disabled { opacity: 0.5; }
-  button.secondary { background: #e5e5ea; color: #1c1c1e; }
-  #message, #setup-message {
-    margin-top: 12px; padding: 10px; border-radius: 10px; font-size: 0.9rem;
-    text-align: center; display: none;
-  }
-  .ok { display: block; background: #e6f9ea; color: #1e7a34; }
-  .error { display: block; background: #fdecea; color: #c0392b; }
-  .tx-row {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 10px 0; border-bottom: 1px solid #f0f0f0; gap: 8px;
-  }
-  .tx-row:last-child { border-bottom: none; }
-  .tx-meta { font-size: 0.78rem; color: #8e8e93; }
-  .tx-amount.in { color: #1e7a34; font-weight: 700; }
-  .tx-amount.out { color: #c0392b; font-weight: 700; }
-  .tx-del { background: none; border: none; color: #c0392b; font-size: 0.8rem; width: auto; margin: 0; padding: 4px 8px; }
-  .summary-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 0.9rem; }
-  a.settings-link { display: block; text-align: center; font-size: 0.78rem; color: #8e8e93; margin-top: 10px; text-decoration: none; }
-  .hidden { display: none; }
-  .alert-banner {
-    max-width: 480px; margin: 0 auto 10px; padding: 12px 14px; border-radius: 12px;
-    font-size: 0.88rem; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  }
-  .alert-banner.danger { background: #fdecea; color: #c0392b; }
-  .alert-banner.warning { background: #fff4e5; color: #b9770e; }
-  .alert-banner button { width: auto; margin: 0; padding: 6px 10px; font-size: 0.75rem; background: rgba(0,0,0,0.08); color: inherit; }
-  .health-badge {
-    display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.85rem; font-weight: 700; color: #fff;
-  }
-  .health-badge.nguy_hiem { background: #c0392b; }
-  .health-badge.mong_manh { background: #b9770e; }
-  .health-badge.on { background: #007aff; }
-  .health-badge.vung { background: #1e7a34; }
-  .progress-bg { background: #eee; border-radius: 6px; height: 8px; overflow: hidden; margin-top: 6px; }
-  .progress-fill { background: #007aff; height: 100%; }
-  .progress-fill.over { background: #c0392b; }
-  .progress-fill.off-track { background: #b9770e; }
-  .list-item { padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
-  .list-item:last-child { border-bottom: none; }
-  .list-item .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.9rem; }
-  .list-item .meta { font-size: 0.78rem; color: #8e8e93; margin-top: 2px; }
-  .ai-panel { background: #eef4ff; border-radius: 12px; padding: 14px; font-size: 0.88rem; color: #1c3d66; margin-top: 10px; }
-  .small-btn { width: auto; display: inline-block; padding: 6px 12px; font-size: 0.78rem; margin: 6px 4px 0 0; }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sổ tài chính</title>
+<meta name="description" content="Sổ tài chính cá nhân chạy trên Google Sheets — ghi chi tiêu, đặt ngân sách theo kỳ, theo dõi mục tiêu và dự báo dòng tiền.">
+<meta name="theme-color" content="#f4f4f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14161a" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Sổ tài chính">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="assets/manifest.webmanifest">
+<link rel="icon" href="assets/icon-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="stylesheet" href="assets/app.css">
 </head>
 <body>
 
-<div id="setup-card" class="card hidden">
-  <h1>Thiết lập kết nối</h1>
-  <p class="subtitle">Dán URL Web App (Apps Script) và mật khẩu (token) bạn đã đặt — xem hướng dẫn trong README.md.</p>
-  <label class="field-label" for="setup-url">Web App URL</label>
-  <input type="text" id="setup-url" placeholder="https://script.google.com/macros/s/xxx/exec">
-  <label class="field-label" for="setup-token">Token</label>
-  <input type="text" id="setup-token" placeholder="Mật khẩu bạn đặt trong Script Properties">
-  <button id="setup-save">Lưu và bắt đầu</button>
-  <div id="setup-message"></div>
+<!-- Shown until a Web App URL + token are saved in this browser. -->
+<div id="onboarding" class="hidden">
+  <main>
+    <section class="card">
+      <span class="eyebrow">Bước cuối</span>
+      <h1>Nối vào Google Sheet của bạn</h1>
+      <p class="small muted">
+        Dữ liệu nằm trong bảng tính Google của chính bạn. Trang này chỉ là giao diện —
+        nó cần địa chỉ Web App (Apps Script) và mật khẩu bạn đã đặt.
+        Chưa dựng bảng tính? Làm theo <a class="link" href="README.md">hướng dẫn cài đặt</a>.
+      </p>
+      <form id="connection-form">
+        <label class="field">
+          <span class="field-label">URL Web App</span>
+          <input type="text" name="url" placeholder="https://script.google.com/macros/s/…/exec" required>
+        </label>
+        <label class="field">
+          <span class="field-label">Mật khẩu (APP_TOKEN)</span>
+          <input type="password" name="token" autocomplete="current-password" placeholder="Mật khẩu trong Script Properties" required>
+        </label>
+        <button type="submit">Bắt đầu</button>
+        <div id="connection-message"></div>
+      </form>
+      <p class="tiny faint">Thông tin này chỉ lưu trong trình duyệt máy bạn (localStorage), không gửi đi đâu khác.</p>
+    </section>
+  </main>
 </div>
 
-<div id="app" class="hidden">
+<div id="app-shell" class="hidden">
 
-  <div id="alerts-container"></div>
-
-  <div class="card">
-    <h1>Tổng số dư</h1>
-    <p class="subtitle" id="month-label"></p>
-    <p class="balance" id="total-balance">—</p>
-    <div class="accounts-list" id="accounts-list"></div>
-    <div class="summary-row"><span>Thu tháng này</span><span id="month-income">—</span></div>
-    <div class="summary-row"><span>Chi tháng này</span><span id="month-expense">—</span></div>
-    <a href="#" class="settings-link" id="toggle-add-account" style="margin-top:10px;">+ Thêm tài khoản mới</a>
-    <form id="add-account-form" class="hidden" style="margin-top:10px;">
-      <input type="text" id="new-account-name" placeholder="Tên tài khoản (VD: Ngân hàng ABC)">
-      <select id="new-account-type" style="margin-top:8px;">
-        <option value="bank">Ngân hàng</option>
-        <option value="ewallet">Ví điện tử</option>
-        <option value="cash">Tiền mặt</option>
-        <option value="credit_card">Thẻ tín dụng</option>
-        <option value="savings">Sổ tiết kiệm</option>
-      </select>
-      <button type="submit" class="secondary" style="margin-top:8px;">Thêm tài khoản</button>
-    </form>
-  </div>
-
-  <div class="card" id="health-card">
-    <h1>Sức khỏe tài chính</h1>
-    <p class="subtitle" id="health-subtitle">—</p>
-    <div id="health-body"></div>
-    <div id="ai-panel" class="ai-panel hidden"></div>
-  </div>
-
-  <div class="card">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-      <h1 style="margin:0;">Danh mục</h1>
-      <a href="#" class="settings-link" id="toggle-add-category" style="margin:0;">+ Thêm danh mục</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <span class="wordmark">Sổ<span>·</span>tài chính</span>
+      <span class="topbar-spacer"></span>
+      <span id="period-chip" class="tiny muted num"></span>
+      <button type="button" class="icon-btn" id="theme-toggle" aria-label="Đổi giao diện sáng/tối">◐</button>
     </div>
-    <form id="add-category-form" class="hidden" style="margin-top:10px;">
-      <input type="text" id="new-category-name" placeholder="Tên danh mục (VD: Ăn uống)">
-      <select id="new-category-kind" style="margin-top:8px;">
-        <option value="expense">Chi tiêu</option>
-        <option value="income">Thu nhập</option>
-        <option value="transfer">Chuyển khoản nội bộ</option>
-      </select>
-      <select id="new-category-necessity" style="margin-top:8px;">
-        <option value="">Chi tiêu thiết yếu hay tùy chọn? (bỏ trống nếu không rõ)</option>
-        <option value="essential">Thiết yếu</option>
-        <option value="optional">Tùy chọn</option>
-      </select>
-      <p class="subtitle" style="margin:4px 0 0;">Chỉ áp dụng cho danh mục Chi tiêu — dùng để tính cảnh báo rủi ro bên dưới.</p>
-      <button type="submit" class="secondary" style="margin-top:8px;">Thêm danh mục</button>
-    </form>
-  </div>
+  </header>
 
-  <div class="card">
-    <h1>Thêm giao dịch</h1>
-    <form id="tx-form">
-      <div class="segmented">
-        <input type="radio" id="dir-out" name="direction" value="out" checked>
-        <label for="dir-out">Chi tiền</label>
-        <input type="radio" id="dir-in" name="direction" value="in">
-        <label for="dir-in">Thu tiền</label>
-        <input type="radio" id="dir-transfer" name="direction" value="transfer">
-        <label for="dir-transfer">Chuyển khoản</label>
-      </div>
+  <main>
+    <section id="view-home" class="view" aria-label="Trang chủ"></section>
 
-      <label class="field-label" id="account-label" for="account">Tài khoản</label>
-      <select id="account" required></select>
+    <!-- The add form is static markup, not re-rendered: retyping an amount
+         because a background refresh wiped the field is exactly the kind of
+         friction this app is supposed to remove. Only its <select> options
+         get refreshed. -->
+    <section id="view-add" class="view hidden" aria-label="Nhập giao dịch">
+      <section class="card">
+        <h1>Ghi một giao dịch</h1>
+        <form id="tx-form">
+          <div class="segmented">
+            <input type="radio" id="dir-out" name="direction" value="out" checked>
+            <label for="dir-out">Chi tiền</label>
+            <input type="radio" id="dir-in" name="direction" value="in">
+            <label for="dir-in">Thu tiền</label>
+            <input type="radio" id="dir-transfer" name="direction" value="transfer">
+            <label for="dir-transfer">Chuyển khoản</label>
+          </div>
 
-      <div id="to-account-wrap" class="hidden">
-        <label class="field-label" for="to-account">Đến tài khoản</label>
-        <select id="to-account"></select>
-      </div>
+          <label class="field">
+            <span class="field-label" id="tx-account-label">Tài khoản</span>
+            <select id="tx-account"></select>
+          </label>
 
-      <div id="category-wrap">
-        <label class="field-label" for="category">Danh mục</label>
-        <select id="category"></select>
-      </div>
+          <label class="field hidden" id="tx-to-wrap">
+            <span class="field-label">Đến tài khoản</span>
+            <select id="tx-to-account"></select>
+          </label>
 
-      <label class="field-label" for="amount">Số tiền (đ) — hỗ trợ 500k, 1tr, 2tr5</label>
-      <input type="text" inputmode="numeric" id="amount" placeholder="0" required>
+          <label class="field" id="tx-category-wrap">
+            <span class="field-label">Danh mục</span>
+            <select id="tx-category"></select>
+          </label>
 
-      <label class="field-label" for="description">Mô tả</label>
-      <input type="text" id="description" placeholder="VD: Ăn trưa Highlands">
+          <label class="field">
+            <span class="field-label">Số tiền</span>
+            <input type="text" inputmode="numeric" id="tx-amount" class="amount-input" placeholder="500k, 1tr, 2tr5…" autocomplete="off">
+          </label>
+          <p class="amount-hint" id="tx-amount-hint"></p>
 
-      <button type="submit" id="save">Lưu</button>
-      <div id="message"></div>
-    </form>
-  </div>
+          <label class="field">
+            <span class="field-label">Mô tả</span>
+            <input type="text" id="tx-description" placeholder="VD: Ăn trưa Highlands" autocomplete="off">
+          </label>
 
-  <div class="card">
-    <h1>Giao dịch gần đây</h1>
-    <div id="tx-list"></div>
-  </div>
+          <label class="field">
+            <span class="field-label">Ngày</span>
+            <input type="date" id="tx-date">
+          </label>
 
-  <div class="card">
-    <h1>Ngân sách kỳ này</h1>
-    <p class="subtitle" id="budget-period-label">—</p>
-    <div id="budget-list"></div>
-    <a href="#" class="settings-link" id="toggle-add-budget" style="margin-top:10px;">+ Đặt ngân sách cho danh mục</a>
-    <form id="add-budget-form" class="hidden" style="margin-top:10px;">
-      <select id="budget-category"></select>
-      <input type="text" inputmode="numeric" id="budget-amount" placeholder="Hạn mức (VD: 2tr)" style="margin-top:8px;">
-      <button type="submit" class="secondary" style="margin-top:8px;">Lưu ngân sách</button>
-    </form>
-  </div>
+          <button type="submit" id="tx-save">Lưu giao dịch</button>
+          <div id="add-message"></div>
+        </form>
+      </section>
 
-  <div class="card">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-      <h1 style="margin:0;">Mục tiêu tài chính</h1>
-      <a href="#" class="settings-link" id="toggle-add-goal" style="margin:0;">+ Thêm mục tiêu</a>
+      <section class="card">
+        <div class="card-head">
+          <h2>Vừa ghi gần đây</h2>
+          <button type="button" class="link" data-goto="list">Xem tất cả</button>
+        </div>
+        <div class="rows" id="add-recent"></div>
+      </section>
+    </section>
+
+    <section id="view-list" class="view hidden" aria-label="Sổ giao dịch"></section>
+    <section id="view-plan" class="view hidden" aria-label="Kế hoạch"></section>
+    <section id="view-settings" class="view hidden" aria-label="Cài đặt"></section>
+  </main>
+
+  <nav class="tabbar" aria-label="Điều hướng chính">
+    <div class="tabbar-inner" role="tablist">
+      <button type="button" class="tab" role="tab" data-tab="home" aria-selected="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/></svg>
+        Nhà
+      </button>
+      <button type="button" class="tab" role="tab" data-tab="add" aria-selected="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8.5v7M8.5 12h7"/></svg>
+        Nhập
+      </button>
+      <button type="button" class="tab" role="tab" data-tab="list" aria-selected="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+        Sổ
+      </button>
+      <button type="button" class="tab" role="tab" data-tab="plan" aria-selected="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="M7.5 15 11 10.5l3 3L20 7"/></svg>
+        Kế hoạch
+      </button>
+      <button type="button" class="tab" role="tab" data-tab="settings" aria-selected="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h8M16 8h4M4 16h4M12 16h8"/><circle cx="14" cy="8" r="2"/><circle cx="10" cy="16" r="2"/></svg>
+        Cài đặt
+      </button>
     </div>
-    <div id="goals-list"></div>
-    <form id="add-goal-form" class="hidden" style="margin-top:10px;">
-      <input type="text" id="new-goal-name" placeholder="Tên mục tiêu (VD: Quỹ khẩn cấp)">
-      <input type="text" inputmode="numeric" id="new-goal-target" placeholder="Số tiền đích (VD: 20tr)" style="margin-top:8px;">
-      <input type="date" id="new-goal-deadline" style="margin-top:8px;">
-      <label class="field-label" for="new-goal-account">Tài khoản tích lũy</label>
-      <select id="new-goal-account"></select>
-      <button type="submit" class="secondary" style="margin-top:8px;">Tạo mục tiêu</button>
-    </form>
-  </div>
+  </nav>
 
-  <div class="card">
-    <h1>Dự báo dòng tiền</h1>
-    <p class="subtitle">Dự báo đơn giản dựa trên thu/chi trung bình 3 kỳ gần nhất — chưa tính khoản định kỳ hay mùa vụ.</p>
-    <button type="button" id="run-forecast" class="secondary">Xem dự báo 6 kỳ tới</button>
-    <div id="forecast-result" style="margin-top:10px;"></div>
-  </div>
-
-  <a href="#" class="settings-link" id="reset-settings">Đổi kết nối / cài đặt lại</a>
+  <dialog id="tx-dialog">
+    <div id="tx-dialog-body"></div>
+  </dialog>
 </div>
 
-<script>
-  var STORAGE_KEY = "sheet_lite_config";
-
-  function loadConfig() {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); } catch (e) { return null; }
-  }
-  function saveConfig(cfg) { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
-
-  var config = loadConfig();
-  var setupCard = document.getElementById("setup-card");
-  var appDiv = document.getElementById("app");
-
-  if (!config || !config.url || !config.token) {
-    setupCard.classList.remove("hidden");
-  } else {
-    appDiv.classList.remove("hidden");
-    initApp();
-  }
-
-  document.getElementById("setup-save").addEventListener("click", function () {
-    var url = document.getElementById("setup-url").value.trim();
-    var token = document.getElementById("setup-token").value.trim();
-    var msg = document.getElementById("setup-message");
-    if (!url || !token) {
-      msg.textContent = "Vui lòng nhập đủ URL và token.";
-      msg.className = "error";
-      msg.style.display = "block";
-      return;
-    }
-    saveConfig({ url: url, token: token });
-    location.reload();
-  });
-
-  document.getElementById("reset-settings").addEventListener("click", function (e) {
-    e.preventDefault();
-    if (confirm("Xóa thông tin kết nối đã lưu trên máy này?")) {
-      localStorage.removeItem(STORAGE_KEY);
-      location.reload();
-    }
-  });
-
-  // ---------- Main app ----------
-  function initApp() {
-    var state = { accounts: [], categories: [], transactions: [] };
-    var lastBootstrapPeriodId = null;
-
-    var accountSelect = document.getElementById("account");
-    var toAccountSelect = document.getElementById("to-account");
-    var accountLabel = document.getElementById("account-label");
-    var toAccountWrap = document.getElementById("to-account-wrap");
-    var categoryWrap = document.getElementById("category-wrap");
-    var categorySelect = document.getElementById("category");
-    var amountInput = document.getElementById("amount");
-    var descriptionInput = document.getElementById("description");
-    var form = document.getElementById("tx-form");
-    var saveBtn = document.getElementById("save");
-    var message = document.getElementById("message");
-
-    function formatVND(n) { return new Intl.NumberFormat("vi-VN").format(n); }
-
-    // Same shorthand-aware parsing as the main Flask app's JS layer
-    // (transaction.parse_amount_vnd is the authoritative version server-
-    // side in that app; here Code.gs's parseAmountVnd_ is authoritative —
-    // this copy is only a preview/pre-check, same non-authoritative role).
-    function tryParseAmount(text) {
-      var raw = (text || "").trim().toLowerCase().replace(/\s+/g, "");
-      if (!raw) return null;
-      var trailingDigit = raw.match(/^(\d+)(tr|trieu|triệu)(\d)$/);
-      if (trailingDigit) return Math.round((Number(trailingDigit[1]) + Number(trailingDigit[3]) / 10) * 1e6);
-      var unitMatch = raw.match(/^(\d+(?:[.,]\d+)?)(k|nghin|nghìn|tr|trieu|triệu|ty|tỷ)$/);
-      if (unitMatch) {
-        var mult = { k: 1e3, nghin: 1e3, "nghìn": 1e3, tr: 1e6, trieu: 1e6, "triệu": 1e6, ty: 1e9, "tỷ": 1e9 }[unitMatch[2]];
-        return Math.round(parseFloat(unitMatch[1].replace(",", ".")) * mult);
-      }
-      var digits = raw.replace(/[.,]/g, "");
-      return /^\d+$/.test(digits) ? parseInt(digits, 10) : null;
-    }
-
-    function apiGet(action, extraParams) {
-      var params = new URLSearchParams(Object.assign({ action: action, token: config.token }, extraParams || {}));
-      return fetch(config.url + "?" + params.toString()).then(function (r) { return r.json(); });
-    }
-
-    // POST body sent as text/plain (NOT application/json) on purpose: Apps
-    // Script Web Apps don't handle CORS preflight (OPTIONS) requests, and a
-    // custom application/json Content-Type triggers one from the browser.
-    // text/plain is a CORS "simple request" so no preflight happens; Code.gs
-    // parses the body as JSON regardless of the declared Content-Type.
-    function apiPost(action, body) {
-      return fetch(config.url, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify(Object.assign({ action: action, token: config.token }, body)),
-      }).then(function (r) { return r.json(); });
-    }
-
-    function showMessage(text, ok) {
-      message.textContent = text;
-      message.className = ok ? "ok" : "error";
-    }
-
-    function renderAccounts() {
-      var selected = accountSelect.value, toSelected = toAccountSelect.value;
-      accountSelect.innerHTML = "";
-      toAccountSelect.innerHTML = "";
-      var total = 0;
-      var listHtml = "";
-      state.accounts.forEach(function (acc) {
-        total += Number(acc.balance);
-        listHtml += "<div><span>" + acc.name + "</span><span>" + formatVND(acc.balance) + " đ</span></div>";
-        var label = acc.name + " (" + formatVND(acc.balance) + " đ)";
-        var opt = document.createElement("option");
-        opt.value = acc.id; opt.textContent = label;
-        accountSelect.appendChild(opt);
-        var toOpt = opt.cloneNode(true);
-        toAccountSelect.appendChild(toOpt);
-      });
-      if (selected) accountSelect.value = selected;
-      if (toSelected) toAccountSelect.value = toSelected;
-      document.getElementById("accounts-list").innerHTML = listHtml;
-      document.getElementById("total-balance").textContent = formatVND(total) + " đ";
-    }
-
-    function currentKind() {
-      var dir = document.querySelector('input[name="direction"]:checked').value;
-      return dir === "out" ? "expense" : "income";
-    }
-
-    function renderCategories() {
-      var kind = currentKind();
-      categorySelect.innerHTML = '<option value="">-- Chưa phân loại --</option>';
-      state.categories.filter(function (c) { return c.kind === kind; }).forEach(function (c) {
-        var opt = document.createElement("option");
-        opt.value = c.id; opt.textContent = c.name;
-        categorySelect.appendChild(opt);
-      });
-    }
-
-    function renderTransactions() {
-      var html = "";
-      state.transactions.forEach(function (t) {
-        var sign = t.direction === "in" ? "+" : "-";
-        html += '<div class="tx-row">' +
-          '<div><div>' + (t.category_name || "(chưa phân loại)") + '</div>' +
-          '<div class="tx-meta">' + t.occurred_at + " · " + t.account_name + (t.description ? " · " + t.description : "") + '</div></div>' +
-          '<div style="text-align:right"><div class="tx-amount ' + t.direction + '">' + sign + formatVND(t.amount) + ' đ</div>' +
-          '<button class="tx-del" data-id="' + t.id + '">Xóa</button></div></div>';
-      });
-      document.getElementById("tx-list").innerHTML = html || '<p class="subtitle">Chưa có giao dịch nào.</p>';
-      document.querySelectorAll(".tx-del").forEach(function (btn) {
-        btn.addEventListener("click", function () { deleteTransaction(btn.getAttribute("data-id")); });
-      });
-    }
-
-    function deleteTransaction(id) {
-      if (!confirm("Xóa giao dịch này? Số dư sẽ được cập nhật lại.")) return;
-      apiPost("delete_transaction", { id: id }).then(function (res) {
-        if (res.ok) loadBootstrap();
-        else alert(res.message);
-      });
-    }
-
-    function updateFormForDirection() {
-      var direction = document.querySelector('input[name="direction"]:checked').value;
-      if (direction === "transfer") {
-        accountLabel.textContent = "Từ tài khoản";
-        toAccountWrap.classList.remove("hidden");
-        categoryWrap.classList.add("hidden");
-      } else {
-        accountLabel.textContent = "Tài khoản";
-        toAccountWrap.classList.add("hidden");
-        categoryWrap.classList.remove("hidden");
-        renderCategories();
-      }
-    }
-    document.querySelectorAll('input[name="direction"]').forEach(function (el) {
-      el.addEventListener("change", updateFormForDirection);
-    });
-
-    amountInput.addEventListener("input", function () {
-      if (/[a-zA-Z]/.test(amountInput.value)) return;
-      var digits = amountInput.value.replace(/\D/g, "");
-      amountInput.value = digits ? formatVND(Number(digits)) : "";
-    });
-
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
-      var direction = document.querySelector('input[name="direction"]:checked').value;
-      var rawAmount = amountInput.value.trim();
-      var preview = tryParseAmount(rawAmount);
-      if (!rawAmount || (preview !== null && preview <= 0)) {
-        showMessage("Vui lòng nhập số tiền hợp lệ.", false);
-        return;
-      }
-      if (direction === "transfer" && accountSelect.value === toAccountSelect.value) {
-        showMessage("Tài khoản nguồn và đích phải khác nhau.", false);
-        return;
-      }
-
-      saveBtn.disabled = true;
-      var request = direction === "transfer"
-        ? apiPost("add_transfer", { from_account_id: accountSelect.value, to_account_id: toAccountSelect.value, amount: rawAmount, description: descriptionInput.value })
-        : apiPost("add_transaction", { direction: direction, account_id: accountSelect.value, category_id: categorySelect.value, amount: rawAmount, description: descriptionInput.value });
-
-      request.then(function (res) {
-        if (res.ok) {
-          showMessage("Đã lưu.", true);
-          amountInput.value = "";
-          descriptionInput.value = "";
-          loadBootstrap();
-        } else {
-          showMessage(res.message, false);
-        }
-      }).catch(function () {
-        showMessage("Không kết nối được với Apps Script.", false);
-      }).finally(function () {
-        saveBtn.disabled = false;
-      });
-    });
-
-    var HEALTH_LABELS = { nguy_hiem: "Nguy hiểm", mong_manh: "Mong manh", on: "Ổn", vung: "Vững" };
-
-    function renderAlerts(alerts) {
-      var container = document.getElementById("alerts-container");
-      container.innerHTML = "";
-      alerts.forEach(function (a) {
-        var div = document.createElement("div");
-        div.className = "alert-banner " + a.level;
-        div.innerHTML = "<span>" + a.message + "</span>";
-        var btn = document.createElement("button");
-        btn.textContent = "Đã xem";
-        btn.addEventListener("click", function () { div.remove(); });
-        div.appendChild(btn);
-        container.appendChild(div);
-      });
-    }
-
-    function renderHealth(risk) {
-      var subtitle = document.getElementById("health-subtitle");
-      var body = document.getElementById("health-body");
-      if (!risk.has_data) {
-        subtitle.textContent = "Chưa đủ dữ liệu (cần ít nhất 1 kỳ có chi tiêu ở danh mục Thiết yếu).";
-        body.innerHTML = "";
-        return;
-      }
-      subtitle.textContent = "Nền móng tài chính (số kỳ cầm cự nếu mất thu nhập):";
-      body.innerHTML =
-        '<span class="health-badge ' + risk.runway_level + '">' + HEALTH_LABELS[risk.runway_level] + " — " + risk.runway_months.toFixed(1) + " kỳ</span>" +
-        '<div class="summary-row" style="margin-top:10px;"><span>Dự báo số dư cuối kỳ</span><span style="color:' + (risk.at_risk ? "#c0392b" : "#1c1c1e") + ';font-weight:700;">' + formatVND(Math.round(risk.forecast_balance)) + " đ</span></div>" +
-        '<div class="summary-row"><span>Còn lại trong kỳ</span><span>' + risk.days_remaining + " ngày</span></div>";
-    }
-
-    function renderBudgets(statuses, periodId) {
-      document.getElementById("budget-period-label").textContent = "Kỳ " + periodId;
-      var html = "";
-      statuses.forEach(function (s) {
-        var pct = Math.min(s.pct_used, 100);
-        var fillClass = s.over_budget ? "over" : "";
-        html += '<div class="list-item">' +
-          '<div class="row"><span>' + s.category_name + "</span><span>" + formatVND(s.spent) + " / " + formatVND(s.amount) + " đ</span></div>" +
-          '<div class="progress-bg"><div class="progress-fill ' + fillClass + '" style="width:' + pct + '%;"></div></div>' +
-          (s.over_budget ? '<p class="meta" style="color:#c0392b;">Đã vượt ngân sách</p>' : "") +
-          "</div>";
-      });
-      document.getElementById("budget-list").innerHTML = html || '<p class="subtitle">Chưa đặt ngân sách nào cho kỳ này.</p>';
-
-      var categorySelect = document.getElementById("budget-category");
-      categorySelect.innerHTML = "";
-      state.categories.filter(function (c) { return c.kind === "expense"; }).forEach(function (c) {
-        var opt = document.createElement("option");
-        opt.value = c.id; opt.textContent = c.name;
-        categorySelect.appendChild(opt);
-      });
-    }
-
-    function renderGoals(goals) {
-      var html = "";
-      goals.forEach(function (g) {
-        var pct = Math.min(g.progress_pct, 100);
-        var fillClass = g.is_overdue ? "over" : (g.is_off_track ? "off-track" : "");
-        var statusText = g.is_overdue ? "Đã quá hạn" : (g.is_off_track ? "Đang chậm tiến độ" : "Đúng tiến độ");
-        html += '<div class="list-item">' +
-          '<div class="row"><span>' + g.name + "</span><span>" + formatVND(g.current_balance) + " / " + formatVND(g.target_amount) + " đ</span></div>" +
-          '<div class="progress-bg"><div class="progress-fill ' + fillClass + '" style="width:' + pct + '%;"></div></div>' +
-          '<p class="meta">' + statusText + " · còn " + g.periods_remaining + " kỳ · cần " + formatVND(g.required_per_period) + " đ/kỳ</p>" +
-          '<button type="button" class="small-btn secondary" data-goal-id="' + g.id + '">Ẩn mục tiêu này</button>' +
-          "</div>";
-      });
-      document.getElementById("goals-list").innerHTML = html || '<p class="subtitle">Chưa có mục tiêu nào.</p>';
-      document.querySelectorAll("[data-goal-id]").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          if (!confirm("Ẩn mục tiêu này? (không xóa lịch sử, chỉ không hiển thị nữa)")) return;
-          apiPost("deactivate_goal", { id: btn.getAttribute("data-goal-id") }).then(function (res) {
-            if (res.ok) loadBootstrap(); else alert(res.message);
-          });
-        });
-      });
-
-      var goalAccountSelect = document.getElementById("new-goal-account");
-      goalAccountSelect.innerHTML = "";
-      state.accounts.forEach(function (a) {
-        var opt = document.createElement("option");
-        opt.value = a.id; opt.textContent = a.name;
-        goalAccountSelect.appendChild(opt);
-      });
-    }
-
-    function loadAiSummary() {
-      var panel = document.getElementById("ai-panel");
-      apiGet("get_ai_summary").then(function (res) {
-        if (!res.ok || !res.data.available) return;
-        panel.textContent = res.data.summary;
-        panel.classList.remove("hidden");
-      }).catch(function () {});
-    }
-
-    function loadBootstrap() {
-      apiGet("bootstrap").then(function (res) {
-        if (!res.ok) {
-          showMessage(res.message, false);
-          return;
-        }
-        state.accounts = res.data.accounts;
-        state.categories = res.data.categories;
-        state.transactions = res.data.transactions;
-        renderAccounts();
-        updateFormForDirection();
-        renderTransactions();
-        renderAlerts(res.data.alerts);
-        renderHealth(res.data.risk);
-        lastBootstrapPeriodId = res.data.period_id;
-        renderBudgets(res.data.budget_statuses, res.data.period_id);
-        renderGoals(res.data.goals);
-        document.getElementById("month-label").textContent = "Tháng " + res.data.summary.month;
-        document.getElementById("month-income").textContent = formatVND(res.data.summary.income) + " đ";
-        document.getElementById("month-expense").textContent = formatVND(res.data.summary.expense) + " đ";
-        loadAiSummary();
-      }).catch(function () {
-        showMessage("Không kết nối được với Apps Script — kiểm tra lại URL/token.", false);
-      });
-    }
-
-    // ---------- Add account / add category (found missing: Code.gs already
-    // had add_account/add_category actions, but nothing in this page ever
-    // called them, so the only way to add an account or category was to
-    // edit the Google Sheet by hand). ----------
-    function wireToggle(linkId, formId) {
-      document.getElementById(linkId).addEventListener("click", function (e) {
-        e.preventDefault();
-        document.getElementById(formId).classList.toggle("hidden");
-      });
-    }
-    wireToggle("toggle-add-account", "add-account-form");
-    wireToggle("toggle-add-category", "add-category-form");
-    wireToggle("toggle-add-budget", "add-budget-form");
-    wireToggle("toggle-add-goal", "add-goal-form");
-
-    document.getElementById("add-account-form").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var nameInput = document.getElementById("new-account-name");
-      var name = nameInput.value.trim();
-      if (!name) return;
-      apiPost("add_account", { name: name, type: document.getElementById("new-account-type").value })
-        .then(function (res) {
-          if (res.ok) {
-            nameInput.value = "";
-            document.getElementById("add-account-form").classList.add("hidden");
-            loadBootstrap();
-          } else {
-            alert(res.message);
-          }
-        });
-    });
-
-    document.getElementById("add-category-form").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var nameInput = document.getElementById("new-category-name");
-      var name = nameInput.value.trim();
-      if (!name) return;
-      apiPost("add_category", {
-        name: name,
-        kind: document.getElementById("new-category-kind").value,
-        necessity: document.getElementById("new-category-necessity").value,
-      }).then(function (res) {
-        if (res.ok) {
-          nameInput.value = "";
-          document.getElementById("add-category-form").classList.add("hidden");
-          loadBootstrap();
-        } else {
-          alert(res.message);
-        }
-      });
-    });
-
-    document.getElementById("add-budget-form").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var amountInput = document.getElementById("budget-amount");
-      var raw = amountInput.value.trim();
-      if (!raw) return;
-      apiPost("set_period_budget", {
-        category_id: document.getElementById("budget-category").value,
-        period_id: lastBootstrapPeriodId,
-        amount: raw,
-      }).then(function (res) {
-        if (res.ok) {
-          amountInput.value = "";
-          document.getElementById("add-budget-form").classList.add("hidden");
-          loadBootstrap();
-        } else {
-          alert(res.message);
-        }
-      });
-    });
-
-    document.getElementById("add-goal-form").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var nameInput = document.getElementById("new-goal-name");
-      var name = nameInput.value.trim();
-      var target = document.getElementById("new-goal-target").value.trim();
-      var deadline = document.getElementById("new-goal-deadline").value;
-      if (!name || !target || !deadline) {
-        alert("Vui lòng nhập đủ tên, số tiền đích, và hạn chót.");
-        return;
-      }
-      apiPost("add_goal", {
-        name: name, target_amount: target, deadline: deadline,
-        account_id: document.getElementById("new-goal-account").value,
-      }).then(function (res) {
-        if (res.ok) {
-          nameInput.value = "";
-          document.getElementById("new-goal-target").value = "";
-          document.getElementById("new-goal-deadline").value = "";
-          document.getElementById("add-goal-form").classList.add("hidden");
-          loadBootstrap();
-        } else {
-          alert(res.message);
-        }
-      });
-    });
-
-    document.getElementById("run-forecast").addEventListener("click", function () {
-      var resultDiv = document.getElementById("forecast-result");
-      resultDiv.innerHTML = '<p class="subtitle">Đang tính...</p>';
-      apiGet("get_forecast", { periods_ahead: 6 }).then(function (res) {
-        if (!res.ok) { resultDiv.innerHTML = '<p class="subtitle">' + res.message + "</p>"; return; }
-        var html = '<p class="subtitle">Trung bình: thu ' + formatVND(res.data.avg_income) + " đ, chi " + formatVND(res.data.avg_expense) + " đ mỗi kỳ.</p>";
-        res.data.periods.forEach(function (p) {
-          html += '<div class="summary-row"><span>Kỳ ' + p.period_id + "</span><span>" + formatVND(p.projected_balance) + " đ</span></div>";
-        });
-        resultDiv.innerHTML = html;
-      });
-    });
-
-    loadBootstrap();
-  }
-</script>
+<script src="assets/core.js"></script>
+<script src="assets/views.js"></script>
+<script src="assets/app.js"></script>
 </body>
 </html>

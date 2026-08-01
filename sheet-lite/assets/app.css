@@ -1,0 +1,659 @@
+/* =========================================================================
+   So tai chinh - design system
+   -------------------------------------------------------------------------
+   One column, phone first. The brand colour deliberately RECEDES (a muted
+   slate-indigo) so the semantic money colours - brick for chi, pine for thu,
+   steel for chuyen khoan - are the loudest thing on screen. Every figure is
+   set in a tabular monospace so columns of dong line up everywhere; prose
+   stays in the system UI face, which also gives full Vietnamese diacritic
+   coverage with no webfont to download.
+   ========================================================================= */
+
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-num: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --step--2: 0.6875rem;
+  --step--1: 0.8125rem;
+  --step-0: 0.9375rem;
+  --step-1: 1.0625rem;
+  --step-2: 1.375rem;
+  --step-3: 1.875rem;
+  --step-4: 2.5rem;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  --radius: 0.875rem;
+  --radius-sm: 0.5rem;
+  --radius-pill: 999px;
+
+  /* Light ground: a faintly warm paper, not pure white, so dense numerals
+     don't glare. Neutrals are pulled a touch toward the indigo brand. */
+  --bg: #f4f4f2;
+  --surface: #ffffff;
+  --surface-sunk: #eceded;
+  --ink: #1a1d23;
+  --ink-soft: #545a66;
+  --ink-faint: #878d99;
+  --hairline: #dfe0e1;
+
+  --brand: #3f5175;
+  --brand-soft: #e8ebf2;
+  --brand-ink: #2c3a55;
+
+  --out: #b8453c;
+  --out-soft: #fbeceb;
+  --in: #2c7a5b;
+  --in-soft: #e7f4ee;
+  --transfer: #5f6b7f;
+  --transfer-soft: #eceef2;
+  --warn: #a9762a;
+  --warn-soft: #fbf1e0;
+
+  --shadow-bar: 0 -1px 0 var(--hairline);
+  --shadow-pop: 0 8px 32px rgba(20, 22, 26, 0.16);
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --surface: #1d2026;
+    --surface-sunk: #262a31;
+    --ink: #e6e8ec;
+    --ink-soft: #a2a9b6;
+    --ink-faint: #737b8a;
+    --hairline: #2e333b;
+
+    --brand: #93a7cf;
+    --brand-soft: #232a38;
+    --brand-ink: #b8c6e4;
+
+    --out: #e2776c;
+    --out-soft: #33211f;
+    --in: #63b891;
+    --in-soft: #1a2a24;
+    --transfer: #97a3b5;
+    --transfer-soft: #262a31;
+    --warn: #d5a45c;
+    --warn-soft: #2e2519;
+
+    --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
+  }
+}
+
+/* The in-page toggle stamps data-theme on the root and must win over the
+   media query in BOTH directions, so each theme is redefined explicitly. */
+:root[data-theme="light"] {
+  --bg: #f4f4f2; --surface: #ffffff; --surface-sunk: #eceded;
+  --ink: #1a1d23; --ink-soft: #545a66; --ink-faint: #878d99; --hairline: #dfe0e1;
+  --brand: #3f5175; --brand-soft: #e8ebf2; --brand-ink: #2c3a55;
+  --out: #b8453c; --out-soft: #fbeceb; --in: #2c7a5b; --in-soft: #e7f4ee;
+  --transfer: #5f6b7f; --transfer-soft: #eceef2; --warn: #a9762a; --warn-soft: #fbf1e0;
+  --shadow-pop: 0 8px 32px rgba(20, 22, 26, 0.16);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #14161a; --surface: #1d2026; --surface-sunk: #262a31;
+  --ink: #e6e8ec; --ink-soft: #a2a9b6; --ink-faint: #737b8a; --hairline: #2e333b;
+  --brand: #93a7cf; --brand-soft: #232a38; --brand-ink: #b8c6e4;
+  --out: #e2776c; --out-soft: #33211f; --in: #63b891; --in-soft: #1a2a24;
+  --transfer: #97a3b5; --transfer-soft: #262a31; --warn: #d5a45c; --warn-soft: #2e2519;
+  --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--step-0);
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.hidden { display: none !important; }
+
+/* ------------------------------------------------------------- typography */
+
+h1, h2, h3 { margin: 0; font-weight: 650; text-wrap: balance; }
+h1 { font-size: var(--step-1); }
+h2 { font-size: var(--step-0); }
+h3 { font-size: var(--step--1); }
+p { margin: 0; }
+
+.eyebrow {
+  font-size: var(--step--2);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 600;
+  color: var(--ink-faint);
+}
+
+.muted { color: var(--ink-soft); }
+.faint { color: var(--ink-faint); }
+.small { font-size: var(--step--1); }
+.tiny { font-size: var(--step--2); }
+
+/* Every figure in the app goes through .num - that's the type idea. */
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.amount-out { color: var(--out); }
+.amount-in { color: var(--in); }
+.amount-transfer { color: var(--transfer); }
+
+/* ------------------------------------------------------------------ shell */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--hairline);
+  padding: var(--space-3) var(--space-4);
+  padding-top: max(var(--space-3), env(safe-area-inset-top));
+}
+
+.topbar-inner {
+  max-width: 33rem;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.wordmark {
+  font-weight: 700;
+  font-size: var(--step-0);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.wordmark span { color: var(--brand); }
+
+.topbar-spacer { flex: 1; }
+
+.icon-btn {
+  appearance: none;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink-soft);
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-pill);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: var(--step--1);
+  padding: 0;
+}
+
+.icon-btn:hover { color: var(--ink); }
+
+main {
+  max-width: 33rem;
+  margin: 0 auto;
+  padding: var(--space-4);
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.view { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* --------------------------------------------------------------- bottom nav */
+
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: saturate(180%) blur(12px);
+  box-shadow: var(--shadow-bar);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tabbar-inner {
+  max-width: 33rem;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.tab {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: var(--space-2) var(--space-1) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  cursor: pointer;
+  color: var(--ink-faint);
+  font-family: inherit;
+  font-size: var(--step--2);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border-top: 2px solid transparent;
+}
+
+.tab svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tab[aria-selected="true"] { color: var(--brand); border-top-color: var(--brand); }
+
+/* ------------------------------------------------------------------ cards */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.card-head .link { flex: none; }
+
+.link {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--brand);
+  font-family: inherit;
+  font-size: var(--step--1);
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.link:hover { text-decoration: underline; }
+.link-danger { color: var(--out); }
+
+/* -------------------------------------------------------------- hero + ribbon */
+
+.hero { gap: var(--space-4); }
+
+.hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+
+.hero-balance {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  /* Shrinks with the viewport so a nine-digit balance plus its unit always
+     stays on one line - "27.900.000" wrapping away from its "đ" reads as a
+     broken layout. */
+  font-size: clamp(1.6rem, 8.5vw, 2.5rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
+.hero-balance .unit { font-size: 0.45em; font-weight: 500; color: var(--ink-soft); margin-left: 0.15em; }
+
+.hero-sub { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--step--2);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.chip-dot { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: currentColor; }
+
+.chip-nguy_hiem { background: var(--out-soft); color: var(--out); }
+.chip-mong_manh { background: var(--warn-soft); color: var(--warn); }
+.chip-on { background: var(--brand-soft); color: var(--brand-ink); }
+.chip-vung { background: var(--in-soft); color: var(--in); }
+.chip-neutral { background: var(--surface-sunk); color: var(--ink-soft); }
+
+/* The period ribbon: two tracks sharing one horizontal scale, so "time gone"
+   sits directly above "money gone" and the gap between them IS the reading.
+   This is the one element unique to an app organised around a 15th-to-14th
+   cycle rather than a calendar month. */
+.ribbon { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.ribbon-row { display: grid; grid-template-columns: 4.5rem 1fr auto; align-items: center; gap: var(--space-3); }
+
+.ribbon-label { font-size: var(--step--2); color: var(--ink-faint); font-weight: 600; }
+
+.track {
+  position: relative;
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunk);
+  overflow: hidden;
+}
+
+.track-fill { height: 100%; border-radius: var(--radius-pill); background: var(--brand); }
+.track-fill.is-time { background: var(--ink-faint); }
+.track-fill.is-over { background: var(--out); }
+.track-fill.is-warn { background: var(--warn); }
+.track-fill.is-good { background: var(--in); }
+
+.ribbon-value { font-family: var(--font-num); font-size: var(--step--2); color: var(--ink-soft); min-width: 2.5rem; text-align: right; }
+
+.ribbon-note { font-size: var(--step--1); color: var(--ink-soft); }
+
+/* ------------------------------------------------------------------ alerts */
+
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  font-size: var(--step--1);
+  line-height: 1.45;
+  border: 1px solid transparent;
+}
+
+.alert-danger { background: var(--out-soft); color: var(--out); border-color: color-mix(in srgb, var(--out) 22%, transparent); }
+.alert-warning { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 22%, transparent); }
+.alert p { flex: 1; font-weight: 550; }
+.alert .link { color: inherit; opacity: 0.75; }
+
+/* Severity stripe: state readable in form, not colour alone. */
+.alert::before {
+  content: "";
+  width: 3px;
+  align-self: stretch;
+  border-radius: 2px;
+  background: currentColor;
+  flex: none;
+}
+
+/* ------------------------------------------------------------- metric grid */
+
+.metric-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: hidden; }
+
+.metric {
+  background: var(--surface);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-height: 4.5rem;
+  justify-content: center;
+}
+
+.metric-label { font-size: var(--step--2); color: var(--ink-faint); font-weight: 600; }
+.metric-value { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: var(--step-1); font-weight: 600; letter-spacing: -0.02em; }
+/* Words inside a figure slot (a unit, or a category name used as the value)
+   step back out of the tabular face - only digits belong in it. */
+.metric-value .u { font-family: var(--font-ui); font-size: var(--step--1); font-weight: 550; color: var(--ink-soft); margin-left: 0.25em; letter-spacing: 0; }
+.metric-value .as-text { font-family: var(--font-ui); font-size: var(--step-0); letter-spacing: 0; }
+.metric-note { font-size: var(--step--2); color: var(--ink-soft); }
+
+/* ------------------------------------------------------------------- lists */
+
+.rows { display: flex; flex-direction: column; }
+
+/* Top-aligned, not centred: the amount must sit on the same line as the
+   title it belongs to. Centring floats it between the two lines of the left
+   column and it stops reading as a pair. */
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.row:last-child { border-bottom: 0; }
+.row:first-child { padding-top: 0; }
+
+.row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.row-title { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-meta { font-size: var(--step--2); color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-end { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 0.15rem; flex: none; }
+.row-amount { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
+
+.row-actions { display: flex; gap: var(--space-3); }
+.row-actions .link { font-size: var(--step--2); font-weight: 600; }
+
+.date-head {
+  font-size: var(--step--2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--ink-faint);
+  padding: var(--space-3) 0 var(--space-1);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.empty { color: var(--ink-faint); font-size: var(--step--1); padding: var(--space-2) 0; }
+
+/* ---------------------------------------------------------------- progress */
+
+.bar-item { display: flex; flex-direction: column; gap: 0.3rem; padding: var(--space-3) 0; border-bottom: 1px solid var(--hairline); }
+.bar-item:last-child { border-bottom: 0; }
+.bar-item:first-child { padding-top: 0; }
+.bar-top { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); }
+.bar-figures { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: var(--step--1); color: var(--ink-soft); white-space: nowrap; }
+
+/* ------------------------------------------------------------------- forms */
+
+form { display: flex; flex-direction: column; gap: var(--space-3); }
+
+label.field { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.field-label { font-size: var(--step--2); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; color: var(--ink-faint); }
+
+input[type="text"], input[type="date"], input[type="number"], input[type="password"], select, textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: 1rem; /* 16px keeps iOS Safari from zooming on focus */
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  min-height: 2.75rem;
+}
+
+input:focus, select:focus, textarea:focus { border-color: var(--brand); outline: none; box-shadow: 0 0 0 3px var(--brand-soft); }
+
+input.amount-input {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--step-2);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  padding: 0.6rem 0.75rem;
+}
+
+.amount-hint { font-family: var(--font-num); font-size: var(--step--1); color: var(--ink-soft); min-height: 1.2em; }
+
+button {
+  appearance: none;
+  font-family: inherit;
+  font-size: var(--step-0);
+  font-weight: 650;
+  padding: 0.8rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: var(--brand);
+  color: #fff;
+  cursor: pointer;
+  min-height: 2.9rem;
+}
+
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.secondary { background: var(--surface); color: var(--ink); border-color: var(--hairline); }
+button.secondary:hover { background: var(--surface-sunk); }
+button.danger { background: var(--out); }
+button.small { font-size: var(--step--1); padding: 0.45rem 0.75rem; min-height: 2.2rem; }
+
+.button-row { display: flex; gap: var(--space-2); }
+.button-row > * { flex: 1; }
+
+/* Segmented control - direction picker and sub-navigation both use it. */
+.segmented { display: grid; gap: var(--space-2); grid-auto-flow: column; grid-auto-columns: 1fr; }
+
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+
+.segmented label {
+  text-align: center;
+  padding: 0.65rem 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  font-size: var(--step--1);
+  font-weight: 650;
+  cursor: pointer;
+  user-select: none;
+  color: var(--ink-soft);
+}
+
+.segmented input:focus-visible + label { outline: 2px solid var(--brand); outline-offset: 2px; }
+.segmented input[value="out"]:checked + label { background: var(--out-soft); border-color: var(--out); color: var(--out); }
+.segmented input[value="in"]:checked + label { background: var(--in-soft); border-color: var(--in); color: var(--in); }
+.segmented input[value="transfer"]:checked + label { background: var(--transfer-soft); border-color: var(--transfer); color: var(--transfer); }
+
+.subnav { display: flex; gap: var(--space-2); overflow-x: auto; padding-bottom: var(--space-1); scrollbar-width: none; }
+.subnav::-webkit-scrollbar { display: none; }
+
+.subnav button {
+  flex: none;
+  padding: 0.4rem 0.8rem;
+  min-height: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  color: var(--ink-soft);
+  font-size: var(--step--1);
+  font-weight: 600;
+}
+
+.subnav button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+
+.filters { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.filters button { padding: 0.3rem 0.7rem; min-height: 0; border-radius: var(--radius-pill); background: var(--surface); border: 1px solid var(--hairline); color: var(--ink-soft); font-size: var(--step--2); font-weight: 600; }
+.filters button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+
+/* ------------------------------------------------------------------- panels */
+
+.ai-panel {
+  background: var(--brand-soft);
+  border: 1px solid color-mix(in srgb, var(--brand) 20%, transparent);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--step--1);
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.ai-panel .eyebrow { color: var(--brand-ink); }
+
+.notice {
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  font-size: var(--step--1);
+  line-height: 1.45;
+}
+
+.notice-ok { background: var(--in-soft); color: var(--in); }
+.notice-error { background: var(--out-soft); color: var(--out); }
+.notice-info { background: var(--surface-sunk); color: var(--ink-soft); }
+
+.kv { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--step--1); padding: 0.2rem 0; }
+.kv dt { color: var(--ink-soft); }
+.kv dd { margin: 0; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.scroll-x { overflow-x: auto; }
+
+/* ------------------------------------------------------------------ charts */
+
+.chart { width: 100%; height: auto; display: block; overflow: visible; }
+.chart .grid-line { stroke: var(--hairline); stroke-width: 1; }
+.chart .zero-line { stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart .series { fill: none; stroke: var(--brand); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .series-alt { stroke: var(--out); stroke-dasharray: 4 3; }
+.chart .area { fill: var(--brand); opacity: 0.1; }
+.chart .endpoint { fill: var(--brand); }
+.chart .tick { fill: var(--ink-faint); font-size: 9px; font-family: var(--font-num); }
+
+.sparkline { width: 100%; height: 2.5rem; display: block; }
+.sparkline path { fill: none; stroke: var(--brand); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
+.sparkline .spark-area { fill: var(--brand); opacity: 0.12; stroke: none; }
+.sparkline .spark-end { fill: var(--brand); }
+
+/* ------------------------------------------------------------------ dialog */
+
+dialog {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  padding: var(--space-4);
+  width: min(30rem, calc(100vw - 2rem));
+  box-shadow: var(--shadow-pop);
+}
+
+dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
+
+.dialog-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+
+/* --------------------------------------------------------------- utilities */
+
+.stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.stack-tight { display: flex; flex-direction: column; gap: var(--space-2); }
+.inline { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.spread { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.grow { flex: 1; }
+
+@media (min-width: 34rem) {
+  .metric-grid { grid-template-columns: repeat(3, 1fr); }
+}
