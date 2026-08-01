@@ -387,13 +387,75 @@ App.renderAccountsCard = function (data) {
     '<div class="rows">' + (rows || App.emptyState("Chưa có tài khoản nào.")) + "</div></section>";
 };
 
+// THIET-KE.md 4.4's 50/30/20 split, for the current period. The reference
+// bands are shown next to the real numbers rather than as a pass/fail - the
+// rule is a rough guide, and a red "you failed" on a rule of thumb would be
+// louder than the rule deserves.
+App.renderBalanceCard = function (data) {
+  var balance = data.metrics.balance_50_30_20;
+  if (!balance.has_data) return "";
+
+  function line(label, value, pct, target, modifier) {
+    return '<div class="bar-item">' +
+      '<div class="bar-top"><span>' + App.esc(label) + "</span>" +
+      '<span class="bar-figures">' + App.formatCompact(value) + " đ · " + App.formatPct(pct) + "</span></div>" +
+      App.track(pct, modifier) +
+      '<p class="tiny faint">Tham chiếu: khoảng ' + target + "%</p></div>";
+  }
+
+  return '<section class="card">' +
+    '<div class="card-head"><h2>Cân đối 50/30/20</h2>' +
+    '<span class="small muted">kỳ này</span></div>' +
+    line("Thiết yếu", balance.essential, balance.essential_pct, 50, "") +
+    line("Tùy chọn", balance.optional, balance.optional_pct, 30, balance.optional_pct > 30 ? "is-warn" : "") +
+    line("Còn giữ lại", balance.income - balance.essential - balance.optional - balance.unclassified,
+      balance.saving_pct, 20, balance.saving_pct >= 20 ? "is-good" : "is-warn") +
+    (balance.unclassified > 0
+      ? '<p class="tiny muted">' + App.formatDong(balance.unclassified) +
+        " chưa xếp được vào nhóm nào — thêm “thiết yếu/tùy chọn” cho danh mục ở Cài đặt để con số này chính xác hơn.</p>"
+      : "") +
+    "</section>";
+};
+
+// First run: the dashboard is a grid of dashes and says nothing useful, so
+// lead with what to do instead of what isn't known yet.
+App.renderFirstRunCard = function (data) {
+  var setupNote = data.auto_setup && data.auto_setup.created.length
+    ? "Đã tự dựng " + data.auto_setup.created.length + " tab trong Google Sheet của bạn" +
+      (data.auto_setup.seeded && data.auto_setup.seeded.categories
+        ? " và nạp sẵn " + data.auto_setup.seeded.categories + " danh mục."
+        : ".")
+    : "Bảng tính đã sẵn sàng.";
+
+  return '<section class="card">' +
+    '<span class="eyebrow">Bắt đầu</span>' +
+    "<h1>Sổ của bạn đã sẵn sàng</h1>" +
+    '<p class="small muted">' + App.esc(setupNote) + " Ghi vài giao dịch là các chỉ số bên dưới bắt đầu có ý nghĩa.</p>" +
+    '<dl class="stack-tight">' +
+      '<div class="kv"><dt>1. Đặt số dư thật cho từng tài khoản</dt><dd></dd></div>' +
+      '<div class="kv"><dt>2. Ghi giao dịch hằng ngày ở tab Nhập</dt><dd></dd></div>' +
+      '<div class="kv"><dt>3. Đặt ngân sách kỳ này ở tab Kế hoạch</dt><dd></dd></div>' +
+    "</dl>" +
+    '<div class="button-row">' +
+      '<button type="button" data-goto="add">Ghi giao dịch đầu tiên</button>' +
+      '<button type="button" class="secondary" data-goto="settings">Sửa số dư</button>' +
+    "</div>" +
+    '<p class="tiny faint">Các chỉ số như số kỳ cầm cự hay tỷ lệ tiết kiệm cần ít nhất một kỳ đã khép lại mới tính được — ' +
+    "chúng sẽ tự hiện ra, không cần làm gì thêm.</p>" +
+    "</section>";
+};
+
 App.renderDashboard = function (data) {
+  if (data.transaction_count === 0) {
+    return App.renderFirstRunCard(data) + App.renderAccountsCard(data);
+  }
   return App.renderAlerts(data.alerts) +
     App.renderHero(data) +
     '<section class="ai-panel hidden" id="ai-daily"></section>' +
     App.renderMetrics(data) +
     App.renderBudgetReminders(data) +
     App.renderGoalsSummary(data) +
+    App.renderBalanceCard(data) +
     App.renderTrendCard(data) +
     App.renderAccountsCard(data);
 };
@@ -666,11 +728,13 @@ App.renderSettings = function (data) {
       '<p class="tiny faint" id="connection-url"></p>' +
     "</section>" +
 
-    '<section class="card"><h2>Thiết lập bảng tính</h2>' +
-      '<p class="small muted">Tạo các tab còn thiếu trong Google Sheet (an toàn khi bấm lại — tab đã có sẽ được giữ nguyên).</p>' +
+    '<section class="card">' +
+      '<div class="card-head"><h2>Tình trạng bảng tính</h2>' +
+      '<span class="tiny faint num" id="code-version"></span></div>' +
+      '<p class="small muted">Bảng tính tự dựng khi mở lần đầu. Nếu có gì bất thường, bấm kiểm tra để biết chính xác thiếu chỗ nào.</p>' +
       '<div class="button-row">' +
-        '<button type="button" class="secondary" id="run-setup">Tạo tab còn thiếu</button>' +
-        '<button type="button" class="secondary" id="run-setup-seed">Tạo + nạp danh mục mẫu</button>' +
+        '<button type="button" class="secondary" id="run-health-check">Kiểm tra thiết lập</button>' +
+        '<button type="button" class="secondary" id="run-setup-seed">Dựng lại tab còn thiếu</button>' +
       "</div>" +
       '<div id="setup-message"></div>' +
     "</section>" +

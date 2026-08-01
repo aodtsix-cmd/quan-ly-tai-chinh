@@ -12,28 +12,32 @@ giao diện — nó không lưu gì ngoài địa chỉ kết nối trong trình
 
 ---
 
-## Cài đặt lần đầu (khoảng 10 phút)
+## Cài đặt lần đầu (khoảng 5 phút)
 
-### 1. Tạo bảng tính
+Bạn chỉ cần tạo một bảng tính trắng — mã sẽ tự dựng mọi thứ còn lại.
 
-Tạo một Google Sheet mới. Không cần tạo tab nào bằng tay — bước 5 sẽ tự tạo.
+### 1. Tạo bảng tính trắng
+
+Vào [sheets.new](https://sheets.new) để tạo một Google Sheet mới. Không cần
+tạo tab, không cần đặt tên cột — bước 3 lo hết.
 
 ### 2. Dán mã Apps Script
 
 Trong bảng tính: **Tiện ích mở rộng → Apps Script**. Xóa hết nội dung mẫu, dán
-toàn bộ nội dung file [`apps-script/Code.gs`](apps-script/Code.gs) vào. Lưu lại.
+toàn bộ [`apps-script/Code.gs`](apps-script/Code.gs) vào. Bấm lưu (💾).
 
-### 3. Đặt Script Properties
+### 3. Chạy thiết lập
 
-Trong Apps Script: **Cài đặt dự án (⚙) → Thuộc tính tập lệnh → Thêm thuộc tính**.
+Vẫn trong Apps Script: chọn hàm **`setupEverything`** ở ô thả xuống trên cùng,
+bấm **Chạy**. Google sẽ hỏi cấp quyền lần đầu — chọn tài khoản của bạn, bấm
+"Nâng cao" → "Đi tới ... (không an toàn)" → "Cho phép". Đây là cảnh báo mặc
+định cho mọi script tự viết; script này chỉ đọc/ghi đúng bảng tính đang mở.
 
-| Khóa | Bắt buộc | Ý nghĩa |
-| --- | --- | --- |
-| `APP_TOKEN` | ✅ | Mật khẩu dùng chung. Đặt gì cũng được, miễn khó đoán. |
-| `PERIOD_START_DAY` | — | Ngày bắt đầu "kỳ tài chính". Mặc định `15`. |
-| `GEMINI_API_KEY` | — | Chỉ cần cho phần nhận xét AI. Lấy miễn phí ở [aistudio.google.com/apikey](https://aistudio.google.com/apikey). |
+Nó sẽ tạo đủ 7 tab, nạp sẵn tài khoản + cây danh mục tiếng Việt, đặt múi giờ,
+và **hiện ra MÃ KẾT NỐI** — chép mã đó lại.
 
-Cũng ở trang này, đặt **Múi giờ** thành `(GMT+07:00) Vietnam Time`.
+> Sau này bạn cũng có thể chạy lại từ menu **Sổ tài chính** ngay trên thanh
+> công cụ của bảng tính (menu này hiện ra sau khi tải lại trang bảng tính).
 
 ### 4. Triển khai Web App
 
@@ -42,25 +46,33 @@ Cũng ở trang này, đặt **Múi giờ** thành `(GMT+07:00) Vietnam Time`.
 - Thực thi với tư cách: **Tôi**
 - Ai có quyền truy cập: **Bất kỳ ai có đường liên kết**
 
-Bấm Triển khai, cấp quyền, rồi **copy URL** (dạng
-`https://script.google.com/macros/s/…/exec`).
+Bấm Triển khai rồi **copy URL** (dạng `https://script.google.com/macros/s/…/exec`).
 
-> Cần chọn "Bất kỳ ai có đường liên kết" thì trang HTML mới gọi được. Script vẫn
-> chạy dưới quyền của bạn và vẫn chặn mọi request không có đúng `APP_TOKEN`.
+> Phải chọn "Bất kỳ ai có đường liên kết" thì trang web mới gọi được. Script
+> vẫn chạy dưới quyền của bạn và vẫn chặn mọi request không có đúng mã kết nối.
 
 ### 5. Mở trang và nối vào
 
-Mở [`index.html`](index.html) (trên GitHub Pages, hoặc mở thẳng file trên máy).
-Dán URL ở bước 4 và `APP_TOKEN` ở bước 3 vào, bấm **Bắt đầu**.
+Mở https://aodtsix-cmd.github.io/quan-ly-tai-chinh/sheet-lite/ , dán URL ở bước
+4 và mã kết nối ở bước 3. Xong — bắt đầu ghi giao dịch được ngay.
 
-Rồi vào tab **Cài đặt → Tạo + nạp danh mục mẫu**. Nút này tạo đủ 7 tab trong
-bảng tính và nạp sẵn bộ tài khoản + cây danh mục tiếng Việt (giống app Flask
-gốc). Xong — bắt đầu ghi giao dịch được rồi.
+Nếu bạn lỡ bỏ qua bước 3, cũng không sao: lần đầu trang web gọi vào, mã sẽ tự
+dựng các tab còn thiếu. Chỉ có mã kết nối là phải lấy từ Apps Script (menu
+**Sổ tài chính → ② Xem mã kết nối**).
 
 ### 6. (Tùy chọn) Thêm vào màn hình chính iPhone
 
-Mở trang bằng Safari → nút Chia sẻ → **Thêm vào MH chính**. Nó sẽ chạy như một
-app riêng, có icon, không thanh địa chỉ.
+Mở trang bằng Safari → nút Chia sẻ → **Thêm vào MH chính**. Nó chạy như một app
+riêng, có icon, không thanh địa chỉ.
+
+### 7. (Tùy chọn) Bật phần AI
+
+Trong Apps Script: **Cài đặt dự án (⚙) → Thuộc tính tập lệnh** → thêm khóa
+`GEMINI_API_KEY` với key lấy miễn phí ở
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey). Không có key
+thì các phần AI tự ẩn, mọi thứ còn lại chạy bình thường.
+
+Cùng chỗ đó, `PERIOD_START_DAY` đổi được ngày bắt đầu kỳ (mặc định `15`).
 
 ---
 
@@ -72,7 +84,7 @@ app riêng, có icon, không thanh địa chỉ.
 | **Nhập** | Ghi chi / thu / chuyển khoản nội bộ. Hiểu cách viết tắt `500k`, `1tr`, `2tr5`. Ghi lùi ngày được. Khoản chi từ 1 triệu trở lên sẽ hỏi có muốn mô phỏng trước không. |
 | **Sổ** | Toàn bộ giao dịch, nhóm theo ngày, tìm kiếm, lọc theo loại, sửa và xóa. |
 | **Kế hoạch** | Ngân sách theo kỳ (có gợi ý từ lịch sử), mục tiêu tài chính, khoản định kỳ, dự báo dòng tiền 6 kỳ, mô phỏng khoản chi lớn. |
-| **Cài đặt** | Kết nối, tạo tab, tài khoản, danh mục, luật tự động phân loại, tải CSV. |
+| **Cài đặt** | Kết nối, kiểm tra thiết lập, tài khoản, danh mục, luật tự động phân loại, tải CSV. |
 
 **Kỳ tài chính** là ý tưởng tổ chức của cả app: mặc định từ ngày 15 tháng này
 đến 14 tháng sau, không phải tháng dương lịch. Mọi phép tính theo chu kỳ —
@@ -92,8 +104,8 @@ lại chạy bình thường.
 
 ## Các tab trong bảng tính
 
-Nút "Tạo tab còn thiếu" tự lo hết phần này — bảng dưới chỉ để tra cứu khi bạn
-muốn sửa dữ liệu trực tiếp trong Sheet.
+`setupEverything` tự lo hết phần này — bảng dưới chỉ để tra cứu khi bạn muốn
+sửa dữ liệu trực tiếp trong Sheet.
 
 | Tab | Các cột |
 | --- | --- |
@@ -175,7 +187,7 @@ Hai bản **không chia sẻ dữ liệu** — chúng là hai sổ riêng biệt
 | --- | --- |
 | "Không kết nối được với Apps Script" | URL sai, hoặc bản triển khai chưa để "Bất kỳ ai có đường liên kết". |
 | "Sai token" | `APP_TOKEN` trong Script Properties khác với mật khẩu đã nhập. |
-| Sửa `Code.gs` rồi mà không thấy đổi | Chưa tạo **phiên bản mới** khi triển khai lại. |
-| Ngày lệch một hôm | Múi giờ dự án Apps Script chưa đặt về Vietnam Time. |
+| Sửa `Code.gs` rồi mà không thấy đổi | Chưa tạo **phiên bản mới** khi triển khai lại. Vào Cài đặt trong app xem số "mã v…" để biết bản nào đang chạy. |
+| Không rõ thiếu gì | Cài đặt → **Kiểm tra thiết lập**, nó liệt kê từng mục đạt/chưa đạt. |
 | Phần AI không hiện | Chưa đặt `GEMINI_API_KEY`. Đây là hành vi bình thường, không phải lỗi. |
 | Mất kết nối sau khi đổi máy/trình duyệt | URL và mật khẩu lưu theo từng trình duyệt. Nhập lại ở màn hình đầu. |

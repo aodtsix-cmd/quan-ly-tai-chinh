@@ -67,6 +67,13 @@
 
 // ---------------------------------------------------------------- constants
 
+// Bumped whenever Code.gs changes in a way the frontend can notice. The page
+// shows this in Cài đặt, which is how you can tell at a glance whether a
+// redeploy actually took - forgetting to pick "Phiên bản: Mới" when
+// redeploying is the single easiest mistake to make with Apps Script, and it
+// fails silently: the old code just keeps serving.
+var VERSION = "3.2";
+
 var SHEET_ACCOUNTS = "Accounts";
 var SHEET_CATEGORIES = "Categories";
 var SHEET_TRANSACTIONS = "Transactions";
@@ -116,6 +123,164 @@ var HEALTH_LEVELS = ["nguy_hiem", "mong_manh", "on", "vung"];
 // generating years of back-transactions on one page load.
 var RECURRING_CATCHUP_LIMIT = 60;
 
+// ------------------------------------------------------- one-click bootstrap
+//
+// Everything below runs from the spreadsheet itself, so the whole setup is
+// "paste this file, pick one menu item, deploy". No hand-created tabs, no
+// hand-typed Script Properties, no hand-set timezone - each of those was a
+// separate way for setup to go quietly wrong.
+
+function onOpen() {
+  try {
+    SpreadsheetApp.getUi()
+      .createMenu("Sổ tài chính")
+      .addItem("① Thiết lập bảng tính", "setupEverything")
+      .addItem("② Xem mã kết nối", "showConnectionInfo")
+      .addItem("③ Kiểm tra thiết lập", "showHealthCheck")
+      .addToUi();
+  } catch (err) {
+    // No UI context (e.g. triggered headlessly) - nothing to add a menu to.
+  }
+}
+
+// The one function to run after pasting this file. Safe to run again: it only
+// creates what's missing and only seeds a tab that is completely empty.
+function setupEverything() {
+  var result = actionSetup_({ seed: "1" });
+  var token = getOrCreateToken_();
+
+  var lines = [];
+  lines.push(result.created.length ? "Đã tạo tab: " + result.created.join(", ") : "Các tab đã có sẵn.");
+  if (result.repaired.length) lines.push("Đã sửa dòng tiêu đề: " + result.repaired.join(", ") + ".");
+  if (result.seeded && result.seeded.categories) {
+    lines.push("Đã nạp " + result.seeded.accounts + " tài khoản và " + result.seeded.categories + " danh mục mẫu.");
+  }
+  lines.push("");
+  lines.push("MÃ KẾT NỐI (APP_TOKEN) của bạn:");
+  lines.push(token);
+  lines.push("");
+  lines.push("Tiếp theo: Triển khai > Bản triển khai mới > loại \"Ứng dụng web\",");
+  lines.push("chạy với tư cách \"Tôi\", quyền truy cập \"Bất kỳ ai có đường liên kết\".");
+  lines.push("Rồi dán URL đó cùng mã trên vào trang web.");
+
+  alert_("Thiết lập xong", lines.join("\n"));
+  return { token: token, setup: result };
+}
+
+function showConnectionInfo() {
+  alert_("Mã kết nối", "APP_TOKEN của bạn:\n\n" + getOrCreateToken_() +
+    "\n\nPhiên bản mã đang chạy: " + VERSION +
+    "\nMúi giờ bảng tính: " + getTimeZone_() +
+    "\nNgày bắt đầu kỳ: " + getPeriodStartDay_());
+}
+
+function showHealthCheck() {
+  var check = actionHealthCheck_({});
+  var lines = check.checks.map(function (c) {
+    return (c.ok ? "✓ " : "✗ ") + c.label + (c.detail ? " — " + c.detail : "");
+  });
+  alert_(check.ok ? "Mọi thứ ổn" : "Có mục cần xử lý", lines.join("\n"));
+}
+
+function alert_(title, message) {
+  try {
+    SpreadsheetApp.getUi().alert(title, message, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (err) {
+    Logger.log(title + "\n" + message); // no UI context - fall back to the log
+  }
+}
+
+// Generates and stores a token on first use rather than making the user
+// invent one and paste it into Script Properties by hand. A mistyped or
+// missing APP_TOKEN was otherwise the first thing to break, with a "Sai token"
+// error that doesn't say which side is wrong.
+function getOrCreateToken_() {
+  var properties = PropertiesService.getScriptProperties();
+  var token = properties.getProperty("APP_TOKEN");
+  if (token) return token;
+
+  var alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I/O/0/1 - these get misread
+  var generated = "";
+  for (var i = 0; i < 12; i++) {
+    generated += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+    if (i === 3 || i === 7) generated += "-";
+  }
+  properties.setProperty("APP_TOKEN", generated);
+  return generated;
+}
+
+// Reads the SPREADSHEET's timezone, not the script project's. The script
+// project timezone lives in appsscript.json, which can't be set from code and
+// which nobody remembers to change - and getting it wrong shifts every date by
+// a day. The spreadsheet's own timezone can be set programmatically, so
+// setupEverything pins it and everything here reads from there.
+function getTimeZone_() {
+  try {
+    var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+    if (tz) return tz;
+  } catch (err) {
+    // fall through
+  }
+  return "Asia/Ho_Chi_Minh";
+}
+
+function nowString_() {
+  return Utilities.formatDate(new Date(), getTimeZone_(), "yyyy-MM-dd HH:mm:ss");
+}
+
+// Reports exactly what is and isn't configured, so a problem names itself
+// instead of surfacing as a generic failure three screens later.
+function actionHealthCheck_(params) {
+  var checks = [];
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  ALL_TABS.forEach(function (tab) {
+    var sheet = ss.getSheetByName(tab.name);
+    checks.push({
+      key: "tab_" + tab.name,
+      label: "Tab " + tab.name,
+      ok: !!sheet,
+      detail: sheet ? "" : "chưa có — chạy Thiết lập bảng tính",
+    });
+  });
+
+  var accounts = rowsOfOptional_(SHEET_ACCOUNTS, ACCOUNTS_HEADER);
+  checks.push({
+    key: "accounts", label: "Tài khoản", ok: accounts.length > 0,
+    detail: accounts.length ? accounts.length + " tài khoản" : "chưa có tài khoản nào",
+  });
+
+  var categories = rowsOfOptional_(SHEET_CATEGORIES, CATEGORIES_HEADER);
+  checks.push({
+    key: "categories", label: "Danh mục", ok: categories.length > 0,
+    detail: categories.length ? categories.length + " danh mục" : "chưa có danh mục nào",
+  });
+  checks.push({
+    key: "transfer_category", label: "Danh mục chuyển khoản",
+    ok: categories.some(function (c) { return c.kind === "transfer"; }),
+    detail: "cần 1 danh mục kind=transfer để ghi chuyển khoản nội bộ",
+  });
+  checks.push({
+    key: "necessity", label: "Đã phân loại thiết yếu/tùy chọn",
+    ok: categories.some(function (c) { return c.necessity === "essential"; }),
+    detail: "nuôi các chỉ số rủi ro",
+  });
+  checks.push({
+    key: "timezone", label: "Múi giờ bảng tính", ok: true, detail: getTimeZone_(),
+  });
+  checks.push({
+    key: "gemini", label: "Gemini API key",
+    ok: !!PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY"),
+    detail: "tùy chọn — chỉ ảnh hưởng phần nhận xét AI",
+  });
+
+  return {
+    version: VERSION,
+    ok: checks.every(function (c) { return c.ok; }),
+    checks: checks,
+  };
+}
+
 // ------------------------------------------------------------------ routing
 
 function doGet(e) {
@@ -142,6 +307,7 @@ function handle_(e, method) {
       get_ai_summary: actionGetAiSummary_,
       get_ai_advice: actionGetAiAdvice_,
       export_csv: actionExportCsv_,
+      health_check: actionHealthCheck_,
     };
     var writeActions = {
       setup: actionSetup_,
@@ -274,8 +440,30 @@ function ensureHeader_(sheet, header) {
   return false;
 }
 
-function actionSetup_(params) {
+// True when the Sheet isn't ready to be read yet: a tab is missing, or the
+// category tree has never been seeded.
+function needsSetup_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  for (var i = 0; i < ALL_TABS.length; i++) {
+    if (!ss.getSheetByName(ALL_TABS[i].name)) return true;
+  }
+  return sheetRowsAsObjects_(ss.getSheetByName(SHEET_CATEGORIES), CATEGORIES_HEADER).length === 0;
+}
+
+function actionSetup_(params) {
+  params = params || {};
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Pin the spreadsheet timezone here rather than asking the user to set the
+  // script project's - see getTimeZone_ for why that distinction matters.
+  try {
+    if (ss.getSpreadsheetTimeZone() !== "Asia/Ho_Chi_Minh") {
+      ss.setSpreadsheetTimeZone("Asia/Ho_Chi_Minh");
+    }
+  } catch (err) {
+    // Not fatal: getTimeZone_ falls back to the same value anyway.
+  }
+
   var created = [];
   var repaired = [];
   for (var i = 0; i < ALL_TABS.length; i++) {
@@ -288,9 +476,37 @@ function actionSetup_(params) {
     if (ensureHeader_(sheet, tab.header) && created.indexOf(tab.name) === -1) {
       repaired.push(tab.name);
     }
+    formatSheet_(sheet, tab.header);
   }
+
+  // Apps Script puts a "Sheet1" in every new spreadsheet. Leaving it there is
+  // harmless but makes the tab bar confusing on a fresh setup.
+  try {
+    var leftover = ss.getSheetByName("Sheet1") || ss.getSheetByName("Trang tính1");
+    if (leftover && leftover.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(leftover);
+  } catch (err) {
+    // Never let cosmetic cleanup fail the setup.
+  }
+
   var seeded = truthy_(params.seed) ? seedDefaults_() : null;
-  return { created: created, repaired: repaired, seeded: seeded };
+  return { version: VERSION, created: created, repaired: repaired, seeded: seeded };
+}
+
+// Cosmetic only, and every call is individually guarded: the Sheet is also a
+// place the user reads and edits by hand, so a frozen bold header and a
+// thousands-separated amount column are worth setting - but none of it is
+// worth failing setup over if an API call is unavailable.
+function formatSheet_(sheet, header) {
+  try { sheet.setFrozenRows(1); } catch (err) { /* ignore */ }
+  try { sheet.getRange(1, 1, 1, header.length).setFontWeight("bold"); } catch (err) { /* ignore */ }
+  try {
+    var amountColumn = header.indexOf("amount") + 1;
+    if (amountColumn > 0) sheet.getRange(2, amountColumn, 5000, 1).setNumberFormat("#,##0");
+    var balanceColumn = header.indexOf("balance") + 1;
+    if (balanceColumn > 0) sheet.getRange(2, balanceColumn, 5000, 1).setNumberFormat("#,##0");
+    var targetColumn = header.indexOf("target_amount") + 1;
+    if (targetColumn > 0) sheet.getRange(2, targetColumn, 5000, 1).setNumberFormat("#,##0");
+  } catch (err) { /* ignore */ }
 }
 
 // Default accounts and the category tree, kept in step with the main app's
@@ -482,8 +698,7 @@ function getPeriodStartDay_() {
 }
 
 function todayParts_() {
-  var tz = Session.getScriptTimeZone();
-  return parseDateOnly_(Utilities.formatDate(new Date(), tz, "yyyy-MM-dd"));
+  return parseDateOnly_(Utilities.formatDate(new Date(), getTimeZone_(), "yyyy-MM-dd"));
 }
 
 function periodBounds_(d, startDay) {
@@ -1324,6 +1539,20 @@ function actionGetForecast_(params) {
 // calls cost roughly a second each, so one fat call beats eight small ones.
 function actionBootstrap_(params) {
   params = params || {}; // callable with no args from the Apps Script editor
+
+  // Self-heal on first load: a brand-new (or older) Sheet gets its tabs built
+  // here, so "paste the code, deploy, open the page" really is all there is -
+  // no separate setup step to forget. Seeding only fires when Categories is
+  // completely empty, so this can never duplicate real data. Bootstrap is a
+  // read action and isn't lock-wrapped, hence the lock + re-check: two tabs
+  // opening at once must not both try to build the same sheets.
+  var autoSetup = null;
+  if (needsSetup_()) {
+    autoSetup = withLock_(function () {
+      return needsSetup_() ? actionSetup_({ seed: "1" }) : null;
+    });
+  }
+
   var startDay = getPeriodStartDay_();
   var asOf = todayParts_();
 
@@ -1419,6 +1648,8 @@ function actionBootstrap_(params) {
   });
 
   return {
+    version: VERSION,
+    auto_setup: autoSetup,
     period: {
       id: periodId,
       current_id: currentId,
@@ -1564,7 +1795,7 @@ function applyBalanceDelta_(accountId, delta) {
 
 function resolveOccurredAt_(raw) {
   var text = String(raw || "").trim();
-  if (!text) return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+  if (!text) return nowString_();
   if (text.match(/^\d{4}-\d{2}-\d{2}$/)) return text + " 12:00:00";
   if (text.match(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)) return text;
   throw new Error("Ngay giao dich khong hop le.");
@@ -1753,6 +1984,12 @@ function actionGetAiSummary_(params) {
   if (!apiKey) return { available: false, reason: "no_key" };
 
   var boot = actionBootstrap_(params);
+
+  // Nothing to interpret yet. Asking the model to comment on an empty ledger
+  // burns a call and can only produce something vague or, worse, invented -
+  // the one failure mode this app's AI rules exist to prevent.
+  if (boot.transaction_count === 0) return { available: false, reason: "no_data" };
+
   var data = {
     hom_nay: boot.period.today,
     ky: boot.period.id,

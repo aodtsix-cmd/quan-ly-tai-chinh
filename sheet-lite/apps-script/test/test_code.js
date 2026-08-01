@@ -35,7 +35,9 @@ let fakeGeminiResponse = null; // set per-test to control UrlFetchApp.fetch's re
 
 function makeSheetObj(name) {
   return {
+    __name: name,
     getLastRow: () => sheets[name].length,
+    setFrozenRows: () => {},
     getRange: (row, col, numRows, numCols) => {
       if (numRows === undefined) {
         return {
@@ -54,6 +56,8 @@ function makeSheetObj(name) {
           }
           return out;
         },
+        setFontWeight: () => {},
+        setNumberFormat: () => {},
         setValues: (vals) => {
           for (let r = 0; r < vals.length; r++) {
             const index = row - 1 + r;
@@ -68,15 +72,29 @@ function makeSheetObj(name) {
   };
 }
 
+let spreadsheetTimeZone = "Etc/GMT";
+let uiAlerts = [];
+
 global.SpreadsheetApp = {
   getActiveSpreadsheet: () => ({
     getSheetByName: (name) => (sheets[name] ? makeSheetObj(name) : null),
     insertSheet: (name) => { sheets[name] = []; return makeSheetObj(name); },
+    deleteSheet: (sheet) => { delete sheets[sheet.__name]; },
+    getSheets: () => Object.keys(sheets).map(makeSheetObj),
+    getSpreadsheetTimeZone: () => spreadsheetTimeZone,
+    setSpreadsheetTimeZone: (tz) => { spreadsheetTimeZone = tz; },
+  }),
+  getUi: () => ({
+    createMenu: () => { const m = { addItem: () => m, addToUi: () => {} }; return m; },
+    alert: (title, message) => { uiAlerts.push({ title, message }); },
+    ButtonSet: { OK: "OK" },
   }),
 };
+global.Logger = { log: () => {} };
 global.PropertiesService = {
   getScriptProperties: () => ({
-    getProperty: (key) => (key === "APP_TOKEN" ? "test-token" : (scriptProperties[key] || null)),
+    getProperty: (key) => (scriptProperties[key] === undefined ? null : scriptProperties[key]),
+    setProperty: (key, value) => { scriptProperties[key] = value; },
   }),
 };
 global.LockService = { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) };
@@ -126,7 +144,9 @@ eval(fs.readFileSync(codePath, "utf8"));
 let passed = 0;
 function test(name, fn) {
   sheets = freshSheets();
-  scriptProperties = {};
+  scriptProperties = { APP_TOKEN: "test-token" };
+  spreadsheetTimeZone = "Etc/GMT";
+  uiAlerts = [];
   fakeGeminiResponse = null;
   try {
     fn();
@@ -762,21 +782,44 @@ test("actionExportCsv_ quotes fields containing a comma or quote", () => {
 
 // ---------------------------------------------------- backward compatibility
 
-test("bootstrap still works on an older Sheet missing the v2/v3 tabs", () => {
-  // Simulates upgrading Code.gs before adding the newer tabs to a live
-  // Sheet: bootstrap must degrade to empty lists, not throw and take the
-  // whole page down.
+test("bootstrap self-heals an older Sheet that is missing the newer tabs", () => {
+  // Simulates upgrading Code.gs against a live Sheet built by an earlier
+  // version: bootstrap creates what's missing rather than degrading, and the
+  // user's existing rows survive untouched.
   sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  sheets.Categories.push([1, "An uong", "expense", "", "essential", ""]);
   delete sheets.PeriodBudgets;
   delete sheets.Goals;
   delete sheets.Recurring;
   delete sheets.Rules;
+
   const boot = actionBootstrap_();
-  assert.deepStrictEqual(boot.budget_statuses, []);
+  assert.ok(boot.auto_setup, "should report that it built the missing tabs");
+  assert.deepStrictEqual(boot.auto_setup.created.sort(), ["Goals", "PeriodBudgets", "Recurring", "Rules"]);
+  assert.deepStrictEqual(sheets.Recurring[0], RECURRING_HEADER);
+  assert.strictEqual(sheets.Accounts.length, 2, "existing account row must survive");
+  assert.strictEqual(sheets.Categories.length, 2, "a non-empty Categories tab must not be re-seeded");
   assert.deepStrictEqual(boot.goals, []);
-  assert.deepStrictEqual(boot.recurring, []);
   assert.deepStrictEqual(boot.rules, []);
-  assert.strictEqual(boot.recurring_generated, 0);
+});
+
+test("bootstrap on a completely empty spreadsheet builds and seeds everything", () => {
+  sheets = {}; // nothing at all - the "just pasted Code.gs and deployed" case
+  const boot = actionBootstrap_();
+  assert.ok(boot.auto_setup.created.length >= 7);
+  assert.ok(boot.auto_setup.seeded.categories > 30);
+  assert.strictEqual(boot.accounts.length, 4);
+  assert.ok(boot.categories.some((c) => c.kind === "transfer"));
+});
+
+test("bootstrap does NOT re-run setup once the Sheet is ready", () => {
+  actionSetup_({ seed: "1" });
+  assert.strictEqual(actionBootstrap_().auto_setup, null);
+});
+
+test("bootstrap reports the running code version, so a stale deploy is visible", () => {
+  actionSetup_({ seed: "1" });
+  assert.strictEqual(actionBootstrap_().version, VERSION);
 });
 
 test("a write action against a missing tab gives a clear error, not a silent no-op", () => {
@@ -799,6 +842,7 @@ test("actionGetAiSummary_ is gracefully unavailable with no GEMINI_API_KEY set",
 test("actionGetAiSummary_ returns the model's text when a key is set and the call succeeds", () => {
   scriptProperties.GEMINI_API_KEY = "fake-key";
   sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  sheets.Transactions.push([1, "2026-07-16 10:00:00", 50000, "out", 1, "", "", "manual"]);
   fakeGeminiResponse = { code: 200, body: { candidates: [{ content: { parts: [{ text: "  Tinh hinh on dinh.  " }] } }] } };
   const result = actionGetAiSummary_({});
   assert.strictEqual(result.available, true);
@@ -808,6 +852,7 @@ test("actionGetAiSummary_ returns the model's text when a key is set and the cal
 test("actionGetAiSummary_ degrades gracefully (never throws) when the API call fails", () => {
   scriptProperties.GEMINI_API_KEY = "fake-key";
   sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  sheets.Transactions.push([1, "2026-07-16 10:00:00", 50000, "out", 1, "", "", "manual"]);
   fakeGeminiResponse = "network-error";
   const result = actionGetAiSummary_({});
   assert.strictEqual(result.available, false);
@@ -817,8 +862,19 @@ test("actionGetAiSummary_ degrades gracefully (never throws) when the API call f
 test("actionGetAiSummary_ degrades gracefully on a non-2xx response", () => {
   scriptProperties.GEMINI_API_KEY = "fake-key";
   sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  sheets.Transactions.push([1, "2026-07-16 10:00:00", 50000, "out", 1, "", "", "manual"]);
   fakeGeminiResponse = { code: 429, body: {} };
   assert.strictEqual(actionGetAiSummary_({}).reason, "network");
+});
+
+test("actionGetAiSummary_ refuses to comment on an empty ledger", () => {
+  // Asking a model to interpret zero data can only produce something vague or
+  // invented - and it spends an API call to do it.
+  scriptProperties.GEMINI_API_KEY = "fake-key";
+  sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  const result = actionGetAiSummary_({});
+  assert.strictEqual(result.available, false);
+  assert.strictEqual(result.reason, "no_data");
 });
 
 test("actionGetAiAdvice_ rejects an unknown topic instead of prompting blind", () => {
@@ -847,6 +903,63 @@ test("handle_ rejects a request with a wrong token before running any action", (
   sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
   const output = handle_({ parameter: { token: "nope", action: "bootstrap" } }, "GET");
   assert.strictEqual(JSON.parse(output.getContent()).ok, false);
+});
+
+// ------------------------------------------------------- setup / diagnostics
+
+test("getOrCreateToken_ generates a token once and then returns the same one", () => {
+  delete scriptProperties.APP_TOKEN;
+  const first = getOrCreateToken_();
+  assert.ok(first.length >= 12, "token should not be trivially short");
+  assert.strictEqual(getOrCreateToken_(), first, "must not regenerate on every call");
+  assert.strictEqual(scriptProperties.APP_TOKEN, first, "must be persisted to Script Properties");
+});
+
+test("getOrCreateToken_ never emits characters that get misread when retyped", () => {
+  delete scriptProperties.APP_TOKEN;
+  assert.ok(!/[IO01]/.test(getOrCreateToken_()));
+});
+
+test("getOrCreateToken_ leaves an existing token alone", () => {
+  scriptProperties.APP_TOKEN = "my-own-token";
+  assert.strictEqual(getOrCreateToken_(), "my-own-token");
+});
+
+test("actionSetup_ pins the spreadsheet timezone so dates can't be off by one", () => {
+  actionSetup_({});
+  assert.strictEqual(spreadsheetTimeZone, "Asia/Ho_Chi_Minh");
+  assert.strictEqual(getTimeZone_(), "Asia/Ho_Chi_Minh");
+});
+
+test("actionHealthCheck_ flags a missing tab and passes once setup has run", () => {
+  delete sheets.Rules;
+  const before = actionHealthCheck_({});
+  assert.strictEqual(before.ok, false);
+  assert.ok(before.checks.some((c) => c.key === "tab_Rules" && !c.ok));
+
+  actionSetup_({ seed: "1" });
+  const after = actionHealthCheck_({});
+  assert.ok(after.checks.every((c) => c.key === "gemini" || c.ok), JSON.stringify(after.checks));
+  assert.strictEqual(after.version, VERSION);
+});
+
+test("actionHealthCheck_ reports the Gemini key as optional, not as a failure to fix", () => {
+  actionSetup_({ seed: "1" });
+  const gemini = actionHealthCheck_({}).checks.filter((c) => c.key === "gemini")[0];
+  assert.strictEqual(gemini.ok, false);
+  assert.ok(gemini.detail.indexOf("tùy chọn") !== -1);
+});
+
+test("setupEverything reports the token through the UI and is safe to re-run", () => {
+  delete scriptProperties.APP_TOKEN;
+  const first = setupEverything();
+  assert.ok(uiAlerts.length === 1);
+  assert.ok(uiAlerts[0].message.indexOf(first.token) !== -1, "the dialog must show the token");
+  const categoryCount = sheets.Categories.length;
+
+  const second = setupEverything();
+  assert.strictEqual(second.token, first.token);
+  assert.strictEqual(sheets.Categories.length, categoryCount, "re-running must not duplicate seed data");
 });
 
 console.log(`\n${passed} test(s) passed.`);

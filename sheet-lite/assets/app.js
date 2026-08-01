@@ -428,10 +428,33 @@ App.openEditDialog = function (id) {
       '<select name="category_id">' + App.categoryOptions(data.categories, kind, tx.category_id) + "</select></label>" +
       '<label class="field"><span class="field-label">Mô tả</span>' +
       '<input type="text" name="description" value="' + App.esc(tx.description || "") + '"></label>' +
+      // Correcting a category is the moment the user has just told the app
+      // what a description means - the cheapest possible time to offer to
+      // remember it. Same "learn from correction" loop as the Flask app's
+      // edit page. Only offered when the category actually changed, so it
+      // never nags on an unrelated edit.
+      (tx.description
+        ? '<div class="notice notice-info hidden" id="learn-rule-block">' +
+          '<label class="inline"><input type="checkbox" name="learn_rule" value="1" style="width:auto;min-height:0">' +
+          " <span>Lần sau tự xếp vào danh mục này</span></label>" +
+          '<input type="text" name="learn_pattern" value="' + App.esc(tx.description) +
+          '" style="margin-top:0.5rem" aria-label="Từ khóa nhận dạng">' +
+          '<p class="tiny muted">Rút gọn thành từ khóa dễ khớp hơn, ví dụ chỉ để “highlands”.</p></div>'
+        : "") +
       "<button type=\"submit\">Lưu thay đổi</button>" +
       '<div id="edit-message"></div>' +
     "</form>"
   );
+
+  // Reveal the learn-a-rule offer only once the category is actually changed.
+  var categorySelect = App.$('#edit-form [name="category_id"]');
+  var learnBlock = App.$("#learn-rule-block");
+  if (learnBlock && categorySelect) {
+    categorySelect.addEventListener("change", function () {
+      var changed = String(categorySelect.value) !== String(tx.category_id || "") && categorySelect.value !== "";
+      learnBlock.classList.toggle("hidden", !changed);
+    });
+  }
   App.$("#tx-dialog").showModal();
 };
 
@@ -561,6 +584,34 @@ App.renderSettingsTab = function () {
   if (urlNode && App.config) {
     urlNode.textContent = App.config.url.replace(/\/exec.*$/, "/exec");
   }
+  var versionNode = App.$("#code-version");
+  if (versionNode && App.state.data) {
+    // Shown because forgetting "Phiên bản: Mới" on a redeploy fails silently -
+    // the old code just keeps answering. Seeing the version is the only way to
+    // catch it without guessing.
+    versionNode.textContent = "mã v" + (App.state.data.version || "?");
+  }
+};
+
+App.runHealthCheck = function () {
+  App.notice("#setup-message", "Đang kiểm tra…", "info");
+  App.apiGet("health_check")
+    .then(function (result) {
+      var rows = result.checks.map(function (check) {
+        var mark = check.ok ? "✓" : (check.key === "gemini" ? "○" : "✗");
+        var tone = check.ok ? "muted" : (check.key === "gemini" ? "faint" : "amount-out");
+        return '<div class="kv"><dt class="' + tone + '">' + mark + " " + App.esc(check.label) + "</dt>" +
+          '<dd class="tiny ' + tone + '" style="font-family:var(--font-ui);font-weight:400">' +
+          App.esc(check.detail || (check.ok ? "ổn" : "")) + "</dd></div>";
+      }).join("");
+      var headline = result.ok
+        ? "Mọi thứ đã sẵn sàng."
+        : "Có mục cần xử lý — xem danh sách bên dưới.";
+      App.setHtml("#setup-message",
+        '<p class="notice notice-' + (result.ok ? "ok" : "info") + '">' + App.esc(headline) + "</p>" +
+        '<dl class="stack-tight" style="margin-top:0.5rem">' + rows + "</dl>");
+    })
+    .catch(function (err) { App.notice("#setup-message", App.errorText(err), "error"); });
 };
 
 App.downloadCsv = function () {
@@ -634,8 +685,8 @@ document.addEventListener("click", function (event) {
   var target = event.target.closest("[data-tab], [data-goto], [data-plan-section], [data-filter], " +
     "[data-dismiss-alert], [data-delete-tx], [data-edit-tx], [data-hide-goal], [data-hide-recurring], " +
     "[data-delete-rule], [data-edit-account], [data-apply-suggestion], [data-period-shift], [data-close-dialog], " +
-    "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-setup, #run-setup-seed, " +
-    "#reset-connection, #show-connection, #ai-goal-priority, #ai-simulation, #tx-save, #theme-toggle");
+    "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
+    "#reset-connection, #show-connection, #ai-goal-priority, #ai-simulation, #theme-toggle");
   if (!target) return;
 
   var attr = function (name) { return target.getAttribute(name); };
@@ -713,9 +764,8 @@ document.addEventListener("click", function (event) {
     case "run-forecast": App.runForecast(); break;
     case "run-simulation": App.runSimulation(); break;
     case "export-csv": App.downloadCsv(); break;
-    case "run-setup": App.runSetup(false); break;
+    case "run-health-check": App.runHealthCheck(); break;
     case "run-setup-seed": App.runSetup(true); break;
-    case "tx-save": App.submitTransaction(); break;
     case "theme-toggle": App.cycleTheme(); App.updateThemeButton(); break;
     case "show-connection": App.showConnectionForm(); break;
     case "reset-connection":
@@ -751,6 +801,14 @@ document.addEventListener("click", function (event) {
 // Forms: also delegated, for the same re-render reason.
 document.addEventListener("submit", function (event) {
   var form = event.target;
+  // Read the id via getAttribute, never off the element directly. A form's
+  // named controls are exposed as properties on the form, so a field named
+  // "id" (edit-form and account-edit-form both have one) shadows the element's
+  // own id with that input - every comparison against a string then silently
+  // fails, no branch runs, nothing calls preventDefault, and the browser does
+  // a real page navigation with the whole form in the query string. Both edit
+  // dialogs were dead this way until it was caught.
+  var formId = form.getAttribute("id");
   var body = {};
   new FormData(form).forEach(function (value, key) { body[key] = value; });
 
@@ -766,21 +824,35 @@ document.addEventListener("submit", function (event) {
       .catch(function (err) { App.notice(messageSelector, App.errorText(err), "error"); });
   }
 
-  if (form.id === "goal-form") post("add_goal", "#goal-message", "Đã tạo mục tiêu.");
-  else if (form.id === "recurring-form") post("add_recurring", "#recurring-message", "Đã thêm khoản định kỳ.");
-  else if (form.id === "account-form") post("add_account", "#account-message", "Đã thêm tài khoản.");
-  else if (form.id === "category-form") post("add_category", "#category-message", "Đã thêm danh mục.");
-  else if (form.id === "rule-form") post("add_rule", "#rule-message", "Đã thêm luật.");
-  else if (form.id === "edit-form") {
+  if (formId === "goal-form") post("add_goal", "#goal-message", "Đã tạo mục tiêu.");
+  else if (formId === "recurring-form") post("add_recurring", "#recurring-message", "Đã thêm khoản định kỳ.");
+  else if (formId === "account-form") post("add_account", "#account-message", "Đã thêm tài khoản.");
+  else if (formId === "category-form") post("add_category", "#category-message", "Đã thêm danh mục.");
+  else if (formId === "rule-form") post("add_rule", "#rule-message", "Đã thêm luật.");
+  else if (formId === "edit-form") {
     event.preventDefault();
     App.notice("#edit-message", "Đang lưu…", "info");
+    var learnRule = body.learn_rule === "1" && String(body.learn_pattern || "").trim() && body.category_id;
+    var pattern = String(body.learn_pattern || "").trim();
+    var categoryForRule = body.category_id;
+    delete body.learn_rule;
+    delete body.learn_pattern;
+
     App.apiPost("update_transaction", body)
+      .then(function () {
+        // Saving the rule is a follow-up, never a precondition: if it fails,
+        // the edit the user actually asked for has already landed.
+        if (!learnRule) return null;
+        return App.apiPost("add_rule", {
+          pattern: pattern, category_id: categoryForRule, priority: 10, created_from: "learned",
+        }).catch(function () { return null; });
+      })
       .then(function () {
         App.$("#tx-dialog").close();
         return App.load({ quiet: true });
       })
       .catch(function (err) { App.notice("#edit-message", App.errorText(err), "error"); });
-  } else if (form.id === "account-edit-form") {
+  } else if (formId === "account-edit-form") {
     event.preventDefault();
     App.notice("#account-edit-message", "Đang lưu…", "info");
     App.apiPost("update_account", body)
@@ -789,7 +861,7 @@ document.addEventListener("submit", function (event) {
         return App.load({ quiet: true });
       })
       .catch(function (err) { App.notice("#account-edit-message", App.errorText(err), "error"); });
-  } else if (form.id === "connection-form") {
+  } else if (formId === "connection-form") {
     event.preventDefault();
     var url = body.url.trim();
     var token = body.token.trim();
@@ -799,7 +871,7 @@ document.addEventListener("submit", function (event) {
     }
     App.saveConfig({ url: url, token: token });
     location.reload();
-  } else if (form.id === "tx-form") {
+  } else if (formId === "tx-form") {
     event.preventDefault();
     App.submitTransaction();
   }
