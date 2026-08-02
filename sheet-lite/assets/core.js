@@ -40,8 +40,27 @@ App.apiGet = function (action, extraParams) {
     Object.assign({ action: action, token: App.config.token }, extraParams || {})
   );
   return fetch(App.config.url + "?" + params.toString())
-    .then(function (response) { return response.json(); })
+    .then(App.parseResponse)
     .then(App.unwrap);
+};
+
+// Apps Script answers with 200 + an HTML page rather than JSON in several
+// ordinary situations: a stale or mistyped deployment URL, a deployment that
+// was deleted, or one that is still propagating in the first minute after
+// "Triển khai" (observed live - two calls returned Google's "Không tìm thấy
+// trang" page before the third returned real JSON). Left alone, response.json()
+// throws "Unexpected token '<'", which tells the user nothing.
+App.parseResponse = function (response) {
+  return response.text().then(function (text) {
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      var looksLikeGooglePage = text.indexOf("<") === 0;
+      throw new Error(looksLikeGooglePage
+        ? "Google trả về một trang web thay vì dữ liệu. Thường là URL Web App sai, bản triển khai đã bị xóa, hoặc bạn vừa bấm Triển khai xong và nó chưa kịp có hiệu lực — đợi khoảng một phút rồi bấm Thử lại."
+        : "Phản hồi từ máy chủ không đọc được.");
+    }
+  });
 };
 
 // The body goes out as text/plain, NOT application/json, on purpose: Apps
@@ -55,7 +74,7 @@ App.apiPost = function (action, body) {
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(Object.assign({ action: action, token: App.config.token }, body || {})),
   })
-    .then(function (response) { return response.json(); })
+    .then(App.parseResponse)
     .then(App.unwrap);
 };
 
@@ -74,7 +93,10 @@ App.errorText = function (err) {
     return "Không kết nối được với Apps Script. Kiểm tra lại URL trong Cài đặt, và chắc chắn bản deploy đang mở cho \"Anyone with the link\".";
   }
   if (message.indexOf("Sai token") !== -1) {
-    return "Sai mật khẩu (token). Mở Cài đặt để nhập lại.";
+    return "Sai mã kết nối. Xem lại mã đúng ở Google Sheet: menu Sổ tài chính → ② Xem mã kết nối, rồi nhập lại ở Cài đặt.";
+  }
+  if (message.indexOf("Chua dat APP_TOKEN") !== -1) {
+    return "Bảng tính chưa có mã kết nối. Mở Apps Script và chạy hàm setupEverything một lần — nó sẽ tạo và hiện mã cho bạn.";
   }
   return message;
 };

@@ -142,13 +142,38 @@ App.notice = function (selector, text, kind) {
 // An Apps Script round trip takes a second or three, and a dead deployment
 // URL can hang indefinitely - so something must be on screen from the first
 // paint. A blank page reads as "the app is broken" long before it is.
+// Measured against a real deployment: the FIRST call after a deploy took 97
+// seconds while Apps Script cold-started, and every call after it was under a
+// second. A silent wait that long is indistinguishable from a hang, so the
+// message escalates instead of sitting still.
+App.LOADING_HINTS = [
+  [0, "Lần đầu trong ngày thường mất vài giây."],
+  [6000, "Vẫn đang chờ Google phản hồi. Lần gọi đầu sau khi triển khai có thể mất tới một phút — đây là bình thường, không phải lỗi."],
+  [45000, "Lâu hơn thường lệ. Nếu quá 2 phút, kiểm tra bản triển khai có đang mở cho “Bất kỳ ai có đường liên kết” không."],
+];
+
+App.clearLoadingTimers = function () {
+  (App.loadingTimers || []).forEach(window.clearTimeout);
+  App.loadingTimers = [];
+};
+
 App.showLoading = function () {
-  App.setHtml("#view-home",
-    '<section class="card">' +
-      '<span class="eyebrow">Đang tải</span>' +
-      "<h1>Đang mở sổ từ Google Sheet…</h1>" +
-      '<p class="small muted">Lần đầu trong ngày thường mất vài giây.</p>' +
-    "</section>");
+  App.clearLoadingTimers();
+  function paint(hint) {
+    App.setHtml("#view-home",
+      '<section class="card">' +
+        '<span class="eyebrow">Đang tải</span>' +
+        "<h1>Đang mở sổ từ Google Sheet…</h1>" +
+        '<p class="small muted">' + App.esc(hint) + "</p>" +
+      "</section>");
+  }
+  paint(App.LOADING_HINTS[0][1]);
+  App.LOADING_HINTS.slice(1).forEach(function (step) {
+    App.loadingTimers.push(window.setTimeout(function () {
+      // Only keep escalating while the request really is still in flight.
+      if (App.state.loading) paint(step[1]);
+    }, step[0]));
+  });
 };
 
 // Never leave the screen blank. Every failure - no network, wrong token, an
