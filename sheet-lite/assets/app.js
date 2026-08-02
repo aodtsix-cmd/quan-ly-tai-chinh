@@ -1025,6 +1025,10 @@ document.addEventListener("click", function (event) {
     case "export-csv": App.downloadCsv(); break;
     case "run-health-check": App.runHealthCheck(); break;
     case "run-setup-seed": App.runSetup(true); break;
+    case "save-connection-anyway":
+      App.saveConfig(App.pendingConfig);
+      location.reload();
+      break;
     case "theme-toggle": App.cycleTheme(); App.updateThemeButton(); break;
     case "retry-load": App.showLoading(); App.load(); break;
     case "save-import": App.saveImport(); break;
@@ -1161,11 +1165,41 @@ document.addEventListener("submit", function (event) {
     var url = body.url.trim();
     var token = body.token.trim();
     if (!url || !token) {
-      App.notice("#connection-message", "Cần cả URL và mật khẩu.", "error");
+      App.notice("#connection-message", "Cần cả URL và mã kết nối.", "error");
       return;
     }
-    App.saveConfig({ url: url, token: token });
-    location.reload();
+    if (url.indexOf("/exec") === -1) {
+      App.notice("#connection-message",
+        "URL phải kết thúc bằng /exec. Nếu nó kết thúc bằng /dev thì đó là bản thử nghiệm, không dùng được.", "error");
+      return;
+    }
+
+    // Check the URL BEFORE saving it. Pasting a link to an older deployment
+    // and only finding out from a broken screen afterwards is the exact loop
+    // this avoids - a deployment answers `version` without a token, so this
+    // costs nothing and needs no credentials.
+    App.notice("#connection-message", "Đang kiểm tra địa chỉ…", "info");
+    var timeout = new Promise(function (resolve) { window.setTimeout(function () { resolve("timeout"); }, 20000); });
+
+    Promise.race([App.fetchVersionFor(url), timeout]).then(function (version) {
+      if (version === App.EXPECTED_VERSION) {
+        App.saveConfig({ url: url, token: token });
+        location.reload();
+        return;
+      }
+      // Anything else still saves - the app works on older code, and a slow
+      // cold start must not stop someone connecting - but say what was found.
+      var warning = version === "timeout"
+        ? "Địa chỉ chưa trả lời sau 20 giây (có thể Apps Script đang khởi động nguội)."
+        : (version
+            ? "Địa chỉ này đang chạy v" + version + ", bản mới nhất là v" + App.EXPECTED_VERSION + "."
+            : "Địa chỉ này chạy mã cũ hơn v3.4, hoặc chưa triển khai xong.");
+      App.setHtml("#connection-message",
+        '<p class="notice notice-info">' + App.esc(warning) +
+        " Vẫn lưu được và app sẽ chạy, chỉ thiếu tính năng mới nhất." +
+        '</p><button type="button" class="secondary" id="save-connection-anyway">Lưu địa chỉ này</button>');
+      App.pendingConfig = { url: url, token: token };
+    });
   } else if (formId === "tx-form") {
     event.preventDefault();
     App.submitTransaction();

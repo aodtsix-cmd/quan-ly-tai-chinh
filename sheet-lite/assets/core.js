@@ -93,11 +93,15 @@ App.unwrap = function (payload) {
 // to answer at all - which is itself the answer.
 App.EXPECTED_VERSION = "3.5";
 
-App.fetchVersion = function () {
-  return fetch(App.config.url + "?action=version")
+App.fetchVersionFor = function (url) {
+  return fetch(url + "?action=version")
     .then(App.parseResponse)
     .then(function (payload) { return (payload && payload.ok && payload.data.version) || null; })
     .catch(function () { return null; });
+};
+
+App.fetchVersion = function () {
+  return App.fetchVersionFor(App.config.url);
 };
 
 App.errorText = function (err) {

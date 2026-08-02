@@ -246,7 +246,10 @@ phiên bản mới:
    *Chưa lưu thì bước sau sẽ triển khai lại đúng code cũ.*
 2. **Triển khai → Quản lý bản triển khai**
 3. Bấm **biểu tượng bút chì ✏** ở bản triển khai đang dùng
-   *(sửa bản đang có, đừng tạo bản mới — tạo mới sẽ ra URL khác)*
+   *(sửa bản đang có, đừng bấm "Bản triển khai mới" — cái đó tạo ra một **URL
+   khác**, và bạn sẽ phải dán URL mới vào app ở Cài đặt → Kết nối → Đổi.
+   Không mất dữ liệu, vì mọi bản triển khai của cùng một project đều đọc ghi
+   cùng một bảng tính.)*
 4. Ô **Phiên bản** đang là một con số → đổi thành **Phiên bản mới**
 5. Bấm **Triển khai**
 
