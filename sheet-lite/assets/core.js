@@ -91,7 +91,7 @@ App.unwrap = function (payload) {
 // check before it can identify itself, so this is the only way to find out
 // what is actually deployed. Resolves to null when the deployment is too old
 // to answer at all - which is itself the answer.
-App.EXPECTED_VERSION = "3.4";
+App.EXPECTED_VERSION = "3.5";
 
 App.fetchVersion = function () {
   return fetch(App.config.url + "?action=version")
@@ -203,9 +203,10 @@ App.tryParseAmount = function (text) {
   var raw = String(text || "").trim().toLowerCase().replace(/\s+/g, "");
   if (!raw) return null;
 
-  var trailingDigit = raw.match(/^(\d+)(tr|trieu|triệu)(\d)$/);
+  // Digits after the unit are the fractional part: 2tr5 = 2.5, 1tr25 = 1.25.
+  var trailingDigit = raw.match(/^(\d+)(tr|trieu|triệu)(\d{1,3})$/);
   if (trailingDigit) {
-    return Math.round((Number(trailingDigit[1]) + Number(trailingDigit[3]) / 10) * 1e6);
+    return Math.round((Number(trailingDigit[1]) + Number("0." + trailingDigit[3])) * 1e6);
   }
   var unitMatch = raw.match(/^(\d+(?:[.,]\d+)?)(k|nghin|nghìn|tr|trieu|triệu|ty|tỷ)$/);
   if (unitMatch) {

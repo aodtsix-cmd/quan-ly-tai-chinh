@@ -670,6 +670,44 @@ App.renderRecurringPlan = function (data) {
     "</form></section>";
 };
 
+// Review-before-save is the whole design. The model produces candidates; this
+// screen is where a human confirms them, and only then does anything get
+// written. Never let an image write straight into the ledger.
+App.renderImportCandidates = function (data, candidates) {
+  if (candidates.length === 0) {
+    return '<p class="notice notice-info">Không đọc được giao dịch nào trong ảnh. ' +
+      "Thử ảnh rõ hơn, hoặc nhập tay ở trên.</p>";
+  }
+
+  var rows = candidates.map(function (candidate, index) {
+    var kind = candidate.direction === "in" ? "income" : "expense";
+    return '<div class="bar-item" data-candidate="' + index + '">' +
+      '<label class="inline" style="justify-content:space-between">' +
+        '<span class="inline"><input type="checkbox" data-cand-use checked style="width:auto;min-height:0"> ' +
+        '<b class="num ' + (candidate.direction === "in" ? "amount-in" : "amount-out") + '">' +
+        (candidate.direction === "in" ? "+" : "−") + App.formatVnd(candidate.amount) + "</b></span>" +
+        '<span class="segmented" style="grid-auto-columns:auto">' +
+          '<input type="radio" name="dir-' + index + '" value="out" data-cand-dir id="cd-out-' + index + '"' +
+          (candidate.direction === "out" ? " checked" : "") + '><label for="cd-out-' + index + '">Chi</label>' +
+          '<input type="radio" name="dir-' + index + '" value="in" data-cand-dir id="cd-in-' + index + '"' +
+          (candidate.direction === "in" ? " checked" : "") + '><label for="cd-in-' + index + '">Thu</label>' +
+        "</span>" +
+      "</label>" +
+      '<input type="text" inputmode="numeric" data-cand-amount value="' + App.esc(candidate.amount) + '" aria-label="Số tiền">' +
+      '<input type="text" data-cand-note value="' + App.esc(candidate.note) + '" placeholder="Mô tả" aria-label="Mô tả">' +
+      '<select data-cand-account aria-label="Tài khoản">' + App.accountOptions(data.accounts, null, true) + "</select>" +
+      '<select data-cand-category aria-label="Danh mục">' + App.categoryOptions(data.categories, kind, candidate.category_id) + "</select>" +
+      '<input type="hidden" data-cand-ref value="' + App.esc(candidate.external_ref) + '">' +
+      "</div>";
+  }).join("");
+
+  return '<p class="small muted">Đọc được <b>' + candidates.length + "</b> giao dịch. " +
+    "Kiểm tra lại rồi bấm lưu — chưa có gì được ghi vào sổ cả.</p>" +
+    rows +
+    '<button type="button" id="save-import">Lưu các giao dịch đã chọn</button>' +
+    '<div id="import-save-message"></div>';
+};
+
 App.renderIncomePlan = function (data) {
   var sustainability = data.income_sustainability;
 

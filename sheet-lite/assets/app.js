@@ -451,6 +451,94 @@ App.submitTransaction = function () {
     });
 };
 
+// ------------------------------------------------------- import from image
+
+// Apps Script has a payload ceiling and a phone camera shot can be several
+// megabytes, so the image is downscaled in the browser before it is sent.
+// 1280px on the long edge is far more than enough to read a receipt.
+App.IMPORT_MAX_EDGE = 1280;
+
+App.fileToScaledBase64 = function (file) {
+  return new Promise(function (resolve, reject) {
+    var reader = new FileReader();
+    reader.onerror = function () { reject(new Error("Không đọc được file ảnh.")); };
+    reader.onload = function () {
+      var img = new Image();
+      img.onerror = function () { reject(new Error("File này không phải ảnh hợp lệ.")); };
+      img.onload = function () {
+        var scale = Math.min(1, App.IMPORT_MAX_EDGE / Math.max(img.width, img.height));
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        var dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+        resolve({ base64: dataUrl.split(",")[1], mimeType: "image/jpeg" });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
+App.analyzeImage = function (file) {
+  App.setHtml("#import-result", '<p class="notice notice-info">Đang đọc ảnh… việc này mất vài giây.</p>');
+
+  App.fileToScaledBase64(file)
+    .then(function (image) {
+      return App.apiPost("analyze_image", { image_base64: image.base64, mime_type: image.mimeType });
+    })
+    .then(function (result) {
+      if (!result.available) {
+        App.setHtml("#import-result", '<p class="notice notice-info">' +
+          (result.reason === "no_key"
+            ? "Tính năng này cần GEMINI_API_KEY trong Script Properties của bảng tính. Chưa có thì cứ nhập tay ở trên."
+            : "Chưa đọc được ảnh này. Thử ảnh rõ hơn, hoặc nhập tay ở trên.") + "</p>");
+        return;
+      }
+      App.importCandidates = result.candidates;
+      App.setHtml("#import-result", App.renderImportCandidates(App.state.data, result.candidates));
+    })
+    .catch(function (err) {
+      App.setHtml("#import-result", '<p class="notice notice-error">' + App.esc(App.errorText(err)) + "</p>");
+    });
+};
+
+App.saveImport = function () {
+  var rows = App.$$("#import-result [data-candidate]").filter(function (node) {
+    return node.querySelector("[data-cand-use]").checked;
+  }).map(function (node) {
+    return {
+      amount: node.querySelector("[data-cand-amount]").value.trim(),
+      direction: node.querySelector("[data-cand-dir]:checked").value,
+      note: node.querySelector("[data-cand-note]").value.trim(),
+      account_id: node.querySelector("[data-cand-account]").value,
+      category_id: node.querySelector("[data-cand-category]").value,
+      external_ref: node.querySelector("[data-cand-ref]").value,
+    };
+  });
+
+  if (rows.length === 0) {
+    App.notice("#import-save-message", "Chưa chọn giao dịch nào.", "info");
+    return;
+  }
+  App.$("#save-import").disabled = true;
+  App.notice("#import-save-message", "Đang lưu…", "info");
+
+  App.apiPost("import_transactions", { rows: rows })
+    .then(function (result) {
+      var parts = ["Đã lưu " + result.saved + " giao dịch."];
+      if (result.skipped_duplicate) parts.push(result.skipped_duplicate + " khoản đã nhập trước đó, bỏ qua.");
+      if (result.skipped_invalid) parts.push(result.skipped_invalid + " khoản không hợp lệ.");
+      App.setHtml("#import-result", '<p class="notice notice-ok">' + App.esc(parts.join(" ")) + "</p>");
+      App.$("#import-file").value = "";
+      return App.load({ quiet: true });
+    })
+    .catch(function (err) {
+      App.notice("#import-save-message", App.errorText(err), "error");
+      if (App.$("#save-import")) App.$("#save-import").disabled = false;
+    });
+};
+
 // -------------------------------------------------------------------- list
 
 App.filteredTransactions = function () {
@@ -819,7 +907,7 @@ document.addEventListener("click", function (event) {
   var target = event.target.closest("[data-tab], [data-goto], [data-plan-section], [data-filter], " +
     "[data-dismiss-alert], [data-delete-tx], [data-edit-tx], [data-hide-goal], [data-hide-recurring], " +
     "[data-delete-rule], [data-edit-account], [data-apply-suggestion], [data-period-shift], [data-close-dialog], " +
-    "[data-hide-income], [data-delete-event], [data-event-to-goal], #add-event-item, " +
+    "[data-hide-income], [data-delete-event], [data-event-to-goal], #add-event-item, #save-import, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
     "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, #theme-toggle");
   if (!target) return;
@@ -923,6 +1011,7 @@ document.addEventListener("click", function (event) {
     case "run-setup-seed": App.runSetup(true); break;
     case "theme-toggle": App.cycleTheme(); App.updateThemeButton(); break;
     case "retry-load": App.showLoading(); App.load(); break;
+    case "save-import": App.saveImport(); break;
     case "add-event-item": App.$("#event-items").insertAdjacentHTML("beforeend", App.eventItemRow("", false)); break;
     case "show-connection": App.showConnectionForm(); break;
     case "reset-connection":
@@ -1083,6 +1172,9 @@ document.addEventListener("input", function (event) {
 document.addEventListener("change", function (event) {
   if (event.target.name === "direction" && event.target.closest("#tx-form")) App.refreshAddForm();
   if (event.target.id === "event-template") App.resetEventItems(event.target.value);
+  if (event.target.id === "import-file" && event.target.files && event.target.files[0]) {
+    App.analyzeImage(event.target.files[0]);
+  }
 
   // Recording an actual amount on an event item saves straight away - it is a
   // single number, and a separate save button for each row would be friction.

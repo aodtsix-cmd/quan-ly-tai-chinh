@@ -72,7 +72,7 @@
 // redeploy actually took - forgetting to pick "Phiên bản: Mới" when
 // redeploying is the single easiest mistake to make with Apps Script, and it
 // fails silently: the old code just keeps serving.
-var VERSION = "3.4";
+var VERSION = "3.5";
 
 var SHEET_ACCOUNTS = "Accounts";
 var SHEET_CATEGORIES = "Categories";
@@ -90,7 +90,7 @@ var ACCOUNTS_HEADER = ["id", "name", "type", "balance", "is_active"];
 // stability: "fixed" | "variable" | "" - drives budget suggestions and the
 // financial-rigidity metric.
 var CATEGORIES_HEADER = ["id", "name", "kind", "parent_id", "necessity", "stability"];
-var TRANSACTIONS_HEADER = ["id", "occurred_at", "amount", "direction", "account_id", "category_id", "description", "source"];
+var TRANSACTIONS_HEADER = ["id", "occurred_at", "amount", "direction", "account_id", "category_id", "description", "source", "external_ref"];
 var PERIOD_BUDGETS_HEADER = ["id", "category_id", "period_id", "amount"];
 var GOALS_HEADER = ["id", "name", "goal_type", "target_amount", "deadline", "account_id", "created_at", "is_active"];
 var RECURRING_HEADER = ["id", "name", "amount", "direction", "account_id", "category_id", "frequency", "next_due", "is_active"];
@@ -360,6 +360,8 @@ function handle_(e, method) {
       delete_event_plan: actionDeleteEventPlan_,
       update_event_item: actionUpdateEventItem_,
       link_event_to_goal: actionLinkEventToGoal_,
+      analyze_image: actionAnalyzeImage_,
+      import_transactions: actionImportTransactions_,
     };
 
     var action = params.action;
@@ -659,13 +661,15 @@ function parseAmountVnd_(raw) {
   var text = String(raw).trim().toLowerCase().replace(/\s+/g, "");
   if (!text) throw new Error("Chua nhap so tien.");
 
-  // "2tr5" == 2,5 trieu - a real everyday Vietnamese shorthand where the
-  // digit after the unit means tenths, not a separate number.
-  var trailingDigitMatch = text.match(/^(\d+)(tr|trieu|triệu)(\d)$/);
+  // "2tr5" == 2,5 trieu. Everyday Vietnamese shorthand: the digits after the
+  // unit are the FRACTIONAL part, not a separate number - so "2tr5" is 2.5,
+  // "1tr25" is 1.25 and "1tr250" is 1.250. Up to 3 digits, which is as far as
+  // the thousand-dong place goes.
+  var trailingDigitMatch = text.match(/^(\d+)(tr|trieu|triệu)(\d{1,3})$/);
   if (trailingDigitMatch) {
     var whole = Number(trailingDigitMatch[1]);
-    var tenths = Number(trailingDigitMatch[3]);
-    return Math.round((whole + tenths / 10) * 1e6);
+    var fraction = Number("0." + trailingDigitMatch[3]);
+    return Math.round((whole + fraction) * 1e6);
   }
 
   var unitMatch = text.match(/^(\d+(?:[.,]\d+)?)(k|nghin|nghìn|tr|trieu|triệu|ty|tỷ)$/);
@@ -887,7 +891,7 @@ function generateDueRecurring_(asOf) {
     while (due <= todayStr && fired < RECURRING_CATCHUP_LIMIT) {
       txSheet.appendRow([
         nextTxId++, due + " 00:00:00", amount, direction,
-        r.account_id, r.category_id || "", r.name || "Khoản định kỳ", "recurring",
+        r.account_id, r.category_id || "", r.name || "Khoản định kỳ", "recurring", "",
       ]);
       balanceDeltas[r.account_id] = (balanceDeltas[r.account_id] || 0) + (direction === "in" ? amount : -amount);
       due = advanceDueDate_(due, r.frequency);
@@ -2110,7 +2114,7 @@ function actionAddTransaction_(params) {
 
   var sheet = getSheet_(SHEET_TRANSACTIONS);
   var id = nextId_(sheet, TRANSACTIONS_HEADER);
-  sheet.appendRow([id, occurredAt, amount, direction, accountId, categoryId, description, "manual"]);
+  sheet.appendRow([id, occurredAt, amount, direction, accountId, categoryId, description, "manual", ""]);
   applyBalanceDelta_(accountId, direction === "in" ? amount : -amount);
   return { id: id, amount: amount, category_id: categoryId, auto_categorised: autoCategorised };
 }
@@ -2189,8 +2193,8 @@ function actionAddTransfer_(params) {
   var description = params.description || "";
 
   var outId = nextId_(sheet, TRANSACTIONS_HEADER);
-  sheet.appendRow([outId, occurredAt, amount, "out", fromId, transferCategory.id, description, "manual"]);
-  sheet.appendRow([outId + 1, occurredAt, amount, "in", toId, transferCategory.id, description, "manual"]);
+  sheet.appendRow([outId, occurredAt, amount, "out", fromId, transferCategory.id, description, "manual", ""]);
+  sheet.appendRow([outId + 1, occurredAt, amount, "in", toId, transferCategory.id, description, "manual", ""]);
 
   applyBalanceDelta_(fromId, -amount);
   applyBalanceDelta_(toId, amount);
@@ -2233,18 +2237,31 @@ function actionExportCsv_(params) {
 // these never throw to the client, they return {available: false, reason}
 // so the page simply hides the panel and everything else keeps working.
 
+// An alias, not a pinned name like "gemini-2.5-flash". A pinned name already
+// broke this project once at runtime ("no longer available to new users") -
+// Gemini model names churn fast enough that hardcoding a dated one is a real
+// reliability risk.
 var GEMINI_MODEL = "gemini-flash-latest";
 
-function callGemini_(prompt) {
+function callGemini_(prompt, options) {
+  var opts = options || {};
   var apiKey = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
   if (!apiKey) return { available: false, reason: "no_key" };
   try {
+    var parts = [{ text: prompt }];
+    if (opts.image) {
+      // Gemini's v1beta shape for an inline image alongside the prompt.
+      parts.push({ inline_data: { mime_type: opts.image.mimeType, data: opts.image.base64 } });
+    }
+    var body = { contents: [{ parts: parts }] };
+    if (opts.jsonOnly) body.generationConfig = { response_mime_type: "application/json" };
+
     var response = UrlFetchApp.fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + apiKey,
       {
         method: "post",
         contentType: "application/json",
-        payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        payload: JSON.stringify(body),
         muteHttpExceptions: true,
       }
     );
@@ -2346,4 +2363,144 @@ function actionGetAiAdvice_(params) {
   var result = callGemini_(AI_GROUND_RULES + instruction + " Dữ liệu (JSON): " + context);
   if (!result.available) return result;
   return { available: true, advice: result.text };
+}
+
+// ------------------------------------------------- import from a screenshot
+//
+// Mirrors the main Flask app's /import flow, including its most important
+// safety property: NOTHING is written to the sheet from an image. The model
+// only ever produces *candidates*; the user reviews and confirms them, and a
+// separate action does the actual writing. Keep it that way.
+//
+// Unverified against a real screenshot as of this writing - no API key was
+// available while building it - so the failure modes matter more than usual:
+// a bad read costs the user an edit, never a wrong row in the ledger.
+
+function actionAnalyzeImage_(params) {
+  var base64 = String(params.image_base64 || "");
+  if (!base64) throw new Error("Chua co anh.");
+  var mimeType = String(params.mime_type || "image/jpeg");
+
+  var categories = rowsOfOptional_(SHEET_CATEGORIES, CATEGORIES_HEADER);
+  var expenseList = categories.filter(function (c) { return c.kind === "expense"; })
+    .map(function (c) { return c.id + "=" + c.name; }).join(", ");
+  var incomeList = categories.filter(function (c) { return c.kind === "income"; })
+    .map(function (c) { return c.id + "=" + c.name; }).join(", ");
+
+  var prompt =
+    "Đây là ảnh chụp màn hình một giao dịch ngân hàng hoặc ví điện tử Việt Nam " +
+    "(MoMo, MB Bank, Techcombank, ZaloPay...). Đọc ảnh và trích ra CÁC GIAO DỊCH THẬT trong đó.\n\n" +
+    "Quy tắc:\n" +
+    "- amount: số nguyên VND, LUÔN DƯƠNG, không dấu chấm phẩy.\n" +
+    "- direction: \"out\" nếu là tiền đi ra (chuyển tiền, thanh toán, trừ tiền), \"in\" nếu tiền vào.\n" +
+    "- note: lời nhắn/nội dung chuyển khoản do người dùng tự viết. KHÔNG lấy mã giao dịch, " +
+    "số tài khoản, hay tên ngân hàng. Nếu không có lời nhắn thì để chuỗi rỗng.\n" +
+    "- BỎ QUA dòng số dư (\"số dư\", \"available balance\") — đó không phải giao dịch.\n" +
+    "- Nếu cùng một số tiền xuất hiện nhiều lần cho cùng một giao dịch, chỉ trả về MỘT lần.\n" +
+    "- category_id: đoán theo Ý NGHĨA của lời nhắn. Nếu không chắc, để null.\n" +
+    "  Danh mục chi: " + expenseList + "\n" +
+    "  Danh mục thu: " + incomeList + "\n\n" +
+    "Trả về DUY NHẤT một mảng JSON, không kèm giải thích:\n" +
+    '[{"amount": 1250000, "direction": "out", "note": "an trua highlands", "category_id": 8}]';
+
+  var result = callGemini_(prompt, { image: { base64: base64, mimeType: mimeType }, jsonOnly: true });
+  if (!result.available) return result;
+
+  var parsed;
+  try {
+    // Models sometimes wrap JSON in a ```json fence even when asked not to.
+    var text = result.text.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+    parsed = JSON.parse(text);
+  } catch (err) {
+    return { available: false, reason: "invalid_response" };
+  }
+  if (!parsed || !parsed.length) return { available: true, candidates: [] };
+
+  var validCategoryIds = {};
+  categories.forEach(function (c) { validCategoryIds[String(c.id)] = true; });
+
+  var seen = {};
+  var candidates = [];
+  parsed.forEach(function (row) {
+    var amount = Math.abs(Math.round(Number(row.amount) || 0));
+    if (!amount) return;
+    var direction = row.direction === "in" ? "in" : "out";
+    // Belt and braces: the prompt already asks the model not to double-count,
+    // but a restated amount slipping through would silently double a row.
+    var key = amount + "|" + direction;
+    if (seen[key]) return;
+    seen[key] = true;
+
+    // Never trust a model-generated foreign key, even a low-stakes one.
+    var categoryId = validCategoryIds[String(row.category_id)] ? row.category_id : "";
+    candidates.push({
+      amount: amount,
+      direction: direction,
+      note: String(row.note || "").trim(),
+      category_id: categoryId,
+      external_ref: makeExternalRef_(amount, direction, row.note),
+    });
+  });
+  return { available: true, candidates: candidates };
+}
+
+// Re-uploading the same screenshot must not double-record it. There is no bank
+// reference number to key on, so the key is a hash of what the user actually
+// sees: amount, direction, and the note they wrote.
+function makeExternalRef_(amount, direction, note) {
+  var raw = amount + "|" + direction + "|" + String(note || "").trim().toLowerCase();
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, raw, Utilities.Charset.UTF_8);
+  var hex = "";
+  for (var i = 0; i < bytes.length; i++) {
+    hex += ("0" + (bytes[i] & 0xFF).toString(16)).slice(-2);
+  }
+  return hex.slice(0, 16);
+}
+
+// The only thing that writes imported rows, and it runs only on what the user
+// confirmed. Each row is independent: one duplicate or one bad amount must not
+// take the rest of the batch down with it.
+function actionImportTransactions_(params) {
+  var rows = params.rows;
+  if (typeof rows === "string") {
+    try { rows = JSON.parse(rows); } catch (err) { rows = []; }
+  }
+  if (!rows || !rows.length) throw new Error("Khong co giao dich nao duoc chon.");
+
+  var sheet = getSheet_(SHEET_TRANSACTIONS);
+  var existing = {};
+  sheetRowsAsObjects_(sheet, TRANSACTIONS_HEADER).forEach(function (t) {
+    if (t.external_ref) existing[String(t.external_ref)] = true;
+  });
+
+  var nextTxId = nextId_(sheet, TRANSACTIONS_HEADER);
+  var saved = 0, skippedDuplicate = 0, skippedInvalid = 0;
+  var deltas = {};
+
+  rows.forEach(function (row) {
+    var amount;
+    try {
+      amount = parseAmountVnd_(row.amount);
+    } catch (err) {
+      skippedInvalid++;
+      return;
+    }
+    var direction = row.direction === "in" ? "in" : (row.direction === "out" ? "out" : null);
+    if (!amount || amount <= 0 || !direction || !row.account_id) { skippedInvalid++; return; }
+
+    var ref = row.external_ref || makeExternalRef_(amount, direction, row.note);
+    if (existing[String(ref)]) { skippedDuplicate++; return; }
+    existing[String(ref)] = true;
+
+    var occurredAt = resolveOccurredAt_(row.occurred_at);
+    sheet.appendRow([nextTxId++, occurredAt, amount, direction, row.account_id,
+      row.category_id || "", row.note || "", "ocr", ref]);
+    deltas[row.account_id] = (deltas[row.account_id] || 0) + (direction === "in" ? amount : -amount);
+    saved++;
+  });
+
+  for (var accountId in deltas) {
+    if (deltas.hasOwnProperty(accountId)) applyBalanceDelta_(accountId, deltas[accountId]);
+  }
+  return { saved: saved, skipped_duplicate: skippedDuplicate, skipped_invalid: skippedInvalid };
 }

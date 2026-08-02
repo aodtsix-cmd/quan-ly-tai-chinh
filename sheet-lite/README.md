@@ -33,7 +33,7 @@ bấm **Chạy**. Google sẽ hỏi cấp quyền lần đầu — chọn tài k
 "Nâng cao" → "Đi tới ... (không an toàn)" → "Cho phép". Đây là cảnh báo mặc
 định cho mọi script tự viết; script này chỉ đọc/ghi đúng bảng tính đang mở.
 
-Nó sẽ tạo đủ 7 tab, nạp sẵn tài khoản + cây danh mục tiếng Việt, đặt múi giờ,
+Nó sẽ tạo đủ 10 tab, nạp sẵn tài khoản + cây danh mục tiếng Việt, đặt múi giờ,
 và **hiện ra MÃ KẾT NỐI** — chép mã đó lại.
 
 > Sau này bạn cũng có thể chạy lại từ menu **Sổ tài chính** ngay trên thanh
@@ -98,7 +98,7 @@ Cùng chỗ đó, `PERIOD_START_DAY` đổi được ngày bắt đầu kỳ (m�
 | Tab | Nội dung |
 | --- | --- |
 | **Nhà** | Điểm sức khỏe tài chính, tiền có thể dùng, dải kỳ (so nhịp tiêu với nhịp thời gian), cảnh báo rủi ro, 7 chỉ số thành phần, nhắc ngân sách, mục tiêu, sự kiện sắp tới, cân đối 50/30/20, xu hướng tiết kiệm, số dư tài khoản, nhận xét AI hằng ngày. |
-| **Nhập** | Ghi chi / thu / chuyển khoản nội bộ. Hiểu cách viết tắt `500k`, `1tr`, `2tr5`. Ghi lùi ngày được. Khoản chi từ 1 triệu trở lên sẽ hỏi có muốn mô phỏng trước không. |
+| **Nhập** | Ghi chi / thu / chuyển khoản nội bộ. Hiểu cách viết tắt `500k`, `1tr`, `2tr5`, `1tr25`. Ghi lùi ngày được. Khoản chi từ 1 triệu trở lên sẽ hỏi có muốn mô phỏng trước không. **Nhập từ ảnh chụp màn hình** biên lai. |
 | **Sổ** | Toàn bộ giao dịch, nhóm theo ngày, tìm kiếm, lọc theo loại, sửa và xóa. |
 | **Kế hoạch** | Ngân sách theo kỳ (có gợi ý từ lịch sử), mục tiêu tài chính, **kế hoạch sự kiện**, **nguồn thu + độ tin cậy**, khoản định kỳ, dự báo dòng tiền 6 kỳ, mô phỏng khoản chi lớn. |
 | **Cài đặt** | Kết nối, kiểm tra thiết lập, tài khoản, danh mục, luật tự động phân loại, tải CSV. |
@@ -124,6 +124,12 @@ kỳ diễn ra, thay vì ập đến bất ngờ. Sự kiện đủ lớn và đ
 thành mục tiêu tích lũy (tạo xong là hai bên tự gắn với nhau, không hỏi lại).
 Mẫu có sẵn chỉ gợi ý **tên khoản mục**, không gợi ý giá.
 
+**Nhập từ ảnh**: chụp màn hình biên lai MoMo/ngân hàng, app đọc ra số tiền, lời
+nhắn và đoán danh mục. **Không có gì được ghi thẳng vào sổ** — bạn xem lại, sửa
+nếu cần, rồi mới bấm lưu. Tải lại đúng ảnh đó lần nữa sẽ bị bỏ qua thay vì ghi
+trùng. Cần `GEMINI_API_KEY`; chưa có thì phần này báo rõ và bạn nhập tay như
+bình thường.
+
 **AI** chỉ diễn giải những con số đã tính sẵn bằng JavaScript, không bao giờ tự
 tính ra số mới. Không có `GEMINI_API_KEY` thì các phần AI tự ẩn đi, mọi thứ còn
 lại chạy bình thường.
@@ -139,7 +145,7 @@ sửa dữ liệu trực tiếp trong Sheet.
 | --- | --- |
 | `Accounts` | `id, name, type, balance, is_active` |
 | `Categories` | `id, name, kind, parent_id, necessity, stability` |
-| `Transactions` | `id, occurred_at, amount, direction, account_id, category_id, description, source` |
+| `Transactions` | `id, occurred_at, amount, direction, account_id, category_id, description, source, external_ref` |
 | `PeriodBudgets` | `id, category_id, period_id, amount` |
 | `Goals` | `id, name, goal_type, target_amount, deadline, account_id, created_at, is_active` |
 | `Recurring` | `id, name, amount, direction, account_id, category_id, frequency, next_due, is_active` |

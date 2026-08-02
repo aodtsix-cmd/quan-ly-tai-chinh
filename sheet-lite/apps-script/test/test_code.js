@@ -20,7 +20,7 @@ function freshSheets() {
   return {
     Accounts: [["id", "name", "type", "balance", "is_active"]],
     Categories: [["id", "name", "kind", "parent_id", "necessity", "stability"]],
-    Transactions: [["id", "occurred_at", "amount", "direction", "account_id", "category_id", "description", "source"]],
+    Transactions: [["id", "occurred_at", "amount", "direction", "account_id", "category_id", "description", "source", "external_ref"]],
     PeriodBudgets: [["id", "category_id", "period_id", "amount"]],
     Goals: [["id", "name", "goal_type", "target_amount", "deadline", "account_id", "created_at", "is_active"]],
     Recurring: [["id", "name", "amount", "direction", "account_id", "category_id", "frequency", "next_due", "is_active"]],
@@ -114,8 +114,21 @@ global.Utilities = {
   },
 };
 global.Session = { getScriptTimeZone: () => "Asia/Ho_Chi_Minh" };
+global.Utilities.DigestAlgorithm = { MD5: "MD5" };
+global.Utilities.Charset = { UTF_8: "UTF_8" };
+global.Utilities.computeDigest = (algo, text) => {
+  // Deterministic stand-in for the real digest: the tests only care that the
+  // same input yields the same ref and different inputs do not collide.
+  const out = [];
+  let h = 0;
+  for (let i = 0; i < text.length; i++) { h = (h * 31 + text.charCodeAt(i)) >>> 0; }
+  for (let i = 0; i < 16; i++) { h = (h * 1103515245 + 12345) >>> 0; out.push((h >>> 16) & 0xFF); }
+  return out;
+};
+let lastGeminiRequest = null;
 global.UrlFetchApp = {
   fetch: (url, options) => {
+    lastGeminiRequest = { url: url, body: JSON.parse(options.payload) };
     if (fakeGeminiResponse === "network-error") throw new Error("network down");
     return {
       getResponseCode: () => (fakeGeminiResponse && fakeGeminiResponse.code) || 200,
@@ -150,6 +163,7 @@ function test(name, fn) {
   scriptProperties = { APP_TOKEN: "test-token" };
   spreadsheetTimeZone = "Etc/GMT";
   uiAlerts = [];
+  lastGeminiRequest = null;
   fakeGeminiResponse = null;
   try {
     fn();
@@ -174,6 +188,10 @@ test("parseAmountVnd_ handles Vietnamese shorthand", () => {
   assert.strictEqual(parseAmountVnd_("1tr"), 1000000);
   assert.strictEqual(parseAmountVnd_("1.5tr"), 1500000);
   assert.strictEqual(parseAmountVnd_("2tr5"), 2500000);
+  // Digits after the unit are the fractional part, however many there are.
+  assert.strictEqual(parseAmountVnd_("1tr25"), 1250000);
+  assert.strictEqual(parseAmountVnd_("1tr250"), 1250000);
+  assert.strictEqual(parseAmountVnd_("3tr05"), 3050000);
   assert.strictEqual(parseAmountVnd_("2ty"), 2000000000);
 });
 
@@ -1179,6 +1197,115 @@ test("event templates suggest item names but never a price", () => {
       assert.strictEqual(typeof item, "string", "an item is a name only - a suggested price would be invented");
     });
   });
+});
+
+// -------------------------------------------------- import from a screenshot
+
+function geminiReturns(payload) {
+  fakeGeminiResponse = { code: 200, body: { candidates: [{ content: { parts: [{ text: payload }] } }] } };
+}
+
+test("analyze_image sends the image inline and asks for JSON back", () => {
+  scriptProperties.GEMINI_API_KEY = "fake-key";
+  sheets.Categories.push([1, "Ca phe", "expense", "", "optional", "variable"]);
+  geminiReturns("[]");
+  actionAnalyzeImage_({ image_base64: "QUJD", mime_type: "image/png" });
+
+  const parts = lastGeminiRequest.body.contents[0].parts;
+  assert.strictEqual(parts.length, 2, "prompt + image");
+  assert.deepStrictEqual(parts[1].inline_data, { mime_type: "image/png", data: "QUJD" });
+  assert.strictEqual(lastGeminiRequest.body.generationConfig.response_mime_type, "application/json");
+  assert.ok(parts[0].text.indexOf("1=Ca phe") !== -1, "the category tree must be in the prompt");
+});
+
+test("analyze_image normalises amounts and rejects a category the model invented", () => {
+  scriptProperties.GEMINI_API_KEY = "fake-key";
+  sheets.Categories.push([1, "Ca phe", "expense", "", "optional", "variable"]);
+  geminiReturns(JSON.stringify([
+    { amount: -1250000, direction: "out", note: "an trua highlands", category_id: 1 },
+    { amount: 50000, direction: "out", note: "gui xe", category_id: 999 },
+  ]));
+  const candidates = actionAnalyzeImage_({ image_base64: "x" }).candidates;
+  assert.strictEqual(candidates[0].amount, 1250000, "a negative amount is stored positive");
+  assert.strictEqual(candidates[0].category_id, 1);
+  assert.strictEqual(candidates[1].category_id, "", "an unknown category id must not be trusted");
+});
+
+test("analyze_image drops a restated duplicate of the same transaction", () => {
+  scriptProperties.GEMINI_API_KEY = "fake-key";
+  geminiReturns(JSON.stringify([
+    { amount: 100000, direction: "out", note: "com" },
+    { amount: 100000, direction: "out", note: "com" },
+    { amount: 100000, direction: "in", note: "hoan tien" },
+  ]));
+  const candidates = actionAnalyzeImage_({ image_base64: "x" }).candidates;
+  assert.strictEqual(candidates.length, 2, "same amount+direction collapses; the in leg survives");
+});
+
+test("analyze_image copes with the model wrapping JSON in a code fence", () => {
+  scriptProperties.GEMINI_API_KEY = "fake-key";
+  geminiReturns('```json\n[{"amount":75000,"direction":"out","note":"tra sua"}]\n```');
+  assert.strictEqual(actionAnalyzeImage_({ image_base64: "x" }).candidates[0].amount, 75000);
+});
+
+test("analyze_image degrades gracefully on unparseable output and on no key", () => {
+  scriptProperties.GEMINI_API_KEY = "fake-key";
+  geminiReturns("xin loi toi khong doc duoc anh");
+  assert.strictEqual(actionAnalyzeImage_({ image_base64: "x" }).reason, "invalid_response");
+  delete scriptProperties.GEMINI_API_KEY;
+  assert.strictEqual(actionAnalyzeImage_({ image_base64: "x" }).reason, "no_key");
+});
+
+test("analyze_image NEVER writes a transaction by itself", () => {
+  scriptProperties.GEMINI_API_KEY = "fake-key";
+  sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  geminiReturns(JSON.stringify([{ amount: 500000, direction: "out", note: "test" }]));
+  actionAnalyzeImage_({ image_base64: "x" });
+  assert.strictEqual(sheets.Transactions.length, 1, "only the header row - review comes first");
+  assert.strictEqual(sheets.Accounts.find((r) => r[0] === 1)[3], 1000000);
+});
+
+test("import_transactions saves confirmed rows and updates the balance", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 5000000, true]);
+  const result = actionImportTransactions_({ rows: [
+    { amount: "1tr25", direction: "out", note: "an trua", account_id: 1, category_id: "" },
+    { amount: "200000", direction: "in", note: "hoan tien", account_id: 1 },
+  ] });
+  assert.strictEqual(result.saved, 2);
+  // 5,000,000 - 1,250,000 ("1tr25") + 200,000
+  assert.strictEqual(sheets.Accounts.find((r) => r[0] === 1)[3], 3950000);
+  assert.strictEqual(sheets.Transactions[1][7], "ocr", "imported rows are tagged source=ocr");
+});
+
+test("import_transactions skips a row already imported from the same screenshot", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 5000000, true]);
+  const row = { amount: "500000", direction: "out", note: "ca phe", account_id: 1 };
+  assert.strictEqual(actionImportTransactions_({ rows: [row] }).saved, 1);
+
+  const second = actionImportTransactions_({ rows: [row] });
+  assert.strictEqual(second.saved, 0);
+  assert.strictEqual(second.skipped_duplicate, 1);
+  assert.strictEqual(sheets.Accounts.find((r) => r[0] === 1)[3], 4500000, "balance charged once only");
+});
+
+test("import_transactions keeps going when one row in the batch is unusable", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 5000000, true]);
+  const result = actionImportTransactions_({ rows: [
+    { amount: "100000", direction: "out", note: "ok", account_id: 1 },
+    { amount: "ba tram nghin", direction: "out", note: "hong", account_id: 1 },
+    { amount: "50000", direction: "out", note: "khong co tai khoan" },
+    { amount: "200000", direction: "out", note: "ok 2", account_id: 1 },
+  ] });
+  assert.strictEqual(result.saved, 2);
+  assert.strictEqual(result.skipped_invalid, 2);
+  assert.strictEqual(sheets.Accounts.find((r) => r[0] === 1)[3], 4700000);
+});
+
+test("makeExternalRef_ is stable for the same transaction and differs for others", () => {
+  const a = makeExternalRef_(100000, "out", "An trua");
+  assert.strictEqual(a, makeExternalRef_(100000, "out", "  an TRUA  "), "case and spacing must not matter");
+  assert.notStrictEqual(a, makeExternalRef_(100001, "out", "An trua"));
+  assert.notStrictEqual(a, makeExternalRef_(100000, "in", "An trua"));
 });
 
 console.log(`\n${passed} test(s) passed.`);
