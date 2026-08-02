@@ -88,14 +88,14 @@ App.computeScenarios = function (data, itemAmount, maintenance) {
   // trajectory is already breaking without the purchase, "red" on every
   // option means something quite different from the purchase causing it.
   var scenarios = [
-    { key: "none", label: "Không mua", projection: baseline },
-    { key: "now", label: "Trả hết ngay", projection: project(function (i) { return (i === 0 ? itemAmount : 0) + maintenance; }) },
+    { key: "none", label: App.t("plan.simulate.scenario.none"), projection: baseline },
+    { key: "now", label: App.t("plan.simulate.scenario.now"), projection: project(function (i) { return (i === 0 ? itemAmount : 0) + maintenance; }) },
   ];
 
   App.INSTALLMENT_OPTIONS.forEach(function (n) {
     scenarios.push({
       key: "installment_" + n,
-      label: "Trả góp " + n + " kỳ",
+      label: App.t("plan.simulate.scenario.installment", { n: n }),
       projection: project(function (i) { return (i < n ? itemAmount / n : 0) + maintenance; }),
     });
   });
@@ -103,7 +103,7 @@ App.computeScenarios = function (data, itemAmount, maintenance) {
   App.DELAY_OPTIONS.forEach(function (n) {
     scenarios.push({
       key: "delay_" + n,
-      label: "Hoãn " + n + " kỳ rồi trả hết",
+      label: App.t("plan.simulate.scenario.delay", { n: n }),
       projection: project(function (i) { return (i === n ? itemAmount : 0) + (i >= n ? maintenance : 0); }),
     });
   });
@@ -151,10 +151,12 @@ App.notice = function (selector, text, kind) {
 // seconds while Apps Script cold-started, and every call after it was under a
 // second. A silent wait that long is indistinguishable from a hang, so the
 // message escalates instead of sitting still.
+// Keys, not literal text: App.showLoading() calls App.t() on these at paint
+// time, so the escalating hints come out in whichever language is active.
 App.LOADING_HINTS = [
-  [0, "Lần đầu trong ngày thường mất vài giây."],
-  [6000, "Vẫn đang chờ Google phản hồi. Lần gọi đầu sau khi triển khai có thể mất tới một phút — đây là bình thường, không phải lỗi."],
-  [45000, "Lâu hơn thường lệ. Nếu quá 2 phút, kiểm tra bản triển khai có đang mở cho “Bất kỳ ai có đường liên kết” không."],
+  [0, "loading.hint0"],
+  [6000, "loading.hint1"],
+  [45000, "loading.hint2"],
 ];
 
 App.clearLoadingTimers = function () {
@@ -164,12 +166,12 @@ App.clearLoadingTimers = function () {
 
 App.showLoading = function () {
   App.clearLoadingTimers();
-  function paint(hint) {
+  function paint(hintKey) {
     App.setHtml("#view-home",
       '<section class="card">' +
-        '<span class="eyebrow">Đang tải</span>' +
-        "<h1>Đang mở sổ từ Google Sheet…</h1>" +
-        '<p class="small muted">' + App.esc(hint) + "</p>" +
+        '<span class="eyebrow">' + App.esc(App.t("loading.eyebrow")) + "</span>" +
+        "<h1>" + App.esc(App.t("loading.title")) + "</h1>" +
+        '<p class="small muted">' + App.esc(App.t(hintKey)) + "</p>" +
       "</section>");
   }
   paint(App.LOADING_HINTS[0][1]);
@@ -188,12 +190,12 @@ App.showFatal = function (title, messageHtml) {
   App.state.data = null;
   App.state.fatalHtml =
     '<section class="card">' +
-      '<span class="eyebrow">Không mở được sổ</span>' +
+      '<span class="eyebrow">' + App.esc(App.t("fatal.eyebrow")) + "</span>" +
       "<h1>" + App.esc(title) + "</h1>" +
       '<div class="small muted stack-tight">' + messageHtml + "</div>" +
       '<div class="button-row">' +
-        '<button type="button" id="retry-load">Thử lại</button>' +
-        '<button type="button" class="secondary" id="show-connection">Đổi kết nối</button>' +
+        '<button type="button" id="retry-load">' + App.esc(App.t("fatal.retry")) + "</button>" +
+        '<button type="button" class="secondary" id="show-connection">' + App.esc(App.t("fatal.change_connection")) + "</button>" +
       "</div>" +
     "</section>";
   App.switchTab("home");
@@ -216,21 +218,15 @@ App.load = function (options) {
         // real gap instead of guessing. This is the whole reason the version
         // action skips the token check.
         App.fetchVersion().then(function (deployed) {
-          App.showFatal("Bảng tính đang chạy mã cũ hơn giao diện",
-            "<p><b>Điểm mấu chốt:</b> Apps Script phục vụ <u>phiên bản đã triển khai</u>, " +
-            "không phải code đang nằm trong trình soạn thảo. Dán code mới vào mà không tạo " +
-            "phiên bản mới thì URL vẫn chạy code cũ, và nó không báo lỗi gì cả.</p>" +
-            "<p>Đang chạy: <b>" + (deployed ? "v" + App.esc(deployed) : "bản cũ hơn v3.4") +
-            "</b> · Giao diện cần: <b>v" + App.EXPECTED_VERSION + "</b></p>" +
-            "<p>Trong Apps Script, làm đúng thứ tự này:</p>" +
-            "<p>1. Dán <code>Code.gs</code> mới nhất, bấm <b>lưu</b> (biểu tượng đĩa mềm 💾). " +
-            "Chưa lưu thì bước sau sẽ triển khai lại đúng code cũ.<br>" +
-            "2. <b>Triển khai → Quản lý bản triển khai</b><br>" +
-            "3. Bấm <b>biểu tượng bút chì ✏</b> ở bản triển khai đang dùng<br>" +
-            "4. Ô <b>Phiên bản</b> đang là một con số — đổi thành <b>Phiên bản mới</b><br>" +
-            "5. Bấm <b>Triển khai</b>, rồi quay lại đây bấm <b>Thử lại</b></p>" +
-            "<p>Nếu bạn có nhiều bảng tính, hãy chắc chắn đã dán code vào đúng cái mà URL này trỏ tới — " +
-            "không thì bấm “Đổi kết nối”.</p>");
+          App.showFatal(App.t("fatal.old_version_title"),
+            App.t("fatal.old_version.p1") +
+            App.t("fatal.old_version.p2", {
+              deployed: deployed ? "v" + App.esc(deployed) : App.t("fatal.old_version.deployed_unknown"),
+              expected: App.EXPECTED_VERSION,
+            }) +
+            App.t("fatal.old_version.p3") +
+            App.t("fatal.old_version.steps") +
+            App.t("fatal.old_version.p5"));
         });
         return null;
       }
@@ -241,14 +237,14 @@ App.load = function (options) {
       App.updateTopbar();
       if (!opts.quiet && data.recurring_generated > 0) {
         window.setTimeout(function () {
-          App.notice("#add-message", "Đã tự ghi " + data.recurring_generated + " khoản định kỳ đến hạn.", "info");
+          App.notice("#add-message", App.t("fatal.recurring_generated", { n: data.recurring_generated }), "info");
         }, 0);
       }
       return data;
     })
     .catch(function (err) {
       App.state.loading = false;
-      App.showFatal("Chưa tải được dữ liệu", "<p>" + App.esc(App.errorText(err)) + "</p>");
+      App.showFatal(App.t("fatal.load_failed_title"), "<p>" + App.esc(App.errorText(err)) + "</p>");
     });
 };
 
@@ -262,7 +258,7 @@ App.updateTopbar = function () {
   App.setHtml(
     "#period-chip",
     '<b class="num">' + App.esc(App.formatPeriodRange(data.period)) + "</b>" +
-    '<i class="tiny faint">còn ' + data.period.days_remaining + " ngày</i>"
+    '<i class="tiny faint">' + App.esc(App.t("metric.forecast.note", { days: data.period.days_remaining })) + "</i>"
   );
 };
 
@@ -326,10 +322,8 @@ App.renderCurrentTab = function () {
     else if (App.state.tab === "plan") App.renderPlan();
     else if (App.state.tab === "settings") App.renderSettingsTab();
   } catch (err) {
-    App.showFatal("Giao diện gặp lỗi khi hiển thị dữ liệu",
-      "<p>" + App.esc(String((err && err.message) || err)) + "</p>" +
-      "<p>Thường là do mã <code>Code.gs</code> trên Google Sheet cũ hơn trang này. " +
-      "Dán lại bản mới rồi triển khai với <b>Phiên bản: Mới</b>.</p>");
+    App.showFatal(App.t("fatal.render_error_title"),
+      "<p>" + App.esc(String((err && err.message) || err)) + "</p>" + App.t("fatal.render_error_hint"));
   }
 };
 
@@ -362,13 +356,13 @@ App.loadDailySummary = function () {
   // Apps Script calls are slow enough that re-fetching on every tab switch
   // would be felt.
   if (App.aiSummaryCache && App.aiSummaryLoadedFor === today) {
-    panel.innerHTML = '<span class="eyebrow">Nhận xét hôm nay</span><p>' + App.esc(App.aiSummaryCache) + "</p>";
+    panel.innerHTML = '<span class="eyebrow">' + App.esc(App.t("home.ai_daily.eyebrow")) + "</span><p>" + App.esc(App.aiSummaryCache) + "</p>";
     panel.classList.remove("hidden");
     return;
   }
   if (App.aiSummaryLoadedFor === today) return; // tried already, unavailable
 
-  panel.innerHTML = '<span class="eyebrow">Nhận xét hôm nay</span><p class="muted">Đang đọc số liệu…</p>';
+  panel.innerHTML = '<span class="eyebrow">' + App.esc(App.t("home.ai_daily.eyebrow")) + '</span><p class="muted">' + App.esc(App.t("home.ai_daily.loading")) + "</p>";
   panel.classList.remove("hidden");
 
   App.apiGet("get_ai_summary")
@@ -379,7 +373,7 @@ App.loadDailySummary = function () {
         return;
       }
       App.aiSummaryCache = result.summary;
-      panel.innerHTML = '<span class="eyebrow">Nhận xét hôm nay</span><p>' + App.esc(result.summary) + "</p>";
+      panel.innerHTML = '<span class="eyebrow">' + App.esc(App.t("home.ai_daily.eyebrow")) + "</span><p>" + App.esc(result.summary) + "</p>";
     })
     .catch(function () {
       App.aiSummaryLoadedFor = today;
@@ -409,7 +403,7 @@ App.refreshAddForm = function () {
 
   App.show("#tx-to-wrap", direction === "transfer");
   App.show("#tx-category-wrap", direction !== "transfer");
-  App.$("#tx-account-label").textContent = direction === "transfer" ? "Từ tài khoản" : "Tài khoản";
+  App.$("#tx-account-label").textContent = direction === "transfer" ? App.t("add.from_account_label") : App.t("add.account_label");
 
   var dateInput = App.$("#tx-date");
   if (!dateInput.value) dateInput.value = App.today();
@@ -432,7 +426,7 @@ App.renderCategoryGrid = function () {
   var label = App.categoryLabel(data.categories, App.state.categoryId);
   App.setHtml("#tx-category-picked", label
     ? App.icon(App.categoryIconName(label)) + "<span>" + App.esc(label) + "</span>"
-    : '<span class="faint tiny">Để trống là tự phân loại theo luật</span>');
+    : '<span class="faint tiny">' + App.esc(App.t("add.category_empty_hint")) + "</span>");
 };
 
 App.pickCategory = function (id) {
@@ -447,10 +441,10 @@ App.updateAmountHint = function () {
   var hint = App.$("#tx-amount-hint");
   var parsed = App.tryParseAmount(input.value);
   if (parsed === null) {
-    hint.textContent = input.value.trim() ? "Chưa hiểu số này — thử 500k, 1tr, 2tr5 hoặc 500000." : "";
+    hint.textContent = input.value.trim() ? App.t("add.amount_hint_invalid") : "";
     hint.className = "amount-hint " + (input.value.trim() ? "amount-out" : "");
   } else {
-    hint.textContent = "= " + App.formatDong(parsed);
+    hint.textContent = App.t("add.amount_hint_equals", { amount: App.formatDong(parsed) });
     hint.className = "amount-hint muted";
   }
 };
@@ -464,17 +458,17 @@ App.submitTransaction = function () {
   var parsed = App.tryParseAmount(rawAmount);
 
   if (!rawAmount || parsed === null || parsed <= 0) {
-    App.notice("#add-message", "Nhập số tiền đã nhé — ví dụ 500k, 1tr, hoặc 500000.", "error");
+    App.notice("#add-message", App.t("add.error_amount_required"), "error");
     return;
   }
   if (direction === "transfer" && App.$("#tx-account").value === App.$("#tx-to-account").value) {
-    App.notice("#add-message", "Chọn hai tài khoản khác nhau cho lệnh chuyển khoản.", "error");
+    App.notice("#add-message", App.t("add.error_same_account"), "error");
     return;
   }
 
   // A big spend is worth a second thought before it's recorded, not after.
   if (direction === "out" && parsed >= 1000000) {
-    if (window.confirm("Đây là khoản chi lớn (" + App.formatDong(parsed) + "). Mô phỏng tác động trước khi lưu?")) {
+    if (window.confirm(App.t("add.confirm_simulate", { amount: App.formatDong(parsed) }))) {
       App.state.planSection = "simulate";
       App.switchTab("plan");
       window.setTimeout(function () {
@@ -513,8 +507,8 @@ App.submitTransaction = function () {
       App.$("#tx-amount").value = "";
       App.$("#tx-description").value = "";
       App.updateAmountHint();
-      var extra = result.auto_categorised ? " Đã tự xếp danh mục theo luật của bạn." : "";
-      App.notice("#add-message", "Đã lưu " + App.formatDong(result.amount || parsed) + "." + extra, "ok");
+      var extra = result.auto_categorised ? App.t("add.saved_auto_categorised") : "";
+      App.notice("#add-message", App.t("add.saved", { amount: App.formatDong(result.amount || parsed) }) + extra, "ok");
       return App.load({ quiet: true });
     })
     .catch(function (err) {
@@ -535,10 +529,10 @@ App.IMPORT_MAX_EDGE = 1280;
 App.fileToScaledBase64 = function (file) {
   return new Promise(function (resolve, reject) {
     var reader = new FileReader();
-    reader.onerror = function () { reject(new Error("Không đọc được file ảnh.")); };
+    reader.onerror = function () { reject(new Error(App.t("import.file_unreadable"))); };
     reader.onload = function () {
       var img = new Image();
-      img.onerror = function () { reject(new Error("File này không phải ảnh hợp lệ.")); };
+      img.onerror = function () { reject(new Error(App.t("import.file_not_image"))); };
       img.onload = function () {
         var scale = Math.min(1, App.IMPORT_MAX_EDGE / Math.max(img.width, img.height));
         var canvas = document.createElement("canvas");
@@ -566,10 +560,9 @@ App.analyzeImages = function (files) {
 
   function paintProgress(index) {
     App.setHtml("#import-result",
-      '<p class="notice notice-info">Đang đọc ảnh ' + (index + 1) + "/" + list.length +
-      "… mỗi ảnh mất vài giây.</p>" +
+      '<p class="notice notice-info">' + App.esc(App.t("import.progress", { current: index + 1, total: list.length })) + "</p>" +
       (App.importCandidates.length
-        ? '<p class="tiny muted">Đã tìm thấy ' + App.importCandidates.length + " giao dịch.</p>"
+        ? '<p class="tiny muted">' + App.esc(App.t("import.found_so_far", { n: App.importCandidates.length })) + "</p>"
         : ""));
   }
 
@@ -604,12 +597,11 @@ App.analyzeImages = function (files) {
     var noKey = failed.some(function (f) { return f.reason === "no_key"; });
     var notice = "";
     if (noKey) {
-      notice = '<p class="notice notice-info">Tính năng này cần GEMINI_API_KEY trong Script Properties ' +
-        "của bảng tính. Chưa có thì cứ nhập tay ở trên.</p>";
+      notice = '<p class="notice notice-info">' + App.esc(App.t("import.no_key")) + "</p>";
     } else if (failed.length) {
-      notice = '<p class="notice notice-info">' + failed.length + "/" + list.length +
-        " ảnh không đọc được (" + App.esc(failed.map(function (f) { return f.name; }).join(", ")) +
-        "). Các ảnh còn lại vẫn dùng được bên dưới.</p>";
+      notice = '<p class="notice notice-info">' + App.esc(App.t("import.some_failed", {
+        failed: failed.length, total: list.length, names: failed.map(function (f) { return f.name; }).join(", "),
+      })) + "</p>";
     }
     App.setHtml("#import-result", notice +
       (App.importCandidates.length || !noKey
@@ -635,17 +627,17 @@ App.saveImport = function () {
   });
 
   if (rows.length === 0) {
-    App.notice("#import-save-message", "Chưa chọn giao dịch nào.", "info");
+    App.notice("#import-save-message", App.t("import.none_selected"), "info");
     return;
   }
   App.$("#save-import").disabled = true;
-  App.notice("#import-save-message", "Đang lưu…", "info");
+  App.notice("#import-save-message", App.t("common.saving"), "info");
 
   App.apiPost("import_transactions", { rows: rows })
     .then(function (result) {
-      var parts = ["Đã lưu " + result.saved + " giao dịch."];
-      if (result.skipped_duplicate) parts.push(result.skipped_duplicate + " khoản đã nhập trước đó, bỏ qua.");
-      if (result.skipped_invalid) parts.push(result.skipped_invalid + " khoản không hợp lệ.");
+      var parts = [App.t("import.saved_summary", { n: result.saved })];
+      if (result.skipped_duplicate) parts.push(App.t("import.skipped_duplicate", { n: result.skipped_duplicate }));
+      if (result.skipped_invalid) parts.push(App.t("import.skipped_invalid", { n: result.skipped_invalid }));
       App.setHtml("#import-result", '<p class="notice notice-ok">' + App.esc(parts.join(" ")) + "</p>");
       App.$("#import-file").value = "";
       return App.load({ quiet: true });
@@ -677,25 +669,27 @@ App.renderList = function () {
   var shown = filtered.slice(0, App.state.txLimit);
 
   var filters = [
-    ["all", "Tất cả"], ["out", "Chi"], ["in", "Thu"], ["transfer", "Chuyển khoản"],
+    ["all", App.t("ledger.filter.all")], ["out", App.t("ledger.filter.out")],
+    ["in", App.t("ledger.filter.in")], ["transfer", App.t("ledger.filter.transfer")],
   ].map(function (pair) {
     return '<button type="button" data-filter="' + pair[0] + '" aria-pressed="' +
-      (App.state.txFilter === pair[0]) + '">' + pair[1] + "</button>";
+      (App.state.txFilter === pair[0]) + '">' + App.esc(pair[1]) + "</button>";
   }).join("");
 
   var more = filtered.length > shown.length
-    ? '<button type="button" class="secondary" id="show-more">Xem thêm ' +
-      Math.min(40, filtered.length - shown.length) + " giao dịch cũ hơn</button>"
+    ? '<button type="button" class="secondary" id="show-more">' +
+      App.esc(App.t("ledger.show_more", { n: Math.min(40, filtered.length - shown.length) })) + "</button>"
     : "";
 
   var footnote = data.transaction_count > data.transactions.length
-    ? '<p class="tiny faint">Đang hiển thị ' + data.transactions.length + " giao dịch gần nhất trong tổng số " +
-      data.transaction_count + ". Tải CSV ở Cài đặt để xem toàn bộ.</p>"
+    ? '<p class="tiny faint">' + App.esc(App.t("ledger.footnote", {
+        shown: data.transactions.length, total: data.transaction_count,
+      })) + "</p>"
     : "";
 
   App.setHtml("#view-list",
     '<section class="card">' +
-      '<input type="text" id="tx-search" placeholder="Tìm theo mô tả, danh mục, tài khoản" value="' +
+      '<input type="text" id="tx-search" placeholder="' + App.esc(App.t("ledger.search_placeholder")) + '" value="' +
         App.esc(App.state.txQuery) + '">' +
       '<div class="filters">' + filters + "</div>" +
     "</section>" +
@@ -711,23 +705,23 @@ App.openEditDialog = function (id) {
 
   var kind = tx.direction === "in" ? "income" : "expense";
   App.setHtml("#tx-dialog-body",
-    '<div class="dialog-head"><h2>Sửa giao dịch</h2>' +
-    '<button type="button" class="icon-btn" data-close-dialog aria-label="Đóng">\u2715</button></div>' +
+    '<div class="dialog-head"><h2>' + App.esc(App.t("dialog.edit_tx.title")) + '</h2>' +
+    '<button type="button" class="icon-btn" data-close-dialog aria-label="' + App.esc(App.t("dialog.edit_tx.close_aria")) + '">\u2715</button></div>' +
     '<form id="edit-form">' +
       '<input type="hidden" name="id" value="' + App.esc(tx.id) + '">' +
       '<div class="segmented">' +
-        '<input type="radio" id="edit-out" name="direction" value="out"' + (tx.direction === "out" ? " checked" : "") + '><label for="edit-out">Chi</label>' +
-        '<input type="radio" id="edit-in" name="direction" value="in"' + (tx.direction === "in" ? " checked" : "") + '><label for="edit-in">Thu</label>' +
+        '<input type="radio" id="edit-out" name="direction" value="out"' + (tx.direction === "out" ? " checked" : "") + '><label for="edit-out">' + App.esc(App.t("dialog.edit_tx.direction_out")) + '</label>' +
+        '<input type="radio" id="edit-in" name="direction" value="in"' + (tx.direction === "in" ? " checked" : "") + '><label for="edit-in">' + App.esc(App.t("dialog.edit_tx.direction_in")) + '</label>' +
       "</div>" +
-      '<label class="field"><span class="field-label">Số tiền</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.edit_tx.amount_label")) + '</span>' +
       '<input type="text" inputmode="numeric" name="amount" class="amount-input" value="' + App.esc(App.formatVnd(tx.amount)) + '"></label>' +
-      '<label class="field"><span class="field-label">Ngày</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.edit_tx.date_label")) + '</span>' +
       '<input type="date" name="occurred_at" value="' + App.esc(App.dateOnly(tx.occurred_at)) + '"></label>' +
-      '<label class="field"><span class="field-label">Tài khoản</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.edit_tx.account_label")) + '</span>' +
       "<select name=\"account_id\">" + App.accountOptions(data.accounts, tx.account_id, false) + "</select></label>" +
-      '<label class="field"><span class="field-label">Danh mục</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.edit_tx.category_label")) + '</span>' +
       '<select name="category_id">' + App.categoryOptions(data.categories, kind, tx.category_id) + "</select></label>" +
-      '<label class="field"><span class="field-label">Mô tả</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.edit_tx.description_label")) + '</span>' +
       '<input type="text" name="description" value="' + App.esc(tx.description || "") + '"></label>' +
       // Correcting a category is the moment the user has just told the app
       // what a description means - the cheapest possible time to offer to
@@ -737,12 +731,12 @@ App.openEditDialog = function (id) {
       (tx.description
         ? '<div class="notice notice-info hidden" id="learn-rule-block">' +
           '<label class="inline"><input type="checkbox" name="learn_rule" value="1" style="width:auto;min-height:0">' +
-          " <span>Lần sau tự xếp vào danh mục này</span></label>" +
+          " <span>" + App.esc(App.t("dialog.edit_tx.learn_rule_label")) + "</span></label>" +
           '<input type="text" name="learn_pattern" value="' + App.esc(tx.description) +
-          '" style="margin-top:0.5rem" aria-label="Từ khóa nhận dạng">' +
-          '<p class="tiny muted">Rút gọn thành từ khóa dễ khớp hơn, ví dụ chỉ để “highlands”.</p></div>'
+          '" style="margin-top:0.5rem" aria-label="' + App.esc(App.t("dialog.edit_tx.learn_rule_pattern_aria")) + '">' +
+          '<p class="tiny muted">' + App.esc(App.t("dialog.edit_tx.learn_rule_hint")) + "</p></div>"
         : "") +
-      "<button type=\"submit\">Lưu thay đổi</button>" +
+      "<button type=\"submit\">" + App.esc(App.t("dialog.edit_tx.submit")) + "</button>" +
       '<div id="edit-message"></div>' +
     "</form>"
   );
@@ -761,14 +755,10 @@ App.openEditDialog = function (id) {
 
 // -------------------------------------------------------------------- plan
 
+// Just the routing keys - labels come from App.label("plan_section", key) at
+// render time, so a language switch relabels the chips without touching this.
 App.PLAN_SECTIONS = [
-  ["budget", "Ngân sách"],
-  ["goals", "Mục tiêu"],
-  ["events", "Sự kiện"],
-  ["income", "Thu nhập"],
-  ["recurring", "Định kỳ"],
-  ["forecast", "Dự báo"],
-  ["simulate", "Mô phỏng"],
+  ["budget"], ["goals"], ["events"], ["income"], ["recurring"], ["forecast"], ["simulate"],
 ];
 
 App.renderPlan = function () {
@@ -782,10 +772,10 @@ App.renderPlan = function () {
   }
 
   var nav = '<div class="subnav">' +
-    '<button type="button" data-plan-section="" aria-pressed="false" aria-label="Tất cả khu vực">☰</button>' +
+    '<button type="button" data-plan-section="" aria-pressed="false" aria-label="' + App.esc(App.t("common.all_sections_aria")) + '">☰</button>' +
     App.PLAN_SECTIONS.map(function (pair) {
       return '<button type="button" data-plan-section="' + pair[0] + '" aria-pressed="' +
-        (App.state.planSection === pair[0]) + '">' + pair[1] + "</button>";
+        (App.state.planSection === pair[0]) + '">' + App.esc(App.label("plan_section", pair[0])) + "</button>";
     }).join("") + "</div>";
 
   var body;
@@ -842,17 +832,17 @@ App.saveBudgets = function () {
   });
 
   if (invalid.length > 0) {
-    App.notice("#budget-message", "Có " + invalid.length + " ô số tiền chưa hợp lệ — sửa rồi lưu lại.", "error");
+    App.notice("#budget-message", App.t("plan.budget.invalid_fields", { n: invalid.length }), "error");
     return;
   }
   if (jobs.length === 0) {
-    App.notice("#budget-message", "Chưa nhập hạn mức nào.", "info");
+    App.notice("#budget-message", App.t("plan.budget.none_entered"), "info");
     return;
   }
 
   var button = App.$("#save-budgets");
   button.disabled = true;
-  App.notice("#budget-message", "Đang lưu " + jobs.length + " hạn mức…", "info");
+  App.notice("#budget-message", App.t("plan.budget.saving_n", { n: jobs.length }), "info");
 
   // Sheets writes are serialised behind the script lock anyway, so these go
   // one at a time rather than racing a burst of parallel requests.
@@ -869,7 +859,7 @@ App.saveBudgets = function () {
 
   chain
     .then(function () { return App.load({ quiet: true }); })
-    .then(function () { App.notice("#budget-message", "Đã lưu ngân sách.", "ok"); })
+    .then(function () { App.notice("#budget-message", App.t("plan.budget.saved"), "ok"); })
     .catch(function (err) { App.notice("#budget-message", App.errorText(err), "error"); })
     .finally(function () { if (App.$("#save-budgets")) App.$("#save-budgets").disabled = false; });
 };
@@ -877,7 +867,7 @@ App.saveBudgets = function () {
 App.runForecast = function () {
   var includeGoals = App.$("#forecast-goals").checked;
   var useReliable = App.$("#forecast-reliable").checked;
-  App.setHtml("#forecast-result", '<p class="small muted">Đang tính…</p>');
+  App.setHtml("#forecast-result", '<p class="small muted">' + App.esc(App.t("plan.forecast.computing")) + "</p>");
 
   App.apiGet("get_forecast", {
     periods_ahead: 6,
@@ -887,14 +877,14 @@ App.runForecast = function () {
     .then(function (result) {
       if (result.periods_of_history === 0) {
         App.setHtml("#forecast-result",
-          '<p class="notice notice-info">Chưa có kỳ nào hoàn tất để lấy mức trung bình. Dự báo sẽ có ý nghĩa sau khi bạn ghi hết một kỳ.</p>');
+          '<p class="notice notice-info">' + App.esc(App.t("plan.forecast.no_history")) + "</p>");
         return;
       }
       var balances = result.periods.map(function (p) { return p.projected_balance; });
       var labels = result.periods.map(function (p) { return p.period_id.slice(5) + "/" + p.period_id.slice(2, 4); });
       var rows = result.periods.map(function (p) {
-        return '<div class="kv"><dt>Kỳ ' + App.esc(p.period_id) +
-          (p.event_cost > 0 ? ' <span class="tiny amount-out">(sự kiện −' + App.formatVnd(p.event_cost) + ")</span>" : "") +
+        return '<div class="kv"><dt>' + App.esc(App.t("plan.forecast.period_row_label", { period: p.period_id })) +
+          (p.event_cost > 0 ? ' <span class="tiny amount-out">' + App.esc(App.t("plan.forecast.event_cost_tag", { amount: App.formatVnd(p.event_cost) })) + "</span>" : "") +
           "</dt><dd class=\"" + (p.projected_balance < 0 ? "amount-out" : "") + '">' +
           App.formatDong(p.projected_balance) + "</dd></div>";
       }).join("");
@@ -902,12 +892,15 @@ App.runForecast = function () {
       App.setHtml("#forecast-result",
         App.lineChart(labels, balances) +
         '<dl class="stack-tight">' + rows + "</dl>" +
-        '<p class="tiny faint">Dựa trên thu ' + App.formatVnd(result.income_per_period) + " đ" +
-        (result.income_basis === "reliable" ? " (thu chắc chắn)" : " (trung bình " + result.periods_of_history + " kỳ gần nhất)") +
-        " và chi " + App.formatVnd(result.avg_expense) + " đ mỗi kỳ" +
-        (result.goal_contribution > 0 ? ", trừ " + App.formatVnd(result.goal_contribution) + " đ cho mục tiêu" : "") +
-        (result.event_total > 0 ? ", trừ " + App.formatVnd(result.event_total) + " đ cho sự kiện đã lên kế hoạch" : "") +
-        ".</p>");
+        '<p class="tiny faint">' + App.esc(App.t("plan.forecast.footnote", {
+          income: App.formatVnd(result.income_per_period),
+          income_basis: result.income_basis === "reliable"
+            ? App.t("plan.forecast.basis_reliable")
+            : App.t("plan.forecast.basis_average", { n: result.periods_of_history }),
+          expense: App.formatVnd(result.avg_expense),
+          goal: result.goal_contribution > 0 ? App.t("plan.forecast.goal_note", { amount: App.formatVnd(result.goal_contribution) }) : "",
+          event: result.event_total > 0 ? App.t("plan.forecast.event_note", { amount: App.formatVnd(result.event_total) }) : "",
+        })) + "</p>");
     })
     .catch(function (err) {
       App.setHtml("#forecast-result", '<p class="notice notice-error">' + App.esc(App.errorText(err)) + "</p>");
@@ -918,7 +911,7 @@ App.runSimulation = function () {
   var amount = App.tryParseAmount(App.$("#sim-amount").value);
   var maintenance = App.tryParseAmount(App.$("#sim-maintenance").value) || 0;
   if (!amount || amount <= 0) {
-    App.setHtml("#simulation-result", '<p class="notice notice-error">Nhập giá món đồ trước đã.</p>');
+    App.setHtml("#simulation-result", '<p class="notice notice-error">' + App.esc(App.t("plan.simulate.error_no_price")) + "</p>");
     return;
   }
   App.simResult = App.computeScenarios(App.state.data, amount, maintenance);
@@ -939,7 +932,7 @@ App.renderSettingsTab = function () {
     // Shown because forgetting "Phiên bản: Mới" on a redeploy fails silently -
     // the old code just keeps answering. Seeing the version is the only way to
     // catch it without guessing.
-    versionNode.textContent = "mã v" + (App.state.data.version || "?");
+    versionNode.textContent = App.t("settings.code_version", { version: App.state.data.version || "?" });
   }
 };
 
@@ -952,26 +945,25 @@ App.checkForUpdate = function () {
   var deployed = String(App.state.data.version || "");
   if (!deployed || deployed === App.EXPECTED_VERSION) return;
 
-  node.innerHTML = '<p class="notice notice-info">Bảng tính đang chạy <b>v' + App.esc(deployed) +
-    "</b>, bản mới nhất là <b>v" + App.EXPECTED_VERSION + "</b>. Mọi thứ bạn đang dùng vẫn chạy bình thường — " +
-    "chỉ những tính năng mới nhất là chưa có. Muốn cập nhật thì dán lại " +
-    '<code>Code.gs</code> rồi <b>Triển khai → Quản lý bản triển khai → ✏ → Phiên bản: Mới</b>.</p>';
+  node.innerHTML = '<p class="notice notice-info">' + App.t("settings.version_notice", {
+    deployed: App.esc(deployed), expected: App.EXPECTED_VERSION,
+  }) + "</p>";
 };
 
 App.runHealthCheck = function () {
-  App.notice("#setup-message", "Đang kiểm tra…", "info");
+  App.notice("#setup-message", App.t("common.checking"), "info");
   App.apiGet("health_check")
     .then(function (result) {
       var rows = result.checks.map(function (check) {
-        var mark = check.ok ? "✓" : (check.key === "gemini" ? "○" : "✗");
+        var mark = check.ok ? "\u2713" : (check.key === "gemini" ? "\u25cb" : "\u2717");
         var tone = check.ok ? "muted" : (check.key === "gemini" ? "faint" : "amount-out");
         return '<div class="kv"><dt class="' + tone + '">' + mark + " " + App.esc(check.label) + "</dt>" +
           '<dd class="tiny ' + tone + '" style="font-family:var(--font-ui);font-weight:400">' +
-          App.esc(check.detail || (check.ok ? "ổn" : "")) + "</dd></div>";
+          App.esc(check.detail || (check.ok ? App.t("settings.health_check_ok_detail") : "")) + "</dd></div>";
       }).join("");
       var headline = result.ok
-        ? "Mọi thứ đã sẵn sàng."
-        : "Có mục cần xử lý — xem danh sách bên dưới.";
+        ? App.t("settings.health_check_ok_headline")
+        : App.t("settings.health_check_fail_headline");
       App.setHtml("#setup-message",
         '<p class="notice notice-' + (result.ok ? "ok" : "info") + '">' + App.esc(headline) + "</p>" +
         '<dl class="stack-tight" style="margin-top:0.5rem">' + rows + "</dl>");
@@ -980,12 +972,12 @@ App.runHealthCheck = function () {
 };
 
 App.downloadCsv = function () {
-  App.notice("#setup-message", "Đang chuẩn bị file…", "info");
+  App.notice("#setup-message", App.t("settings.exporting"), "info");
   App.apiGet("export_csv")
     .then(function (result) {
       // The BOM matters: without it Excel on Windows renders Vietnamese
       // diacritics as mojibake. Every other reader ignores it.
-      var blob = new Blob(["﻿" + result.csv], { type: "text/csv;charset=utf-8" });
+      var blob = new Blob(["\ufeff" + result.csv], { type: "text/csv;charset=utf-8" });
       var url = URL.createObjectURL(blob);
       var link = document.createElement("a");
       link.href = url;
@@ -994,22 +986,22 @@ App.downloadCsv = function () {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      App.notice("#setup-message", "Đã tải " + result.rows + " giao dịch.", "ok");
+      App.notice("#setup-message", App.t("settings.exported_rows", { n: result.rows }), "ok");
     })
     .catch(function (err) { App.notice("#setup-message", App.errorText(err), "error"); });
 };
 
 App.runSetup = function (seed) {
-  App.notice("#setup-message", "Đang kiểm tra bảng tính…", "info");
+  App.notice("#setup-message", App.t("settings.checking_spreadsheet"), "info");
   App.apiPost("setup", { seed: seed ? "1" : "0" })
     .then(function (result) {
       var parts = [];
-      if (result.created.length) parts.push("Đã tạo tab: " + result.created.join(", ") + ".");
-      if (result.repaired.length) parts.push("Đã sửa dòng tiêu đề: " + result.repaired.join(", ") + ".");
+      if (result.created.length) parts.push(App.t("settings.setup_created", { names: result.created.join(", ") }));
+      if (result.repaired.length) parts.push(App.t("settings.setup_repaired", { names: result.repaired.join(", ") }));
       if (result.seeded && (result.seeded.accounts || result.seeded.categories)) {
-        parts.push("Đã nạp " + result.seeded.accounts + " tài khoản và " + result.seeded.categories + " danh mục mẫu.");
+        parts.push(App.t("settings.setup_seeded", { accounts: result.seeded.accounts, categories: result.seeded.categories }));
       }
-      if (parts.length === 0) parts.push("Bảng tính đã đầy đủ, không cần thay đổi gì.");
+      if (parts.length === 0) parts.push(App.t("settings.setup_nothing"));
       App.notice("#setup-message", parts.join(" "), "ok");
       return App.load({ quiet: true });
     })
@@ -1023,21 +1015,19 @@ App.askAi = function (topic, context, panelSelector, buttonSelector) {
   var button = App.$(buttonSelector);
   if (button) button.disabled = true;
   panel.classList.remove("hidden");
-  panel.innerHTML = '<span class="eyebrow">Gợi ý từ AI</span><p class="muted">Đang phân tích…</p>';
+  panel.innerHTML = '<span class="eyebrow">' + App.esc(App.t("ai.eyebrow")) + '</span><p class="muted">' + App.esc(App.t("ai.thinking")) + "</p>";
 
   App.apiGet("get_ai_advice", { topic: topic, context: JSON.stringify(context) })
     .then(function (result) {
       if (!result.available) {
-        panel.innerHTML = '<span class="eyebrow">Gợi ý từ AI</span><p class="muted">' +
-          (result.reason === "no_key"
-            ? "Chưa gắn GEMINI_API_KEY trong Script Properties nên phần này tạm nghỉ. Mọi tính năng khác vẫn chạy bình thường."
-            : "Không gọi được AI lúc này. Thử lại sau nhé.") + "</p>";
+        panel.innerHTML = '<span class="eyebrow">' + App.esc(App.t("ai.eyebrow")) + '</span><p class="muted">' +
+          App.esc(result.reason === "no_key" ? App.t("ai.no_key") : App.t("ai.generic_unavailable")) + "</p>";
         return;
       }
-      panel.innerHTML = '<span class="eyebrow">Gợi ý từ AI</span><p>' + App.esc(result.advice) + "</p>";
+      panel.innerHTML = '<span class="eyebrow">' + App.esc(App.t("ai.eyebrow")) + "</span><p>" + App.esc(result.advice) + "</p>";
     })
     .catch(function (err) {
-      panel.innerHTML = '<span class="eyebrow">Gợi ý từ AI</span><p class="muted">' + App.esc(App.errorText(err)) + "</p>";
+      panel.innerHTML = '<span class="eyebrow">' + App.esc(App.t("ai.eyebrow")) + '</span><p class="muted">' + App.esc(App.errorText(err)) + "</p>";
     })
     .finally(function () { if (button) button.disabled = false; });
 };
@@ -1055,7 +1045,7 @@ document.addEventListener("click", function (event) {
     "[data-dismiss-alert], [data-delete-tx], [data-edit-tx], [data-hide-goal], [data-hide-recurring], " +
     "[data-delete-rule], [data-edit-account], [data-apply-suggestion], [data-period-shift], [data-close-dialog], " +
     "[data-hide-income], [data-delete-event], [data-event-to-goal], [data-pick-category], [data-open-parent], " +
-    "[data-set-theme], [data-set-palette], #add-event-item, #save-import, " +
+    "[data-set-theme], [data-set-palette], [data-set-lang], #add-event-item, #save-import, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
     "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, " +
     "#save-connection-anyway, #device-link-btn, #copy-device-link, #theme-toggle");
@@ -1077,6 +1067,15 @@ document.addEventListener("click", function (event) {
 
   if (attr("data-set-theme")) { App.setTheme(attr("data-set-theme")); App.renderSettingsTab(); return; }
   if (attr("data-set-palette")) { App.setPalette(attr("data-set-palette")); App.renderSettingsTab(); return; }
+  // Language changes what almost every visible string says, so the whole
+  // current tab is re-rendered, not just Settings - plus the static markup
+  // (tab bar, the Add form's own labels) that never goes through a view.
+  if (attr("data-set-lang")) {
+    App.setLang(attr("data-set-lang"));
+    App.applyStaticI18n();
+    App.renderCurrentTab();
+    return;
+  }
 
   if (attr("data-goto")) {
     var parts = attr("data-goto").split(":");
@@ -1103,7 +1102,7 @@ document.addEventListener("click", function (event) {
   if (attr("data-dismiss-alert")) { target.closest(".alert").remove(); return; }
 
   if (attr("data-delete-tx")) {
-    if (!window.confirm("Xóa giao dịch này? Số dư tài khoản sẽ được tính lại.")) return;
+    if (!window.confirm(App.t("confirm.delete_transaction"))) return;
     App.apiPost("delete_transaction", { id: attr("data-delete-tx") })
       .then(function () { return App.load({ quiet: true }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
@@ -1114,7 +1113,7 @@ document.addEventListener("click", function (event) {
   if (attr("data-close-dialog")) { App.closeDialog(); return; }
 
   if (attr("data-hide-goal")) {
-    if (!window.confirm("Ẩn mục tiêu này? Lịch sử vẫn được giữ, chỉ không hiển thị nữa.")) return;
+    if (!window.confirm(App.t("confirm.hide_goal"))) return;
     App.apiPost("deactivate_goal", { id: attr("data-hide-goal") })
       .then(function () { return App.load({ quiet: true }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
@@ -1122,7 +1121,7 @@ document.addEventListener("click", function (event) {
   }
 
   if (attr("data-hide-recurring")) {
-    if (!window.confirm("Ngừng khoản định kỳ này? Các giao dịch đã ghi vẫn giữ nguyên.")) return;
+    if (!window.confirm(App.t("confirm.stop_recurring"))) return;
     App.apiPost("deactivate_recurring", { id: attr("data-hide-recurring") })
       .then(function () { return App.load({ quiet: true }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
@@ -1130,7 +1129,7 @@ document.addEventListener("click", function (event) {
   }
 
   if (attr("data-delete-rule")) {
-    if (!window.confirm("Xóa luật tự động phân loại này?")) return;
+    if (!window.confirm(App.t("confirm.delete_rule"))) return;
     App.apiPost("delete_rule", { id: attr("data-delete-rule") })
       .then(function () { return App.load({ quiet: true }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
@@ -1140,7 +1139,7 @@ document.addEventListener("click", function (event) {
   if (attr("data-edit-account")) { App.openAccountDialog(attr("data-edit-account")); return; }
 
   if (attr("data-hide-income")) {
-    if (!window.confirm("Ẩn nguồn thu này? Các chỉ số sẽ tính lại mà không có nó.")) return;
+    if (!window.confirm(App.t("confirm.hide_income"))) return;
     App.apiPost("deactivate_income_source", { id: attr("data-hide-income") })
       .then(function () { return App.load({ quiet: true }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
@@ -1148,7 +1147,7 @@ document.addEventListener("click", function (event) {
   }
 
   if (attr("data-delete-event")) {
-    if (!window.confirm("Xóa kế hoạch sự kiện này cùng toàn bộ khoản mục của nó?")) return;
+    if (!window.confirm(App.t("confirm.delete_event"))) return;
     App.apiPost("delete_event_plan", { id: attr("data-delete-event") })
       .then(function () { return App.load({ quiet: true }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
@@ -1188,9 +1187,9 @@ document.addEventListener("click", function (event) {
     case "copy-device-link":
       App.$("#device-link").select();
       navigator.clipboard.writeText(App.$("#device-link").value).then(function () {
-        App.notice("#device-link-message", "Đã sao chép.", "ok");
+        App.notice("#device-link-message", App.t("dialog.device_link.copied"), "ok");
       }).catch(function () {
-        App.notice("#device-link-message", "Không tự sao chép được — bôi đen ô trên rồi copy tay.", "info");
+        App.notice("#device-link-message", App.t("dialog.device_link.copy_failed"), "info");
       });
       break;
     case "theme-toggle": App.cycleTheme(); App.updateThemeButton(); break;
@@ -1199,7 +1198,7 @@ document.addEventListener("click", function (event) {
     case "add-event-item": App.$("#event-items").insertAdjacentHTML("beforeend", App.eventItemRow("", false)); break;
     case "show-connection": App.showConnectionForm(); break;
     case "reset-connection":
-      if (window.confirm("Xóa URL và mật khẩu đã lưu trên máy này? Dữ liệu trong Google Sheet không bị ảnh hưởng.")) {
+      if (window.confirm(App.t("confirm.reset_connection"))) {
         App.clearConfig();
         location.reload();
       }
@@ -1254,31 +1253,31 @@ document.addEventListener("submit", function (event) {
       .catch(function (err) { App.notice(messageSelector, App.errorText(err), "error"); });
   }
 
-  if (formId === "income-form") post("add_income_source", "#income-message", "Đã thêm nguồn thu.");
+  if (formId === "income-form") post("add_income_source", "#income-message", App.t("plan.income.added"));
   else if (formId === "event-form") {
     event.preventDefault();
     var items = App.collectEventItems();
     if (items.length === 0) {
-      App.notice("#event-message", "Thêm ít nhất một khoản mục có tên đã nhé.", "error");
+      App.notice("#event-message", App.t("plan.events.need_one_item"), "error");
       return;
     }
-    App.notice("#event-message", "Đang lưu…", "info");
+    App.notice("#event-message", App.t("common.saving"), "info");
     App.apiPost("add_event_plan", { name: body.name, event_date: body.event_date, items: items })
       .then(function () {
         form.reset();
         return App.load({ quiet: true });
       })
-      .then(function () { App.notice("#event-message", "Đã lưu kế hoạch sự kiện.", "ok"); })
+      .then(function () { App.notice("#event-message", App.t("plan.events.saved"), "ok"); })
       .catch(function (err) { App.notice("#event-message", App.errorText(err), "error"); });
   }
-  else if (formId === "goal-form") post("add_goal", "#goal-message", "Đã tạo mục tiêu.");
-  else if (formId === "recurring-form") post("add_recurring", "#recurring-message", "Đã thêm khoản định kỳ.");
-  else if (formId === "account-form") post("add_account", "#account-message", "Đã thêm tài khoản.");
-  else if (formId === "category-form") post("add_category", "#category-message", "Đã thêm danh mục.");
-  else if (formId === "rule-form") post("add_rule", "#rule-message", "Đã thêm luật.");
+  else if (formId === "goal-form") post("add_goal", "#goal-message", App.t("plan.goals.created"));
+  else if (formId === "recurring-form") post("add_recurring", "#recurring-message", App.t("plan.recurring.added"));
+  else if (formId === "account-form") post("add_account", "#account-message", App.t("settings.account_added"));
+  else if (formId === "category-form") post("add_category", "#category-message", App.t("settings.category_added"));
+  else if (formId === "rule-form") post("add_rule", "#rule-message", App.t("settings.rule_added"));
   else if (formId === "edit-form") {
     event.preventDefault();
-    App.notice("#edit-message", "Đang lưu…", "info");
+    App.notice("#edit-message", App.t("common.saving"), "info");
     var learnRule = body.learn_rule === "1" && String(body.learn_pattern || "").trim() && body.category_id;
     var pattern = String(body.learn_pattern || "").trim();
     var categoryForRule = body.category_id;
@@ -1301,7 +1300,7 @@ document.addEventListener("submit", function (event) {
       .catch(function (err) { App.notice("#edit-message", App.errorText(err), "error"); });
   } else if (formId === "account-edit-form") {
     event.preventDefault();
-    App.notice("#account-edit-message", "Đang lưu…", "info");
+    App.notice("#account-edit-message", App.t("common.saving"), "info");
     App.apiPost("update_account", body)
       .then(function () {
         App.$("#tx-dialog").close();
@@ -1310,7 +1309,7 @@ document.addEventListener("submit", function (event) {
       .catch(function (err) { App.notice("#account-edit-message", App.errorText(err), "error"); });
   } else if (formId === "event-goal-form") {
     event.preventDefault();
-    App.notice("#event-goal-message", "Đang tạo…", "info");
+    App.notice("#event-goal-message", App.t("common.creating"), "info");
     var eventId = body.event_id;
     delete body.event_id;
     App.apiPost("add_goal", body)
@@ -1329,12 +1328,11 @@ document.addEventListener("submit", function (event) {
     var url = body.url.trim();
     var token = body.token.trim();
     if (!url || !token) {
-      App.notice("#connection-message", "Cần cả URL và mã kết nối.", "error");
+      App.notice("#connection-message", App.t("dialog.connection.need_both"), "error");
       return;
     }
     if (url.indexOf("/exec") === -1) {
-      App.notice("#connection-message",
-        "URL phải kết thúc bằng /exec. Nếu nó kết thúc bằng /dev thì đó là bản thử nghiệm, không dùng được.", "error");
+      App.notice("#connection-message", App.t("dialog.connection.bad_url"), "error");
       return;
     }
 
@@ -1342,7 +1340,7 @@ document.addEventListener("submit", function (event) {
     // and only finding out from a broken screen afterwards is the exact loop
     // this avoids - a deployment answers `version` without a token, so this
     // costs nothing and needs no credentials.
-    App.notice("#connection-message", "Đang kiểm tra địa chỉ…", "info");
+    App.notice("#connection-message", App.t("dialog.connection.checking_url"), "info");
     var timeout = new Promise(function (resolve) { window.setTimeout(function () { resolve("timeout"); }, 20000); });
 
     Promise.race([App.fetchVersionFor(url), timeout]).then(function (version) {
@@ -1354,14 +1352,14 @@ document.addEventListener("submit", function (event) {
       // Anything else still saves - the app works on older code, and a slow
       // cold start must not stop someone connecting - but say what was found.
       var warning = version === "timeout"
-        ? "Địa chỉ chưa trả lời sau 20 giây (có thể Apps Script đang khởi động nguội)."
+        ? App.t("dialog.connection.timeout_warning")
         : (version
-            ? "Địa chỉ này đang chạy v" + version + ", bản mới nhất là v" + App.EXPECTED_VERSION + "."
-            : "Địa chỉ này chạy mã cũ hơn v3.4, hoặc chưa triển khai xong.");
+            ? App.t("dialog.connection.version_warning", { version: version, expected: App.EXPECTED_VERSION })
+            : App.t("dialog.connection.too_old_warning"));
       App.setHtml("#connection-message",
         '<p class="notice notice-info">' + App.esc(warning) +
-        " Vẫn lưu được và app sẽ chạy, chỉ thiếu tính năng mới nhất." +
-        '</p><button type="button" class="secondary" id="save-connection-anyway">Lưu địa chỉ này</button>');
+        App.esc(App.t("dialog.connection.still_works")) +
+        '</p><button type="button" class="secondary" id="save-connection-anyway">' + App.esc(App.t("dialog.connection.save_anyway")) + "</button>");
       App.pendingConfig = { url: url, token: token };
     });
   } else if (formId === "tx-form") {
@@ -1419,26 +1417,25 @@ App.openAccountDialog = function (id) {
   if (!account) return;
 
   App.setHtml("#tx-dialog-body",
-    '<div class="dialog-head"><h2>Sửa tài khoản</h2>' +
-    '<button type="button" class="icon-btn" data-close-dialog aria-label="Đóng">\u2715</button></div>' +
+    '<div class="dialog-head"><h2>' + App.esc(App.t("dialog.edit_account.title")) + '</h2>' +
+    '<button type="button" class="icon-btn" data-close-dialog aria-label="' + App.esc(App.t("dialog.edit_tx.close_aria")) + '">\u2715</button></div>' +
     '<form id="account-edit-form">' +
       '<input type="hidden" name="id" value="' + App.esc(account.id) + '">' +
-      '<label class="field"><span class="field-label">Tên</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.edit_account.name_label")) + '</span>' +
       '<input type="text" name="name" value="' + App.esc(account.name) + '"></label>' +
-      '<label class="field"><span class="field-label">Loại</span><select name="type">' +
-        Object.keys(App.ACCOUNT_TYPES).map(function (key) {
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.edit_account.type_label")) + '</span><select name="type">' +
+        Object.keys(App.LABEL_MAPS.account_type.vi).map(function (key) {
           return '<option value="' + key + '"' + (key === account.type ? " selected" : "") + ">" +
-            App.esc(App.ACCOUNT_TYPES[key]) + "</option>";
+            App.esc(App.label("account_type", key)) + "</option>";
         }).join("") +
       "</select></label>" +
-      '<label class="field"><span class="field-label">Số dư thực tế</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.edit_account.balance_label")) + '</span>' +
       '<input type="text" inputmode="numeric" name="balance" value="' + App.esc(App.formatVnd(account.balance)) + '"></label>' +
-      '<p class="tiny muted">Sửa số dư ở đây là để chỉnh lại cho khớp thực tế, không phải để ghi nhận thu nhập — ' +
-      "khoản thu thật thì nên nhập ở tab Nhập.</p>" +
-      '<label class="field"><span class="field-label">Hiển thị</span><select name="is_active">' +
-        '<option value="1">Đang dùng</option><option value="0">Ẩn tài khoản này</option>' +
+      '<p class="tiny muted">' + App.esc(App.t("dialog.edit_account.balance_hint")) + "</p>" +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.edit_account.visibility_label")) + '</span><select name="is_active">' +
+        '<option value="1">' + App.esc(App.t("dialog.edit_account.visibility_active")) + '</option><option value="0">' + App.esc(App.t("dialog.edit_account.visibility_hidden")) + "</option>" +
       "</select></label>" +
-      "<button type=\"submit\">Lưu thay đổi</button>" +
+      "<button type=\"submit\">" + App.esc(App.t("dialog.edit_account.submit")) + "</button>" +
       '<div id="account-edit-message"></div>' +
     "</form>"
   );
@@ -1454,24 +1451,26 @@ App.createGoalFromEvent = function (eventId) {
   if (!event) return;
 
   App.setHtml("#tx-dialog-body",
-    '<div class="dialog-head"><h2>Tạo mục tiêu cho sự kiện</h2>' +
-    '<button type="button" class="icon-btn" data-close-dialog aria-label="Đóng">\u2715</button></div>' +
+    '<div class="dialog-head"><h2>' + App.esc(App.t("dialog.event_goal.title")) + '</h2>' +
+    '<button type="button" class="icon-btn" data-close-dialog aria-label="' + App.esc(App.t("dialog.edit_tx.close_aria")) + '">\u2715</button></div>' +
     '<form id="event-goal-form">' +
       '<input type="hidden" name="event_id" value="' + App.esc(event.id) + '">' +
-      '<label class="field"><span class="field-label">Tên mục tiêu</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.event_goal.name_label")) + '</span>' +
       '<input type="text" name="name" value="' + App.esc(event.name) + '" required></label>' +
-      '<label class="field"><span class="field-label">Cần tích lũy</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.event_goal.target_label")) + '</span>' +
       '<input type="text" inputmode="numeric" name="target_amount" value="' + App.esc(App.formatVnd(event.remaining_total)) + '" required>' +
-      '<span class="tiny faint">Lấy từ phần còn phải trả của sự kiện.</span></label>' +
-      '<label class="field"><span class="field-label">Hạn chót</span>' +
+      '<span class="tiny faint">' + App.esc(App.t("dialog.event_goal.target_hint")) + "</span></label>" +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.event_goal.deadline_label")) + '</span>' +
       '<input type="date" name="deadline" value="' + App.esc(event.event_date) + '" required></label>' +
-      '<label class="field"><span class="field-label">Tài khoản tích lũy</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.event_goal.account_label")) + '</span>' +
       "<select name=\"account_id\">" + App.accountOptions(App.state.data.accounts, null, true) + "</select></label>" +
       '<input type="hidden" name="goal_type" value="savings">' +
-      '<p class="tiny muted">Chia đều ' + App.formatDong(event.remaining_total) + " cho " +
-      Math.max(event.periods_until, 1) + " kỳ còn lại là khoảng " +
-      App.formatDong(Math.round(event.remaining_total / Math.max(event.periods_until, 1))) + " mỗi kỳ.</p>" +
-      "<button type=\"submit\">Tạo và gắn vào sự kiện</button>" +
+      '<p class="tiny muted">' + App.esc(App.t("dialog.event_goal.split_hint", {
+        amount: App.formatDong(event.remaining_total),
+        periods: Math.max(event.periods_until, 1),
+        perPeriod: App.formatDong(Math.round(event.remaining_total / Math.max(event.periods_until, 1))),
+      })) + "</p>" +
+      "<button type=\"submit\">" + App.esc(App.t("dialog.event_goal.submit")) + "</button>" +
       '<div id="event-goal-message"></div>' +
     "</form>");
   App.$("#tx-dialog").showModal();
@@ -1479,29 +1478,27 @@ App.createGoalFromEvent = function (eventId) {
 
 App.showConnectionForm = function () {
   App.setHtml("#tx-dialog-body",
-    '<div class="dialog-head"><h2>Kết nối Google Sheet</h2>' +
-    '<button type="button" class="icon-btn" data-close-dialog aria-label="Đóng">\u2715</button></div>' +
+    '<div class="dialog-head"><h2>' + App.esc(App.t("dialog.connection.title")) + '</h2>' +
+    '<button type="button" class="icon-btn" data-close-dialog aria-label="' + App.esc(App.t("dialog.edit_tx.close_aria")) + '">\u2715</button></div>' +
     '<form id="connection-form">' +
-      '<label class="field"><span class="field-label">Địa chỉ bảng tính</span>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.connection.url_label")) + '</span>' +
       '<input type="text" name="url" value="' + App.esc(App.config ? App.config.url : "") +
-      '" placeholder="https://script.google.com/macros/s/…/exec" required>' +
-      '<span class="tiny faint">URL từ Apps Script → Triển khai → Ứng dụng web, kết thúc bằng /exec.</span></label>' +
-      '<label class="field"><span class="field-label">Mã kết nối</span>' +
+      '" placeholder="https://script.google.com/macros/s/\u2026/exec" required>' +
+      '<span class="tiny faint">' + App.esc(App.t("dialog.connection.url_hint")) + "</span></label>" +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("dialog.connection.token_label")) + '</span>' +
       '<input type="password" name="token" value="' + App.esc(App.config ? App.config.token : "") +
       '" autocomplete="current-password" required>' +
-      '<span class="tiny faint">Xem lại ở menu Sổ tài chính → ② Xem mã kết nối trên Google Sheet.</span></label>' +
-      "<button type=\"submit\">Lưu và tải lại</button>" +
+      '<span class="tiny faint">' + App.esc(App.t("dialog.connection.token_hint")) + "</span></label>" +
+      "<button type=\"submit\">" + App.esc(App.t("dialog.connection.submit")) + "</button>" +
       '<div id="connection-message"></div>' +
     "</form>"
   );
   App.$("#tx-dialog").showModal();
 };
 
-App.THEME_LABEL = { auto: "Tự động", light: "Sáng", dark: "Tối" };
-
 App.updateThemeButton = function () {
   var button = App.$("#theme-toggle");
-  if (button) button.title = "Giao diện: " + App.THEME_LABEL[App.currentTheme()];
+  if (button) button.title = App.t("settings.appearance_title") + ": " + App.label("theme", App.currentTheme());
 };
 
 // ------------------------------------------------------------ connect link
@@ -1536,15 +1533,13 @@ App.showDeviceLink = function () {
     "#url=" + encodeURIComponent(App.config.url) + "&token=" + encodeURIComponent(App.config.token);
 
   App.setHtml("#tx-dialog-body",
-    '<div class="dialog-head"><h2>Mở sổ trên thiết bị khác</h2>' +
-    '<button type="button" class="icon-btn" data-close-dialog aria-label="Đóng">\u2715</button></div>' +
-    '<p class="small muted">Mở đường dẫn này trên điện thoại hay máy khác là vào thẳng sổ, ' +
-    "không phải gõ lại gì.</p>" +
+    '<div class="dialog-head"><h2>' + App.esc(App.t("dialog.device_link.title")) + '</h2>' +
+    '<button type="button" class="icon-btn" data-close-dialog aria-label="' + App.esc(App.t("dialog.edit_tx.close_aria")) + '">\u2715</button></div>' +
+    '<p class="small muted">' + App.esc(App.t("dialog.device_link.intro")) + "</p>" +
     '<textarea id="device-link" rows="4" readonly style="font-family:var(--font-num);font-size:0.75rem">' +
     App.esc(link) + "</textarea>" +
-    '<button type="button" id="copy-device-link">Sao chép đường dẫn</button>' +
-    '<p class="notice notice-info">Đường dẫn này <b>chứa mã kết nối</b> — ai có nó là mở được sổ của bạn. ' +
-    "Chỉ gửi cho chính mình, đừng đăng công khai hay gửi vào nhóm chat.</p>" +
+    '<button type="button" id="copy-device-link">' + App.esc(App.t("dialog.device_link.copy")) + "</button>" +
+    '<p class="notice notice-info">' + App.t("dialog.device_link.warning") + "</p>" +
     '<div id="device-link-message"></div>');
   App.$("#tx-dialog").showModal();
 };
@@ -1554,6 +1549,8 @@ App.showDeviceLink = function () {
 (function boot() {
   App.config = App.loadConfig();
   App.updateThemeButton();
+  document.documentElement.setAttribute("lang", App.currentLang());
+  App.applyStaticI18n();
 
   // A #url=…&token=… link connects this device outright; a link with only the
   // URL just pre-fills it, which is the safe form to pass around in writing.
