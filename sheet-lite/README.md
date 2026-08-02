@@ -19,7 +19,7 @@ Bạn chỉ cần tạo một bảng tính trắng — mã sẽ tự dựng mọ
 ### 1. Tạo bảng tính trắng
 
 Vào [sheets.new](https://sheets.new) để tạo một Google Sheet mới. Không cần
-tạo tab, không cần đặt tên cột — bước 3 lo hết.
+tạo tab, không cần đặt tên cột — bước 3 lo hết (hiện là 10 tab).
 
 ### 2. Dán mã Apps Script
 
@@ -97,10 +97,10 @@ Cùng chỗ đó, `PERIOD_START_DAY` đổi được ngày bắt đầu kỳ (m�
 
 | Tab | Nội dung |
 | --- | --- |
-| **Nhà** | Điểm sức khỏe tài chính, tiền có thể dùng, dải kỳ (so nhịp tiêu với nhịp thời gian), cảnh báo rủi ro, 6 chỉ số thành phần, nhắc ngân sách, mục tiêu, xu hướng tiết kiệm, số dư từng tài khoản, nhận xét AI hằng ngày. |
+| **Nhà** | Điểm sức khỏe tài chính, tiền có thể dùng, dải kỳ (so nhịp tiêu với nhịp thời gian), cảnh báo rủi ro, 7 chỉ số thành phần, nhắc ngân sách, mục tiêu, sự kiện sắp tới, cân đối 50/30/20, xu hướng tiết kiệm, số dư tài khoản, nhận xét AI hằng ngày. |
 | **Nhập** | Ghi chi / thu / chuyển khoản nội bộ. Hiểu cách viết tắt `500k`, `1tr`, `2tr5`. Ghi lùi ngày được. Khoản chi từ 1 triệu trở lên sẽ hỏi có muốn mô phỏng trước không. |
 | **Sổ** | Toàn bộ giao dịch, nhóm theo ngày, tìm kiếm, lọc theo loại, sửa và xóa. |
-| **Kế hoạch** | Ngân sách theo kỳ (có gợi ý từ lịch sử), mục tiêu tài chính, khoản định kỳ, dự báo dòng tiền 6 kỳ, mô phỏng khoản chi lớn. |
+| **Kế hoạch** | Ngân sách theo kỳ (có gợi ý từ lịch sử), mục tiêu tài chính, **kế hoạch sự kiện**, **nguồn thu + độ tin cậy**, khoản định kỳ, dự báo dòng tiền 6 kỳ, mô phỏng khoản chi lớn. |
 | **Cài đặt** | Kết nối, kiểm tra thiết lập, tài khoản, danh mục, luật tự động phân loại, tải CSV. |
 
 **Kỳ tài chính** là ý tưởng tổ chức của cả app: mặc định từ ngày 15 tháng này
@@ -112,6 +112,17 @@ Nếu bỏ lỡ vài kỳ, nó ghi bù cho tới hiện tại.
 
 **Tự động phân loại**: đặt luật kiểu `highlands → Cà phê/Trà sữa` ở Cài đặt. Khi
 ghi giao dịch mà bỏ trống danh mục, mô tả chứa từ khóa đó sẽ được xếp tự động.
+
+**Nguồn thu + độ tin cậy**: một khoản thu *dự kiến* không nên được coi là chắc
+chắn chỉ vì bạn mong nó tới. Khai báo mỗi nguồn kèm độ tin cậy 0–100%, app sẽ
+chiết khấu lại rồi so với chi phí thiết yếu để biết mức sống hiện tại có được
+thu nhập chắc chắn nuôi nổi không.
+
+**Kế hoạch sự kiện**: một chuyến đi, một đám cưới, một lần đổi xe — ghi ra trước
+kèm từng khoản mục. Phần **chưa trả** sẽ tự bị trừ vào dự báo dòng tiền ở đúng
+kỳ diễn ra, thay vì ập đến bất ngờ. Sự kiện đủ lớn và đủ xa sẽ được đề nghị biến
+thành mục tiêu tích lũy (tạo xong là hai bên tự gắn với nhau, không hỏi lại).
+Mẫu có sẵn chỉ gợi ý **tên khoản mục**, không gợi ý giá.
 
 **AI** chỉ diễn giải những con số đã tính sẵn bằng JavaScript, không bao giờ tự
 tính ra số mới. Không có `GEMINI_API_KEY` thì các phần AI tự ẩn đi, mọi thứ còn
@@ -133,6 +144,9 @@ sửa dữ liệu trực tiếp trong Sheet.
 | `Goals` | `id, name, goal_type, target_amount, deadline, account_id, created_at, is_active` |
 | `Recurring` | `id, name, amount, direction, account_id, category_id, frequency, next_due, is_active` |
 | `Rules` | `id, pattern, category_id, priority, hit_count, created_from` |
+| `IncomeSources` | `id, name, expected_amount, reliability, is_active` |
+| `EventPlans` | `id, name, event_date, linked_goal_id, note, is_active, created_at` |
+| `EventPlanItems` | `id, plan_id, name, expected_amount, actual_amount` |
 
 Vài quy ước quan trọng nếu sửa tay:
 

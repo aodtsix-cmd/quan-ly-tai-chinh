@@ -304,6 +304,14 @@ App.renderMetrics = function (data) {
       metrics.income_stability.has_data ? "càng thấp càng đều" : "cần ít nhất 2 kỳ"),
   ];
 
+  if (data.income_sustainability.has_data) {
+    var margin = data.income_sustainability.margin;
+    tiles.push(App.metricTile("Thu chắc chắn",
+      '<span class="' + (margin >= 0 ? "amount-in" : "amount-out") + '">' +
+      App.formatPct(data.income_sustainability.covered_pct) + "</span>",
+      margin >= 0 ? "đã đủ chi thiết yếu" : "chưa đủ chi thiết yếu"));
+  }
+
   return '<div class="metric-grid">' + tiles.join("") + "</div>";
 };
 
@@ -352,6 +360,29 @@ App.renderGoalsSummary = function (data) {
     "</dl>" +
     '<p class="small ' + (behind.length ? "amount-out" : "muted") + '">' + App.esc(note) + "</p>" +
     "</section>";
+};
+
+App.renderEventCard = function (data) {
+  var upcoming = data.events.filter(function (event) {
+    return !event.is_past && event.remaining_total > 0;
+  })[0];
+  if (!upcoming) return "";
+
+  // Cross-referencing the forecast: can today's liquid balance absorb it?
+  var affordable = data.money.liquid_balance >= upcoming.remaining_total;
+  var when = upcoming.days_until === 0 ? "hôm nay" : "còn " + upcoming.days_until + " ngày";
+
+  return '<section class="card">' +
+    '<div class="card-head"><h2>Sự kiện sắp tới</h2>' +
+    '<button type="button" class="link" data-goto="plan:events">Xem tất cả</button></div>' +
+    '<div class="spread"><span>' + App.esc(upcoming.name) + '</span>' +
+    '<span class="row-amount">' + App.formatDong(upcoming.remaining_total) + "</span></div>" +
+    '<p class="small muted">' + App.esc(upcoming.event_date) + " · " + App.esc(when) + " · còn phải trả</p>" +
+    '<p class="tiny ' + (affordable ? "muted" : "amount-out") + '">' +
+    (affordable
+      ? "Số dư hiện tại thừa sức lo khoản này."
+      : "Số dư hiện tại chưa đủ cho khoản này — cần dành thêm trước ngày đó.") +
+    "</p></section>";
 };
 
 App.renderTrendCard = function (data) {
@@ -455,6 +486,7 @@ App.renderDashboard = function (data) {
     App.renderMetrics(data) +
     App.renderBudgetReminders(data) +
     App.renderGoalsSummary(data) +
+    App.renderEventCard(data) +
     App.renderBalanceCard(data) +
     App.renderTrendCard(data) +
     App.renderAccountsCard(data);
@@ -638,12 +670,157 @@ App.renderRecurringPlan = function (data) {
     "</form></section>";
 };
 
+App.renderIncomePlan = function (data) {
+  var sustainability = data.income_sustainability;
+
+  var rows = data.income_sources.map(function (source) {
+    return '<div class="bar-item">' +
+      '<div class="bar-top"><span>' + App.esc(source.name) + "</span>" +
+      '<span class="bar-figures">' + App.formatCompact(source.expected_amount) + " đ · " + source.reliability + "%</span></div>" +
+      App.track(source.reliability, source.reliability >= 80 ? "is-good" : (source.reliability >= 50 ? "" : "is-warn")) +
+      '<div class="spread tiny muted"><span>Tính chắc chắn được ' + App.formatDong(source.reliable_amount) + "/kỳ</span>" +
+      '<button type="button" class="link link-danger" data-hide-income="' + App.esc(source.id) + '">Ẩn</button></div>' +
+      "</div>";
+  }).join("");
+
+  var summary = "";
+  if (sustainability.has_data) {
+    var covered = sustainability.margin >= 0;
+    summary = '<dl class="stack-tight">' +
+      '<div class="kv"><dt>Thu chắc chắn mỗi kỳ</dt><dd>' + App.formatDong(sustainability.reliable_income) + "</dd></div>" +
+      '<div class="kv"><dt>Chi thiết yếu mỗi kỳ</dt><dd>' + App.formatDong(sustainability.essential_expense) + "</dd></div>" +
+      '<div class="kv"><dt>Chênh lệch</dt><dd class="' + (covered ? "amount-in" : "amount-out") + '">' +
+      (covered ? "+" : "") + App.formatDong(sustainability.margin) + "</dd></div>" +
+    "</dl>" +
+    '<p class="small ' + (covered ? "muted" : "amount-out") + '">' +
+    (covered
+      ? "Thu nhập chắc chắn đã đủ trang trải chi phí thiết yếu — phần còn lại là vùng an toàn của bạn."
+      : "Thu nhập chắc chắn chưa đủ chi thiết yếu. Phần thiếu đang phải bù bằng khoản thu bấp bênh hoặc tiền tiết kiệm.") +
+    "</p>";
+  } else {
+    summary = '<p class="small muted">Thêm nguồn thu bên dưới, và ghi đủ một kỳ chi tiêu ở danh mục thiết yếu, ' +
+      "để biết thu nhập chắc chắn có đủ nuôi mức sống hiện tại không.</p>";
+  }
+
+  return '<section class="card">' +
+      '<div class="card-head"><h2>Thu nhập chắc chắn</h2></div>' +
+      '<p class="tiny muted">Một khoản thu <i>dự kiến</i> không nên được coi là chắc chắn chỉ vì bạn mong nó tới. ' +
+      "Độ tin cậy là thứ cho phép app chiết khấu nó lại.</p>" +
+      summary +
+    "</section>" +
+    '<section class="card">' +
+      '<div class="card-head"><h2>Các nguồn thu</h2></div>' +
+      (rows || App.emptyState("Chưa khai báo nguồn thu nào.")) +
+    "</section>" +
+    '<section class="card"><h2>Thêm nguồn thu</h2><form id="income-form">' +
+      '<label class="field"><span class="field-label">Tên nguồn thu</span>' +
+      '<input type="text" name="name" placeholder="VD: Lương dạy học" required></label>' +
+      '<label class="field"><span class="field-label">Số tiền dự kiến mỗi kỳ</span>' +
+      '<input type="text" inputmode="numeric" name="expected_amount" placeholder="VD: 8tr" required></label>' +
+      '<label class="field"><span class="field-label">Độ tin cậy (%)</span>' +
+      '<input type="number" name="reliability" min="0" max="100" step="5" value="100" required>' +
+      '<span class="tiny faint">100 = gần như chắc chắn nhận được. 40 = việc thời vụ, tháng có tháng không.</span></label>' +
+      '<button type="submit">Thêm nguồn thu</button>' +
+      '<div id="income-message"></div>' +
+    "</form></section>";
+};
+
+App.renderEventsPlan = function (data) {
+  var upcoming = data.events.filter(function (e) { return !e.is_past; });
+  var past = data.events.filter(function (e) { return e.is_past; });
+
+  function eventCard(event) {
+    var pct = event.expected_total > 0 ? (event.actual_total / event.expected_total) * 100 : 0;
+    var when = event.is_past
+      ? "Đã diễn ra " + Math.abs(event.days_until) + " ngày trước"
+      : (event.days_until === 0 ? "Diễn ra hôm nay" : "Còn " + event.days_until + " ngày · kỳ " + event.period_id);
+
+    var items = event.items.map(function (item) {
+      return '<div class="kv">' +
+        "<dt>" + App.esc(item.name) + "</dt>" +
+        '<dd><input type="text" inputmode="numeric" data-event-item="' + App.esc(item.id) + '"' +
+        ' value="' + (item.actual_amount ? App.esc(item.actual_amount) : "") + '"' +
+        ' placeholder="' + (item.expected_amount ? "dự kiến " + App.formatCompact(item.expected_amount) : "chưa ước lượng") + '"' +
+        ' style="width:8rem;min-height:2.2rem;padding:0.3rem 0.5rem;font-size:0.875rem"></dd>' +
+        "</div>";
+    }).join("");
+
+    var goalPrompt = event.should_suggest_goal
+      ? '<div class="notice notice-info">' +
+        "<p>Sự kiện này còn " + App.formatDong(event.remaining_total) + " và cách đây " + event.periods_until +
+        " kỳ. Biến nó thành mục tiêu tích lũy để dành dần mỗi kỳ?</p>" +
+        '<button type="button" class="link" data-event-to-goal="' + App.esc(event.id) + '">Tạo mục tiêu cho sự kiện này</button>' +
+        "</div>"
+      : "";
+
+    return '<section class="card">' +
+      '<div class="card-head"><h2>' + App.esc(event.name) + "</h2>" +
+      '<button type="button" class="link link-danger" data-delete-event="' + App.esc(event.id) + '">Xóa</button></div>' +
+      '<p class="tiny muted">' + App.esc(event.event_date) + " · " + App.esc(when) +
+      (event.linked_goal_id ? " · đã gắn mục tiêu" : "") + "</p>" +
+      '<dl class="stack-tight">' +
+        '<div class="kv"><dt>Dự kiến</dt><dd>' + App.formatDong(event.expected_total) + "</dd></div>" +
+        '<div class="kv"><dt>Đã chi thực tế</dt><dd>' + App.formatDong(event.actual_total) + "</dd></div>" +
+        '<div class="kv"><dt>Còn phải trả</dt><dd class="' + (event.remaining_total > 0 ? "amount-out" : "amount-in") + '">' +
+        App.formatDong(event.remaining_total) + "</dd></div>" +
+      "</dl>" +
+      App.track(pct, pct > 100 ? "is-over" : "is-good") +
+      goalPrompt +
+      '<p class="eyebrow" style="margin-top:0.5rem">Chi thực tế từng khoản</p>' +
+      '<dl class="stack-tight">' + items + "</dl>" +
+      '<p class="tiny faint">Điền số thực tế khi đã chi. Phần chưa trả sẽ được trừ vào dự báo dòng tiền ở đúng kỳ diễn ra.</p>' +
+      "</section>";
+  }
+
+  var templateOptions = data.event_templates.map(function (template, index) {
+    return '<option value="' + index + '">' + App.esc(template.name) + "</option>";
+  }).join("");
+
+  return (upcoming.length ? upcoming.map(eventCard).join("") : '<section class="card">' +
+      "<h2>Sự kiện sắp tới</h2>" + App.emptyState("Chưa có kế hoạch sự kiện nào.") +
+      '<p class="tiny muted">Một chuyến đi, một đám cưới, một lần chuyển nhà — ghi ra trước để nó xuất hiện ' +
+      "trong dự báo thay vì ập đến bất ngờ.</p></section>") +
+    '<section class="card"><h2>Lên kế hoạch sự kiện</h2><form id="event-form">' +
+      '<label class="field"><span class="field-label">Tên sự kiện</span>' +
+      '<input type="text" name="name" placeholder="VD: Du lịch Đà Nẵng" required></label>' +
+      '<label class="field"><span class="field-label">Ngày diễn ra</span>' +
+      '<input type="date" name="event_date" required></label>' +
+      '<label class="field"><span class="field-label">Dùng mẫu có sẵn</span>' +
+      '<select id="event-template"><option value="">— Tự nhập từ đầu —</option>' + templateOptions + "</select>" +
+      '<span class="tiny faint">Mẫu chỉ gợi ý <b>tên khoản mục</b>, không gợi ý giá — giá phụ thuộc hoàn toàn vào nơi bạn ở và hoàn cảnh.</span></label>' +
+      '<p class="eyebrow" style="margin-top:0.5rem">Các khoản mục</p>' +
+      '<div id="event-items"></div>' +
+      '<button type="button" class="secondary small" id="add-event-item">+ Thêm khoản mục</button>' +
+      '<button type="submit">Lưu kế hoạch</button>' +
+      '<div id="event-message"></div>' +
+    "</form></section>" +
+    (past.length
+      ? '<section class="card"><h2>Đã diễn ra</h2>' + past.map(function (event) {
+          return '<div class="row"><div class="row-main"><span class="row-title">' + App.esc(event.name) + "</span>" +
+            '<span class="row-meta">' + App.esc(event.event_date) + "</span></div>" +
+            '<div class="row-end"><span class="row-amount">' + App.formatCompact(event.actual_total) + " đ</span>" +
+            '<span class="row-actions"><button type="button" class="link link-danger" data-delete-event="' +
+            App.esc(event.id) + '">Xóa</button></span></div></div>';
+        }).join("") + "</section>"
+      : "");
+};
+
+App.eventItemRow = function (name, readonly) {
+  return '<div class="inline" style="gap:0.5rem;margin-bottom:0.5rem">' +
+    '<input type="text" class="grow" data-item-name value="' + App.esc(name || "") + '"' +
+    (readonly ? " readonly" : "") + ' placeholder="Tên khoản mục">' +
+    '<input type="text" inputmode="numeric" data-item-amount placeholder="Số tiền" style="width:8rem">' +
+    "</div>";
+};
+
 App.renderForecastPlan = function () {
   return '<section class="card">' +
     "<h2>Dự báo dòng tiền</h2>" +
     '<p class="tiny muted">Kéo dài mức thu/chi trung bình 3 kỳ gần nhất về phía trước, cộng dồn số dư qua từng kỳ. ' +
     "Đây là phép ngoại suy đơn giản — chưa tính mùa vụ hay biến động bất thường.</p>" +
     '<label class="inline small"><input type="checkbox" id="forecast-goals" style="width:auto;min-height:0"> Trừ cả tiền dành cho mục tiêu</label>' +
+    '<label class="inline small"><input type="checkbox" id="forecast-reliable" style="width:auto;min-height:0"> Chỉ tính thu nhập chắc chắn (thay vì trung bình lịch sử)</label>' +
+    '<p class="tiny faint">Sự kiện đã lên kế hoạch luôn được trừ vào đúng kỳ diễn ra.</p>' +
     '<button type="button" class="secondary" id="run-forecast">Xem dự báo 6 kỳ tới</button>' +
     '<div id="forecast-result"></div></section>';
 };

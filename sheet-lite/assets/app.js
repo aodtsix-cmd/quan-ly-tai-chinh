@@ -139,6 +139,36 @@ App.notice = function (selector, text, kind) {
 
 // -------------------------------------------------------------- data loading
 
+// An Apps Script round trip takes a second or three, and a dead deployment
+// URL can hang indefinitely - so something must be on screen from the first
+// paint. A blank page reads as "the app is broken" long before it is.
+App.showLoading = function () {
+  App.setHtml("#view-home",
+    '<section class="card">' +
+      '<span class="eyebrow">Đang tải</span>' +
+      "<h1>Đang mở sổ từ Google Sheet…</h1>" +
+      '<p class="small muted">Lần đầu trong ngày thường mất vài giây.</p>' +
+    "</section>");
+};
+
+// Never leave the screen blank. Every failure - no network, wrong token, an
+// out-of-date Code.gs, or a render that threw - lands here with a plain
+// explanation and something to press.
+App.showFatal = function (title, messageHtml) {
+  App.state.data = null;
+  App.state.fatalHtml =
+    '<section class="card">' +
+      '<span class="eyebrow">Không mở được sổ</span>' +
+      "<h1>" + App.esc(title) + "</h1>" +
+      '<div class="small muted stack-tight">' + messageHtml + "</div>" +
+      '<div class="button-row">' +
+        '<button type="button" id="retry-load">Thử lại</button>' +
+        '<button type="button" class="secondary" id="show-connection">Đổi kết nối</button>' +
+      "</div>" +
+    "</section>";
+  App.switchTab("home");
+};
+
 App.load = function (options) {
   var opts = options || {};
   App.state.loading = true;
@@ -146,8 +176,24 @@ App.load = function (options) {
 
   return App.apiGet("bootstrap", params)
     .then(function (data) {
-      App.state.data = data;
       App.state.loading = false;
+
+      // The connection can succeed while pointing at an OLDER Code.gs whose
+      // response has none of the fields this frontend reads - which used to
+      // throw deep inside rendering and leave a blank page with no clue why.
+      if (!data || !data.period || !data.money || !data.health || !data.metrics) {
+        App.showFatal("Mã trên Google Sheet đã cũ hơn giao diện",
+          "<p>Kết nối thì được, nhưng bảng tính đang chạy một bản <code>Code.gs</code> cũ, " +
+          "thiếu những số liệu mà trang này cần.</p>" +
+          "<p>Mở Apps Script của bảng tính, dán lại <code>Code.gs</code> mới nhất, rồi " +
+          "<b>Triển khai → Quản lý bản triển khai → sửa (✏) → Phiên bản: <u>Mới</u> → Triển khai</b>. " +
+          "Chọn đúng “Phiên bản: Mới” mới ăn — giữ nguyên bản cũ thì URL vẫn chạy mã cũ.</p>" +
+          "<p>Nếu đây là một bảng tính khác, bấm “Đổi kết nối” để trỏ sang bảng tính đúng.</p>");
+        return null;
+      }
+
+      App.state.fatalHtml = null;
+      App.state.data = data;
       App.renderCurrentTab();
       App.updateTopbar();
       if (!opts.quiet && data.recurring_generated > 0) {
@@ -159,11 +205,7 @@ App.load = function (options) {
     })
     .catch(function (err) {
       App.state.loading = false;
-      App.$("#view-home").innerHTML =
-        '<section class="card"><h2>Chưa tải được dữ liệu</h2>' +
-        '<p class="small muted">' + App.esc(App.errorText(err)) + "</p>" +
-        '<button type="button" class="secondary" data-goto="settings">Mở Cài đặt</button></section>';
-      App.switchTab("home");
+      App.showFatal("Chưa tải được dữ liệu", "<p>" + App.esc(App.errorText(err)) + "</p>");
     });
 };
 
@@ -195,12 +237,28 @@ App.switchTab = function (tab) {
 
 App.renderCurrentTab = function () {
   var data = App.state.data;
-  if (!data) return;
-  if (App.state.tab === "home") App.setHtml("#view-home", App.renderDashboard(data)), App.loadDailySummary();
-  else if (App.state.tab === "add") App.refreshAddForm();
-  else if (App.state.tab === "list") App.renderList();
-  else if (App.state.tab === "plan") App.renderPlan();
-  else if (App.state.tab === "settings") App.renderSettingsTab();
+
+  // No data yet: show whatever the last failure said, on whichever tab the
+  // user is looking at, rather than an empty screen.
+  if (!data) {
+    if (App.state.fatalHtml) App.setHtml("#view-" + App.state.tab, App.state.fatalHtml);
+    return;
+  }
+
+  // A render that throws must not blank the page. This is the net that a
+  // mismatched backend payload used to fall straight through.
+  try {
+    if (App.state.tab === "home") App.setHtml("#view-home", App.renderDashboard(data)), App.loadDailySummary();
+    else if (App.state.tab === "add") App.refreshAddForm();
+    else if (App.state.tab === "list") App.renderList();
+    else if (App.state.tab === "plan") App.renderPlan();
+    else if (App.state.tab === "settings") App.renderSettingsTab();
+  } catch (err) {
+    App.showFatal("Giao diện gặp lỗi khi hiển thị dữ liệu",
+      "<p>" + App.esc(String((err && err.message) || err)) + "</p>" +
+      "<p>Thường là do mã <code>Code.gs</code> trên Google Sheet cũ hơn trang này. " +
+      "Dán lại bản mới rồi triển khai với <b>Phiên bản: Mới</b>.</p>");
+  }
 };
 
 // --------------------------------------------------------------- dashboard
@@ -463,6 +521,8 @@ App.openEditDialog = function (id) {
 App.PLAN_SECTIONS = [
   ["budget", "Ngân sách"],
   ["goals", "Mục tiêu"],
+  ["events", "Sự kiện"],
+  ["income", "Thu nhập"],
   ["recurring", "Định kỳ"],
   ["forecast", "Dự báo"],
   ["simulate", "Mô phỏng"],
@@ -478,11 +538,38 @@ App.renderPlan = function () {
   var body;
   if (App.state.planSection === "budget") body = App.renderBudgetPlan(data);
   else if (App.state.planSection === "goals") body = App.renderGoalsPlan(data);
+  else if (App.state.planSection === "events") body = App.renderEventsPlan(data);
+  else if (App.state.planSection === "income") body = App.renderIncomePlan(data);
   else if (App.state.planSection === "recurring") body = App.renderRecurringPlan(data);
   else if (App.state.planSection === "forecast") body = App.renderForecastPlan();
   else body = App.renderSimulationPlan();
 
   App.setHtml("#view-plan", nav + body);
+  if (App.state.planSection === "events") App.resetEventItems();
+};
+
+// The new-event form starts with a few blank rows; picking a template swaps in
+// its item NAMES (never prices) and leaves every amount for the user to fill.
+App.resetEventItems = function (templateIndex) {
+  var host = App.$("#event-items");
+  if (!host) return;
+  var html = "";
+  if (templateIndex !== undefined && templateIndex !== "") {
+    var template = App.state.data.event_templates[Number(templateIndex)];
+    if (template) template.items.forEach(function (name) { html += App.eventItemRow(name, true); });
+  }
+  var blanks = templateIndex ? 1 : 3;
+  for (var i = 0; i < blanks; i++) html += App.eventItemRow("", false);
+  host.innerHTML = html;
+};
+
+App.collectEventItems = function () {
+  return App.$$("#event-items > div").map(function (row) {
+    return {
+      name: row.querySelector("[data-item-name]").value.trim(),
+      expected_amount: row.querySelector("[data-item-amount]").value.trim(),
+    };
+  }).filter(function (item) { return item.name; });
 };
 
 App.saveBudgets = function () {
@@ -536,9 +623,14 @@ App.saveBudgets = function () {
 
 App.runForecast = function () {
   var includeGoals = App.$("#forecast-goals").checked;
+  var useReliable = App.$("#forecast-reliable").checked;
   App.setHtml("#forecast-result", '<p class="small muted">Đang tính…</p>');
 
-  App.apiGet("get_forecast", { periods_ahead: 6, include_goals: includeGoals ? "1" : "0" })
+  App.apiGet("get_forecast", {
+    periods_ahead: 6,
+    include_goals: includeGoals ? "1" : "0",
+    income_basis_reliable: useReliable ? "1" : "0",
+  })
     .then(function (result) {
       if (result.periods_of_history === 0) {
         App.setHtml("#forecast-result",
@@ -548,17 +640,21 @@ App.runForecast = function () {
       var balances = result.periods.map(function (p) { return p.projected_balance; });
       var labels = result.periods.map(function (p) { return p.period_id.slice(5) + "/" + p.period_id.slice(2, 4); });
       var rows = result.periods.map(function (p) {
-        return '<div class="kv"><dt>Kỳ ' + App.esc(p.period_id) + "</dt><dd class=\"" +
-          (p.projected_balance < 0 ? "amount-out" : "") + '">' + App.formatDong(p.projected_balance) + "</dd></div>";
+        return '<div class="kv"><dt>Kỳ ' + App.esc(p.period_id) +
+          (p.event_cost > 0 ? ' <span class="tiny amount-out">(sự kiện −' + App.formatCompact(p.event_cost) + ")</span>" : "") +
+          "</dt><dd class=\"" + (p.projected_balance < 0 ? "amount-out" : "") + '">' +
+          App.formatDong(p.projected_balance) + "</dd></div>";
       }).join("");
 
       App.setHtml("#forecast-result",
         App.lineChart(labels, balances) +
         '<dl class="stack-tight">' + rows + "</dl>" +
-        '<p class="tiny faint">Dựa trên thu ' + App.formatCompact(result.avg_income) + " đ và chi " +
-        App.formatCompact(result.avg_expense) + " đ mỗi kỳ" +
+        '<p class="tiny faint">Dựa trên thu ' + App.formatCompact(result.income_per_period) + " đ" +
+        (result.income_basis === "reliable" ? " (thu chắc chắn)" : " (trung bình " + result.periods_of_history + " kỳ gần nhất)") +
+        " và chi " + App.formatCompact(result.avg_expense) + " đ mỗi kỳ" +
         (result.goal_contribution > 0 ? ", trừ " + App.formatCompact(result.goal_contribution) + " đ cho mục tiêu" : "") +
-        " (trung bình " + result.periods_of_history + " kỳ gần nhất).</p>");
+        (result.event_total > 0 ? ", trừ " + App.formatCompact(result.event_total) + " đ cho sự kiện đã lên kế hoạch" : "") +
+        ".</p>");
     })
     .catch(function (err) {
       App.setHtml("#forecast-result", '<p class="notice notice-error">' + App.esc(App.errorText(err)) + "</p>");
@@ -685,8 +781,9 @@ document.addEventListener("click", function (event) {
   var target = event.target.closest("[data-tab], [data-goto], [data-plan-section], [data-filter], " +
     "[data-dismiss-alert], [data-delete-tx], [data-edit-tx], [data-hide-goal], [data-hide-recurring], " +
     "[data-delete-rule], [data-edit-account], [data-apply-suggestion], [data-period-shift], [data-close-dialog], " +
+    "[data-hide-income], [data-delete-event], [data-event-to-goal], #add-event-item, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
-    "#reset-connection, #show-connection, #ai-goal-priority, #ai-simulation, #theme-toggle");
+    "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, #theme-toggle");
   if (!target) return;
 
   var attr = function (name) { return target.getAttribute(name); };
@@ -745,6 +842,26 @@ document.addEventListener("click", function (event) {
 
   if (attr("data-edit-account")) { App.openAccountDialog(attr("data-edit-account")); return; }
 
+  if (attr("data-hide-income")) {
+    if (!window.confirm("Ẩn nguồn thu này? Các chỉ số sẽ tính lại mà không có nó.")) return;
+    App.apiPost("deactivate_income_source", { id: attr("data-hide-income") })
+      .then(function () { return App.load({ quiet: true }); })
+      .catch(function (err) { window.alert(App.errorText(err)); });
+    return;
+  }
+
+  if (attr("data-delete-event")) {
+    if (!window.confirm("Xóa kế hoạch sự kiện này cùng toàn bộ khoản mục của nó?")) return;
+    App.apiPost("delete_event_plan", { id: attr("data-delete-event") })
+      .then(function () { return App.load({ quiet: true }); })
+      .catch(function (err) { window.alert(App.errorText(err)); });
+    return;
+  }
+
+  // Turning an event into a goal: create the goal, then link it back so the
+  // suggestion never reappears for that event.
+  if (attr("data-event-to-goal")) { App.createGoalFromEvent(attr("data-event-to-goal")); return; }
+
   if (attr("data-apply-suggestion")) {
     var field = App.$("#budget-" + attr("data-apply-suggestion"));
     if (field) { field.value = attr("data-amount"); field.focus(); }
@@ -767,6 +884,8 @@ document.addEventListener("click", function (event) {
     case "run-health-check": App.runHealthCheck(); break;
     case "run-setup-seed": App.runSetup(true); break;
     case "theme-toggle": App.cycleTheme(); App.updateThemeButton(); break;
+    case "retry-load": App.showLoading(); App.load(); break;
+    case "add-event-item": App.$("#event-items").insertAdjacentHTML("beforeend", App.eventItemRow("", false)); break;
     case "show-connection": App.showConnectionForm(); break;
     case "reset-connection":
       if (window.confirm("Xóa URL và mật khẩu đã lưu trên máy này? Dữ liệu trong Google Sheet không bị ảnh hưởng.")) {
@@ -824,7 +943,24 @@ document.addEventListener("submit", function (event) {
       .catch(function (err) { App.notice(messageSelector, App.errorText(err), "error"); });
   }
 
-  if (formId === "goal-form") post("add_goal", "#goal-message", "Đã tạo mục tiêu.");
+  if (formId === "income-form") post("add_income_source", "#income-message", "Đã thêm nguồn thu.");
+  else if (formId === "event-form") {
+    event.preventDefault();
+    var items = App.collectEventItems();
+    if (items.length === 0) {
+      App.notice("#event-message", "Thêm ít nhất một khoản mục có tên đã nhé.", "error");
+      return;
+    }
+    App.notice("#event-message", "Đang lưu…", "info");
+    App.apiPost("add_event_plan", { name: body.name, event_date: body.event_date, items: items })
+      .then(function () {
+        form.reset();
+        return App.load({ quiet: true });
+      })
+      .then(function () { App.notice("#event-message", "Đã lưu kế hoạch sự kiện.", "ok"); })
+      .catch(function (err) { App.notice("#event-message", App.errorText(err), "error"); });
+  }
+  else if (formId === "goal-form") post("add_goal", "#goal-message", "Đã tạo mục tiêu.");
   else if (formId === "recurring-form") post("add_recurring", "#recurring-message", "Đã thêm khoản định kỳ.");
   else if (formId === "account-form") post("add_account", "#account-message", "Đã thêm tài khoản.");
   else if (formId === "category-form") post("add_category", "#category-message", "Đã thêm danh mục.");
@@ -861,6 +997,22 @@ document.addEventListener("submit", function (event) {
         return App.load({ quiet: true });
       })
       .catch(function (err) { App.notice("#account-edit-message", App.errorText(err), "error"); });
+  } else if (formId === "event-goal-form") {
+    event.preventDefault();
+    App.notice("#event-goal-message", "Đang tạo…", "info");
+    var eventId = body.event_id;
+    delete body.event_id;
+    App.apiPost("add_goal", body)
+      .then(function (result) {
+        // Link second: if this fails the goal still exists, and the worst case
+        // is the suggestion showing once more - not a lost goal.
+        return App.apiPost("link_event_to_goal", { id: eventId, goal_id: result.id });
+      })
+      .then(function () {
+        App.$("#tx-dialog").close();
+        return App.load({ quiet: true });
+      })
+      .catch(function (err) { App.notice("#event-goal-message", App.errorText(err), "error"); });
   } else if (formId === "connection-form") {
     event.preventDefault();
     var url = body.url.trim();
@@ -892,6 +1044,16 @@ document.addEventListener("input", function (event) {
 
 document.addEventListener("change", function (event) {
   if (event.target.name === "direction" && event.target.closest("#tx-form")) App.refreshAddForm();
+  if (event.target.id === "event-template") App.resetEventItems(event.target.value);
+
+  // Recording an actual amount on an event item saves straight away - it is a
+  // single number, and a separate save button for each row would be friction.
+  if (event.target.hasAttribute && event.target.hasAttribute("data-event-item")) {
+    var input = event.target;
+    App.apiPost("update_event_item", { id: input.getAttribute("data-event-item"), actual_amount: input.value })
+      .then(function () { return App.load({ quiet: true }); })
+      .catch(function (err) { window.alert(App.errorText(err)); });
+  }
 });
 
 // --------------------------------------------------------- account dialog
@@ -924,6 +1086,38 @@ App.openAccountDialog = function (id) {
       '<div id="account-edit-message"></div>' +
     "</form>"
   );
+  App.$("#tx-dialog").showModal();
+};
+
+// The event → goal bridge. An event says "I owe this much on this date"; a
+// goal says "put this much aside each period". Creating one from the other
+// carries the amount and the deadline across, then links them so the app
+// stops suggesting it again.
+App.createGoalFromEvent = function (eventId) {
+  var event = App.state.data.events.filter(function (e) { return String(e.id) === String(eventId); })[0];
+  if (!event) return;
+
+  App.setHtml("#tx-dialog-body",
+    '<div class="dialog-head"><h2>Tạo mục tiêu cho sự kiện</h2>' +
+    '<button type="button" class="link" data-close-dialog>Đóng</button></div>' +
+    '<form id="event-goal-form">' +
+      '<input type="hidden" name="event_id" value="' + App.esc(event.id) + '">' +
+      '<label class="field"><span class="field-label">Tên mục tiêu</span>' +
+      '<input type="text" name="name" value="' + App.esc(event.name) + '" required></label>' +
+      '<label class="field"><span class="field-label">Cần tích lũy</span>' +
+      '<input type="text" inputmode="numeric" name="target_amount" value="' + App.esc(event.remaining_total) + '" required>' +
+      '<span class="tiny faint">Lấy từ phần còn phải trả của sự kiện.</span></label>' +
+      '<label class="field"><span class="field-label">Hạn chót</span>' +
+      '<input type="date" name="deadline" value="' + App.esc(event.event_date) + '" required></label>' +
+      '<label class="field"><span class="field-label">Tài khoản tích lũy</span>' +
+      "<select name=\"account_id\">" + App.accountOptions(App.state.data.accounts, null, true) + "</select></label>" +
+      '<input type="hidden" name="goal_type" value="savings">' +
+      '<p class="tiny muted">Chia đều ' + App.formatDong(event.remaining_total) + " cho " +
+      Math.max(event.periods_until, 1) + " kỳ còn lại là khoảng " +
+      App.formatDong(Math.round(event.remaining_total / Math.max(event.periods_until, 1))) + " mỗi kỳ.</p>" +
+      "<button type=\"submit\">Tạo và gắn vào sự kiện</button>" +
+      '<div id="event-goal-message"></div>' +
+    "</form>");
   App.$("#tx-dialog").showModal();
 };
 
@@ -968,5 +1162,6 @@ App.updateThemeButton = function () {
   App.show("#onboarding", false);
   App.show("#app-shell", true);
   App.switchTab("home");
+  App.showLoading();
   App.load();
 })();

@@ -72,7 +72,7 @@
 // redeploy actually took - forgetting to pick "Phiên bản: Mới" when
 // redeploying is the single easiest mistake to make with Apps Script, and it
 // fails silently: the old code just keeps serving.
-var VERSION = "3.2";
+var VERSION = "3.3";
 
 var SHEET_ACCOUNTS = "Accounts";
 var SHEET_CATEGORIES = "Categories";
@@ -81,6 +81,9 @@ var SHEET_PERIOD_BUDGETS = "PeriodBudgets";
 var SHEET_GOALS = "Goals";
 var SHEET_RECURRING = "Recurring";
 var SHEET_RULES = "Rules";
+var SHEET_INCOME_SOURCES = "IncomeSources";
+var SHEET_EVENT_PLANS = "EventPlans";
+var SHEET_EVENT_ITEMS = "EventPlanItems";
 
 var ACCOUNTS_HEADER = ["id", "name", "type", "balance", "is_active"];
 // necessity: "essential" | "optional" | "" - drives the risk math below.
@@ -92,6 +95,12 @@ var PERIOD_BUDGETS_HEADER = ["id", "category_id", "period_id", "amount"];
 var GOALS_HEADER = ["id", "name", "goal_type", "target_amount", "deadline", "account_id", "created_at", "is_active"];
 var RECURRING_HEADER = ["id", "name", "amount", "direction", "account_id", "category_id", "frequency", "next_due", "is_active"];
 var RULES_HEADER = ["id", "pattern", "category_id", "priority", "hit_count", "created_from"];
+// reliability is 0-100: a side gig's *expected* amount shouldn't be treated as
+// certain just because it's expected. This column is what lets the risk math
+// discount it (THIET-KE.md 3.7).
+var INCOME_SOURCES_HEADER = ["id", "name", "expected_amount", "reliability", "is_active"];
+var EVENT_PLANS_HEADER = ["id", "name", "event_date", "linked_goal_id", "note", "is_active", "created_at"];
+var EVENT_ITEMS_HEADER = ["id", "plan_id", "name", "expected_amount", "actual_amount"];
 
 var ALL_TABS = [
   { name: SHEET_ACCOUNTS, header: ACCOUNTS_HEADER },
@@ -101,7 +110,15 @@ var ALL_TABS = [
   { name: SHEET_GOALS, header: GOALS_HEADER },
   { name: SHEET_RECURRING, header: RECURRING_HEADER },
   { name: SHEET_RULES, header: RULES_HEADER },
+  { name: SHEET_INCOME_SOURCES, header: INCOME_SOURCES_HEADER },
+  { name: SHEET_EVENT_PLANS, header: EVENT_PLANS_HEADER },
+  { name: SHEET_EVENT_ITEMS, header: EVENT_ITEMS_HEADER },
 ];
+
+// An event only becomes worth turning into a savings goal when it is both big
+// and far enough away that saving up is actually possible.
+var EVENT_GOAL_MIN_AMOUNT = 10000000;
+var EVENT_GOAL_MIN_PERIODS = 2;
 
 var SPEND_LOOKBACK_DAYS = 30;
 var ESSENTIAL_LOOKBACK_PERIODS = 3;
@@ -326,6 +343,12 @@ function handle_(e, method) {
       deactivate_recurring: actionDeactivateRecurring_,
       add_rule: actionAddRule_,
       delete_rule: actionDeleteRule_,
+      add_income_source: actionAddIncomeSource_,
+      deactivate_income_source: actionDeactivateIncomeSource_,
+      add_event_plan: actionAddEventPlan_,
+      delete_event_plan: actionDeleteEventPlan_,
+      update_event_item: actionUpdateEventItem_,
+      link_event_to_goal: actionLinkEventToGoal_,
     };
 
     var action = params.action;
@@ -1476,6 +1499,212 @@ function actionDeleteRule_(params) {
   return { deleted: true };
 }
 
+// ------------------------------------------------- income sources (3.7)
+//
+// Kept separate from the `Transactions` income history on purpose: this table
+// is about what you EXPECT to come in and how sure you are of it, which is a
+// different question from what has already arrived. `reliability` is what lets
+// a 40%-certain side gig count for less than a salary of the same size.
+
+function getReliableIncomePerPeriod_(sources) {
+  var total = 0;
+  sources.forEach(function (source) {
+    if (!isActive_(source.is_active)) return;
+    var reliability = Math.max(0, Math.min(Number(source.reliability) || 0, 100));
+    total += (Number(source.expected_amount) || 0) * reliability / 100;
+  });
+  return total;
+}
+
+// A different question from runway: that one asks how long existing savings
+// last with zero income, this asks whether ongoing *reliable* income already
+// covers the essential baseline.
+function getIncomeSustainability_(sources, essentialExpense) {
+  var active = sources.filter(function (s) { return isActive_(s.is_active); });
+  if (active.length === 0 || essentialExpense === null) {
+    return { has_data: false, reliable_income: getReliableIncomePerPeriod_(sources), source_count: active.length };
+  }
+  var reliable = getReliableIncomePerPeriod_(sources);
+  var expected = 0;
+  active.forEach(function (s) { expected += Number(s.expected_amount) || 0; });
+  return {
+    has_data: true,
+    source_count: active.length,
+    expected_income: expected,
+    reliable_income: reliable,
+    essential_expense: essentialExpense,
+    margin: reliable - essentialExpense,
+    covered_pct: essentialExpense > 0 ? reliable / essentialExpense * 100 : null,
+  };
+}
+
+function actionAddIncomeSource_(params) {
+  var name = String(params.name || "").trim();
+  if (!name) throw new Error("Ten nguon thu khong duoc de trong.");
+  var amount = parseAmountVnd_(params.expected_amount);
+  if (amount <= 0) throw new Error("So tien du kien phai lon hon 0.");
+  var reliability = Number(params.reliability);
+  if (!(reliability >= 0 && reliability <= 100)) throw new Error("Do tin cay phai tu 0 den 100.");
+
+  var sheet = getSheet_(SHEET_INCOME_SOURCES);
+  var id = nextId_(sheet, INCOME_SOURCES_HEADER);
+  sheet.appendRow([id, name, amount, reliability, true]);
+  return { id: id };
+}
+
+function actionDeactivateIncomeSource_(params) {
+  var sheet = getSheet_(SHEET_INCOME_SOURCES);
+  var rowIndex = findRowIndexById_(sheet, INCOME_SOURCES_HEADER, Number(params.id));
+  if (rowIndex === -1) return { deactivated: false };
+  setCell_(sheet, INCOME_SOURCES_HEADER, rowIndex, "is_active", false);
+  return { deactivated: true };
+}
+
+// -------------------------------------------------- event plans (3.8)
+//
+// A specific, dated, usually one-off spend (a trip, a wedding) - as opposed to
+// a `goal`, which is a multi-period accumulation target. The two are linked:
+// a big enough event far enough away is exactly what a goal is for.
+
+// Item NAMES only, never suggested prices. Price depends entirely on locale and
+// circumstances; guessing one would be inventing a number and would erode trust
+// in every other number this app shows. (THIET-KE.md 3.8's explicit rule.)
+var EVENT_TEMPLATES = [
+  { name: "Chuyển nhà", items: ["Tiền cọc nhà mới", "Xe chuyển đồ", "Phí môi giới", "Lắp internet mới", "Đổi khóa", "Rèm cửa, đồ dùng thiếu", "Phí quản lý tháng đầu", "Điện nước trùng hai nơi"] },
+  { name: "Cưới hỏi", items: ["Đặt cọc nhà hàng/địa điểm", "Trang phục cô dâu chú rể", "Chụp ảnh cưới", "Thiệp mời và in ấn", "Trang trí", "Nhẫn cưới", "Quay phim", "Tiệc/đãi khách", "Xe hoa/đưa đón", "Quà cảm ơn khách mời"] },
+  { name: "Du lịch", items: ["Vé máy bay/tàu xe", "Khách sạn", "Bảo hiểm du lịch", "Visa (nếu có)", "Ăn uống", "Vé tham quan/hoạt động", "Di chuyển tại điểm đến", "Mua sắm/quà lưu niệm", "Chi phí phát sinh"] },
+  { name: "Mua sắm lớn", items: ["Giá món chính", "Phụ kiện đi kèm", "Vận chuyển/lắp đặt", "Bảo hành mở rộng"] },
+];
+
+function getEventPlansWithTotals_(plans, items, startDay, asOf) {
+  var currentId = currentPeriodId_(startDay, asOf);
+
+  return plans.filter(function (p) { return isActive_(p.is_active); }).map(function (plan) {
+    var own = items.filter(function (i) { return String(i.plan_id) === String(plan.id); });
+    var expected = 0, actual = 0;
+    own.forEach(function (i) {
+      expected += Number(i.expected_amount) || 0;
+      actual += Number(i.actual_amount) || 0;
+    });
+
+    var eventDate = parseDateOnly_(plan.event_date);
+    var daysUntil = daysBetween_(asOf, eventDate);
+    var eventPeriodId = periodIdFor_(eventDate, startDay);
+    var periodsUntil = periodsBetween_(currentId, eventPeriodId);
+    // What still has to be paid out, so an event already half-settled stops
+    // weighing on the forecast for money that has already left.
+    var remaining = Math.max(expected - actual, 0);
+
+    return {
+      id: plan.id,
+      name: plan.name,
+      event_date: dateToStr_(eventDate),
+      note: plan.note || "",
+      linked_goal_id: plan.linked_goal_id || "",
+      days_until: daysUntil,
+      periods_until: periodsUntil,
+      period_id: eventPeriodId,
+      is_past: daysUntil < 0,
+      expected_total: expected,
+      actual_total: actual,
+      remaining_total: remaining,
+      items: own.map(function (i) {
+        return {
+          id: i.id, name: i.name,
+          expected_amount: Number(i.expected_amount) || 0,
+          actual_amount: Number(i.actual_amount) || 0,
+        };
+      }),
+      // Offered once, never nagged: the frontend hides the prompt as soon as a
+      // goal is linked.
+      should_suggest_goal: !plan.linked_goal_id &&
+        periodsUntil >= EVENT_GOAL_MIN_PERIODS &&
+        remaining >= EVENT_GOAL_MIN_AMOUNT,
+    };
+  }).sort(function (a, b) { return a.event_date < b.event_date ? -1 : 1; });
+}
+
+function actionAddEventPlan_(params) {
+  var name = String(params.name || "").trim();
+  if (!name) throw new Error("Ten su kien khong duoc de trong.");
+  var eventDate = String(params.event_date || "");
+  if (!eventDate.match(/^\d{4}-\d{2}-\d{2}$/)) throw new Error("Ngay dien ra khong hop le.");
+
+  // Sent as a real array over POST; tolerate a JSON string for GET/manual calls.
+  var rawItems = params.items;
+  if (typeof rawItems === "string") {
+    try { rawItems = JSON.parse(rawItems); } catch (err) { rawItems = []; }
+  }
+  if (!rawItems || !rawItems.length) throw new Error("Can it nhat 1 khoan muc.");
+
+  // Parse every amount BEFORE writing anything: a half-written plan whose
+  // third item failed to parse is worse than a clean rejection.
+  var parsed = [];
+  for (var i = 0; i < rawItems.length; i++) {
+    var itemName = String(rawItems[i].name || "").trim();
+    if (!itemName) continue;
+    var raw = rawItems[i].expected_amount;
+    // Blank is allowed and means "chưa ước lượng" - the design deliberately
+    // lets a plan exist before every price is known.
+    var amount = (raw === "" || raw === null || raw === undefined) ? 0 : parseAmountVnd_(raw);
+    parsed.push({ name: itemName, amount: amount });
+  }
+  if (parsed.length === 0) throw new Error("Can it nhat 1 khoan muc co ten.");
+
+  var planSheet = getSheet_(SHEET_EVENT_PLANS);
+  var planId = nextId_(planSheet, EVENT_PLANS_HEADER);
+  planSheet.appendRow([planId, name, eventDate, "", params.note || "", true, dateToStr_(todayParts_())]);
+
+  var itemSheet = getSheet_(SHEET_EVENT_ITEMS);
+  var itemId = nextId_(itemSheet, EVENT_ITEMS_HEADER);
+  parsed.forEach(function (item) {
+    itemSheet.appendRow([itemId++, planId, item.name, item.amount, 0]);
+  });
+
+  return { id: planId, items: parsed.length };
+}
+
+function actionDeleteEventPlan_(params) {
+  var id = Number(params.id);
+  var planSheet = getSheet_(SHEET_EVENT_PLANS);
+  var rowIndex = findRowIndexById_(planSheet, EVENT_PLANS_HEADER, id);
+  if (rowIndex === -1) return { deleted: false };
+  planSheet.deleteRow(rowIndex);
+
+  // Delete the plan's items too, bottom-up so earlier deletions don't shift
+  // the rows still to be removed.
+  var itemSheet = getSheet_(SHEET_EVENT_ITEMS);
+  var items = sheetRowsAsObjects_(itemSheet, EVENT_ITEMS_HEADER);
+  for (var i = items.length - 1; i >= 0; i--) {
+    if (String(items[i].plan_id) === String(id)) itemSheet.deleteRow(i + 2);
+  }
+  return { deleted: true };
+}
+
+// Recording what an item ACTUALLY cost - the "dự kiến vs thực tế" half of an
+// event plan, and what stops a settled event from still weighing on forecasts.
+function actionUpdateEventItem_(params) {
+  var sheet = getSheet_(SHEET_EVENT_ITEMS);
+  var rowIndex = findRowIndexById_(sheet, EVENT_ITEMS_HEADER, Number(params.id));
+  if (rowIndex === -1) throw new Error("Khong tim thay khoan muc.");
+  if (params.actual_amount !== undefined) {
+    var raw = String(params.actual_amount).trim();
+    setCell_(sheet, EVENT_ITEMS_HEADER, rowIndex, "actual_amount", raw === "" ? 0 : parseAmountVnd_(raw));
+  }
+  if (params.expected_amount !== undefined && String(params.expected_amount).trim() !== "") {
+    setCell_(sheet, EVENT_ITEMS_HEADER, rowIndex, "expected_amount", parseAmountVnd_(params.expected_amount));
+  }
+  return { updated: true };
+}
+
+function actionLinkEventToGoal_(params) {
+  var sheet = getSheet_(SHEET_EVENT_PLANS);
+  var rowIndex = findRowIndexById_(sheet, EVENT_PLANS_HEADER, Number(params.id));
+  if (rowIndex === -1) throw new Error("Khong tim thay su kien.");
+  setCell_(sheet, EVENT_PLANS_HEADER, rowIndex, "linked_goal_id", params.goal_id || "");
+  return { linked: true };
+}
+
 // ----------------------------------------------------------------- forecast
 
 // The SIMPLE trajectory (risk.project_simple_trajectory): continue the recent
@@ -1514,21 +1743,53 @@ function actionGetForecast_(params) {
     });
   }
 
+  // Planned events are dated, already-decided outflows - the entire reason to
+  // write them down is so they show up here rather than as a surprise. Only
+  // what's still unpaid counts, keyed to the period the event falls in.
+  var eventPlans = getEventPlansWithTotals_(
+    rowsOfOptional_(SHEET_EVENT_PLANS, EVENT_PLANS_HEADER),
+    rowsOfOptional_(SHEET_EVENT_ITEMS, EVENT_ITEMS_HEADER),
+    startDay, asOf);
+  var eventByPeriod = {};
+  eventPlans.forEach(function (plan) {
+    if (plan.is_past || plan.remaining_total <= 0) return;
+    eventByPeriod[plan.period_id] = (eventByPeriod[plan.period_id] || 0) + plan.remaining_total;
+  });
+  // Totalled from the periods actually projected below, not from every future
+  // event: an event beyond the forecast window hasn't been subtracted from
+  // anything, and reporting it as applied would misdescribe the chart.
+  var eventTotal = 0;
+
+  // Optional swap: judge the future on income you're actually sure of
+  // (expected × reliability) instead of on what happened to arrive recently.
+  var incomeSources = rowsOfOptional_(SHEET_INCOME_SOURCES, INCOME_SOURCES_HEADER);
+  var reliableIncome = getReliableIncomePerPeriod_(incomeSources);
+  var useReliable = truthy_(params.income_basis_reliable) && reliableIncome > 0;
+  var incomePerPeriod = useReliable ? reliableIncome : avgIncome;
+
   var balance = getLiquidBalance_(accounts);
   var currentId = currentPeriodId_(startDay, asOf);
   var periods = [];
   for (var i = 0; i < periodsAhead; i++) {
-    balance = balance + avgIncome - avgExpense - goalContribution;
+    var periodId = shiftPeriodId_(currentId, i + 1, startDay);
+    var eventCost = eventByPeriod[periodId] || 0;
+    eventTotal += eventCost;
+    balance = balance + incomePerPeriod - avgExpense - goalContribution - eventCost;
     periods.push({
-      period_id: shiftPeriodId_(currentId, i + 1, startDay),
+      period_id: periodId,
       projected_balance: Math.round(balance),
+      event_cost: Math.round(eventCost),
     });
   }
   return {
     periods: periods,
     avg_income: Math.round(avgIncome),
     avg_expense: Math.round(avgExpense),
+    income_per_period: Math.round(incomePerPeriod),
+    income_basis: useReliable ? "reliable" : "history",
+    reliable_income: Math.round(reliableIncome),
     goal_contribution: Math.round(goalContribution),
+    event_total: Math.round(eventTotal),
     periods_of_history: flows.length,
   };
 }
@@ -1570,6 +1831,9 @@ function actionBootstrap_(params) {
   var goalsAll = rowsOfOptional_(SHEET_GOALS, GOALS_HEADER);
   var recurringAll = rowsOfOptional_(SHEET_RECURRING, RECURRING_HEADER);
   var rules = rowsOfOptional_(SHEET_RULES, RULES_HEADER);
+  var incomeSources = rowsOfOptional_(SHEET_INCOME_SOURCES, INCOME_SOURCES_HEADER);
+  var eventPlanRows = rowsOfOptional_(SHEET_EVENT_PLANS, EVENT_PLANS_HEADER);
+  var eventItemRows = rowsOfOptional_(SHEET_EVENT_ITEMS, EVENT_ITEMS_HEADER);
 
   var accountById = indexById_(accountsAll);
   var categoryById = indexById_(categories);
@@ -1619,6 +1883,8 @@ function actionBootstrap_(params) {
   var savingsTrend = getSavingsRateTrend_(flows);
 
   var alerts = getActiveAlerts_(liquidBalance, essentialExpense, runway, forecast, currentBudgetStatuses);
+
+  var eventPlans = getEventPlansWithTotals_(eventPlanRows, eventItemRows, startDay, asOf);
 
   var goals = goalsAll.filter(function (g) { return isActive_(g.is_active); }).map(function (g) {
     var progress = getGoalProgress_(g, accountsAll, startDay, asOf);
@@ -1712,6 +1978,17 @@ function actionBootstrap_(params) {
       balance_50_30_20: getBudgetBalance_(transactions, categories, currentBounds),
       savings_trend: savingsTrend,
     },
+    income_sources: incomeSources.filter(function (source) { return isActive_(source.is_active); }).map(function (source) {
+      return {
+        id: source.id, name: source.name,
+        expected_amount: Number(source.expected_amount) || 0,
+        reliability: Number(source.reliability) || 0,
+        reliable_amount: Math.round((Number(source.expected_amount) || 0) * (Number(source.reliability) || 0) / 100),
+      };
+    }),
+    income_sustainability: getIncomeSustainability_(incomeSources, essentialExpense),
+    events: eventPlans,
+    event_templates: EVENT_TEMPLATES,
     budget_statuses: budgetStatuses,
     budget_suggestions: suggestPeriodBudgetAmounts_(periodBudgetRows, transactions, categories, periodId, startDay),
     goals: goals,
@@ -2010,12 +2287,20 @@ function actionGetAiSummary_(params) {
     xu_huong_tiet_kiem: boot.metrics.savings_trend.trend,
     muc_tieu_tong: boot.goals.length,
     muc_tieu_cham_tien_do: boot.goals.filter(function (g) { return g.is_off_track || g.is_overdue; }).map(function (g) { return g.name; }),
+    thu_nhap_chac_chan_moi_ky: boot.income_sustainability.has_data ? Math.round(boot.income_sustainability.reliable_income) : null,
+    thu_chac_chan_du_chi_thiet_yeu: boot.income_sustainability.has_data ? boot.income_sustainability.margin >= 0 : null,
+    su_kien_sap_toi: (function () {
+      var upcoming = boot.events.filter(function (e) { return !e.is_past && e.remaining_total > 0; })[0];
+      if (!upcoming) return null;
+      return { ten: upcoming.name, con_bao_nhieu_ngay: upcoming.days_until, con_phai_tra: upcoming.remaining_total };
+    })(),
   };
 
   var prompt = AI_GROUND_RULES +
     "Viết 2-3 câu tóm tắt tình hình tài chính HÔM NAY của người dùng. " +
-    "Nêu điều đáng chú ý nhất, và nếu hai dữ kiện có liên quan tới nhau (ví dụ một mục tiêu chậm tiến độ " +
-    "cùng lúc với một danh mục vượt ngân sách) thì hãy nối chúng lại thay vì chỉ đọc lại từng con số. " +
+    "Nêu điều đáng chú ý nhất, và khi hai dữ kiện có liên quan tới nhau thì hãy NỐI chúng lại thay vì " +
+    "đọc lại từng con số rời rạc — ví dụ một mục tiêu chậm tiến độ cùng lúc với một danh mục vượt ngân sách, " +
+    "hay một sự kiện sắp tới cần nhiều tiền trong khi thu nhập chắc chắn chỉ vừa đủ chi thiết yếu. " +
     "Dữ liệu (JSON): " + JSON.stringify(data);
 
   var result = callGemini_(prompt);

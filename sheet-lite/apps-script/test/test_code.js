@@ -25,6 +25,9 @@ function freshSheets() {
     Goals: [["id", "name", "goal_type", "target_amount", "deadline", "account_id", "created_at", "is_active"]],
     Recurring: [["id", "name", "amount", "direction", "account_id", "category_id", "frequency", "next_due", "is_active"]],
     Rules: [["id", "pattern", "category_id", "priority", "hit_count", "created_from"]],
+    IncomeSources: [["id", "name", "expected_amount", "reliability", "is_active"]],
+    EventPlans: [["id", "name", "event_date", "linked_goal_id", "note", "is_active", "created_at"]],
+    EventPlanItems: [["id", "plan_id", "name", "expected_amount", "actual_amount"]],
   };
 }
 
@@ -796,6 +799,7 @@ test("bootstrap self-heals an older Sheet that is missing the newer tabs", () =>
   const boot = actionBootstrap_();
   assert.ok(boot.auto_setup, "should report that it built the missing tabs");
   assert.deepStrictEqual(boot.auto_setup.created.sort(), ["Goals", "PeriodBudgets", "Recurring", "Rules"]);
+  assert.strictEqual(boot.auto_setup.created.length, 4);
   assert.deepStrictEqual(sheets.Recurring[0], RECURRING_HEADER);
   assert.strictEqual(sheets.Accounts.length, 2, "existing account row must survive");
   assert.strictEqual(sheets.Categories.length, 2, "a non-empty Categories tab must not be re-seeded");
@@ -806,7 +810,7 @@ test("bootstrap self-heals an older Sheet that is missing the newer tabs", () =>
 test("bootstrap on a completely empty spreadsheet builds and seeds everything", () => {
   sheets = {}; // nothing at all - the "just pasted Code.gs and deployed" case
   const boot = actionBootstrap_();
-  assert.ok(boot.auto_setup.created.length >= 7);
+  assert.strictEqual(boot.auto_setup.created.length, ALL_TABS.length);
   assert.ok(boot.auto_setup.seeded.categories > 30);
   assert.strictEqual(boot.accounts.length, 4);
   assert.ok(boot.categories.some((c) => c.kind === "transfer"));
@@ -960,6 +964,198 @@ test("setupEverything reports the token through the UI and is safe to re-run", (
   const second = setupEverything();
   assert.strictEqual(second.token, first.token);
   assert.strictEqual(sheets.Categories.length, categoryCount, "re-running must not duplicate seed data");
+});
+
+// ------------------------------------------------ income sources + events
+
+test("reliable income discounts each source by its own reliability", () => {
+  const sources = [
+    { id: 1, name: "Luong", expected_amount: 10000000, reliability: 100, is_active: true },
+    { id: 2, name: "Freelance", expected_amount: 5000000, reliability: 40, is_active: true },
+    { id: 3, name: "Da nghi", expected_amount: 9000000, reliability: 100, is_active: "FALSE" },
+  ];
+  // 10,000,000 + 40% of 5,000,000; the inactive source contributes nothing.
+  assert.strictEqual(getReliableIncomePerPeriod_(sources), 12000000);
+});
+
+test("income sustainability compares reliable income against essential spend", () => {
+  const sources = [{ id: 1, name: "Luong", expected_amount: 10000000, reliability: 50, is_active: true }];
+  const result = getIncomeSustainability_(sources, 4000000);
+  assert.strictEqual(result.has_data, true);
+  assert.strictEqual(result.reliable_income, 5000000);
+  assert.strictEqual(result.margin, 1000000);
+  assert.strictEqual(result.covered_pct, 125);
+});
+
+test("income sustainability reports no data when there is no essential-spend history", () => {
+  const sources = [{ id: 1, name: "Luong", expected_amount: 10000000, reliability: 100, is_active: true }];
+  assert.strictEqual(getIncomeSustainability_(sources, null).has_data, false);
+  assert.strictEqual(getIncomeSustainability_([], 4000000).has_data, false);
+});
+
+test("actionAddIncomeSource_ rejects a reliability outside 0-100 before writing", () => {
+  assert.throws(() => actionAddIncomeSource_({ name: "X", expected_amount: "1tr", reliability: 150 }));
+  assert.throws(() => actionAddIncomeSource_({ name: "X", expected_amount: "1tr", reliability: -1 }));
+  assert.strictEqual(sheets.IncomeSources.length, 1, "only the header row");
+});
+
+test("bootstrap exposes income sources with their discounted amount", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  actionAddIncomeSource_({ name: "Day hoc", expected_amount: "8tr", reliability: 75 });
+  const source = actionBootstrap_().income_sources[0];
+  assert.strictEqual(source.expected_amount, 8000000);
+  assert.strictEqual(source.reliable_amount, 6000000);
+});
+
+test("actionAddEventPlan_ stores the plan with its line items", () => {
+  const result = actionAddEventPlan_({
+    name: "Du lich Da Nang", event_date: "2026-09-20",
+    items: [{ name: "Ve may bay", expected_amount: "3tr" }, { name: "Khach san", expected_amount: "2tr5" }],
+  });
+  assert.strictEqual(result.items, 2);
+  assert.strictEqual(sheets.EventPlans.length, 2);
+  assert.strictEqual(sheets.EventPlanItems.length, 3);
+  assert.strictEqual(sheets.EventPlanItems[2][3], 2500000);
+});
+
+test("actionAddEventPlan_ allows a blank amount - a plan can exist before every price is known", () => {
+  actionAddEventPlan_({
+    name: "Cuoi hoi", event_date: "2027-01-10",
+    items: [{ name: "Nha hang", expected_amount: "" }, { name: "Nhan cuoi", expected_amount: "20tr" }],
+  });
+  assert.strictEqual(sheets.EventPlanItems[1][3], 0);
+  assert.strictEqual(sheets.EventPlanItems[2][3], 20000000);
+});
+
+test("actionAddEventPlan_ rejects a bad amount WITHOUT writing a half-made plan", () => {
+  assert.throws(() => actionAddEventPlan_({
+    name: "Hong", event_date: "2026-09-20",
+    items: [{ name: "OK", expected_amount: "1tr" }, { name: "Loi", expected_amount: "ba trieu" }],
+  }));
+  assert.strictEqual(sheets.EventPlans.length, 1, "no plan row");
+  assert.strictEqual(sheets.EventPlanItems.length, 1, "no item rows");
+});
+
+test("event totals track expected vs actual, and remaining is what is still owed", () => {
+  const plan = actionAddEventPlan_({
+    name: "Du lich", event_date: "2026-09-20",
+    items: [{ name: "Ve", expected_amount: "3tr" }, { name: "Khach san", expected_amount: "2tr" }],
+  });
+  actionUpdateEventItem_({ id: 1, actual_amount: "3tr2" });
+  const event = actionBootstrap_().events.filter((e) => e.id === plan.id)[0];
+  assert.strictEqual(event.expected_total, 5000000);
+  assert.strictEqual(event.actual_total, 3200000);
+  assert.strictEqual(event.remaining_total, 1800000);
+});
+
+test("a big, far-off event suggests turning it into a goal; a small or near one does not", () => {
+  const big = actionAddEventPlan_({
+    name: "Cuoi hoi", event_date: "2027-03-10",
+    items: [{ name: "Tiec", expected_amount: "150tr" }],
+  });
+  const small = actionAddEventPlan_({
+    name: "Sinh nhat", event_date: "2027-03-10",
+    items: [{ name: "Qua", expected_amount: "500k" }],
+  });
+  const near = actionAddEventPlan_({
+    name: "Gap mat", event_date: "2026-07-25", // inside the current period
+    items: [{ name: "An uong", expected_amount: "50tr" }],
+  });
+  const events = actionBootstrap_().events;
+  const find = (id) => events.filter((e) => e.id === id)[0];
+  assert.strictEqual(find(big.id).should_suggest_goal, true);
+  assert.strictEqual(find(small.id).should_suggest_goal, false, "too small to be worth a goal");
+  assert.strictEqual(find(near.id).should_suggest_goal, false, "too soon to save up for");
+});
+
+test("linking an event to a goal stops the suggestion coming back", () => {
+  const plan = actionAddEventPlan_({
+    name: "Cuoi hoi", event_date: "2027-03-10",
+    items: [{ name: "Tiec", expected_amount: "150tr" }],
+  });
+  assert.strictEqual(actionBootstrap_().events[0].should_suggest_goal, true);
+  actionLinkEventToGoal_({ id: plan.id, goal_id: 7 });
+  const linked = actionBootstrap_().events[0];
+  assert.strictEqual(String(linked.linked_goal_id), "7");
+  assert.strictEqual(linked.should_suggest_goal, false);
+});
+
+test("actionDeleteEventPlan_ removes the plan AND all of its items", () => {
+  const keep = actionAddEventPlan_({ name: "Giu lai", event_date: "2026-09-20", items: [{ name: "A", expected_amount: "1tr" }] });
+  const drop = actionAddEventPlan_({ name: "Xoa di", event_date: "2026-10-20", items: [{ name: "B", expected_amount: "2tr" }, { name: "C", expected_amount: "3tr" }] });
+  actionDeleteEventPlan_({ id: drop.id });
+  assert.strictEqual(sheets.EventPlans.length, 2, "header + the plan we kept");
+  const remainingItems = sheets.EventPlanItems.slice(1);
+  assert.strictEqual(remainingItems.length, 1, "orphaned items must not survive");
+  assert.strictEqual(String(remainingItems[0][1]), String(keep.id));
+});
+
+test("forecast subtracts an upcoming event in the period it actually falls in", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 20000000, true]);
+  sheets.Categories.push([1, "Luong", "income", "", "", ""]);
+  sheets.Transactions.push([1, "2026-06-20 10:00:00", 5000000, "in", 1, 1, "", "manual"]);
+  // 2026-09-20 falls in period 2026-09, which is offset +2 from 2026-07.
+  actionAddEventPlan_({ name: "Du lich", event_date: "2026-09-20", items: [{ name: "Tour", expected_amount: "6tr" }] });
+
+  const result = actionGetForecast_({ periods_ahead: 3 });
+  assert.strictEqual(result.event_total, 6000000);
+  assert.strictEqual(result.periods[0].event_cost, 0, "2026-08 has no event");
+  assert.strictEqual(result.periods[1].event_cost, 6000000, "2026-09 carries the event");
+  assert.strictEqual(result.periods[2].event_cost, 0);
+  // 20,000,000 + 5,000,000/period, minus the 6,000,000 event in the 2nd period.
+  assert.strictEqual(result.periods[0].projected_balance, 25000000);
+  assert.strictEqual(result.periods[1].projected_balance, 24000000);
+});
+
+test("forecast only counts events that land INSIDE the projected window", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 20000000, true]);
+  // Inside a 3-period window (2026-08, 09, 10)...
+  actionAddEventPlan_({ name: "Gan", event_date: "2026-09-20", items: [{ name: "A", expected_amount: "1tr" }] });
+  // ...and far beyond it. Reporting the far one as "subtracted" would
+  // misdescribe a chart it never touched.
+  actionAddEventPlan_({ name: "Xa", event_date: "2028-01-20", items: [{ name: "B", expected_amount: "40tr" }] });
+  const result = actionGetForecast_({ periods_ahead: 3 });
+  assert.strictEqual(result.event_total, 1000000);
+  assert.strictEqual(result.periods.reduce((sum, p) => sum + p.event_cost, 0), 1000000);
+});
+
+test("forecast ignores an event that has already been paid off", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 20000000, true]);
+  actionAddEventPlan_({ name: "Da xong", event_date: "2026-09-20", items: [{ name: "Tour", expected_amount: "6tr" }] });
+  actionUpdateEventItem_({ id: 1, actual_amount: "6tr" });
+  assert.strictEqual(actionGetForecast_({ periods_ahead: 3 }).event_total, 0);
+});
+
+test("forecast can swap historical income for reliability-weighted income", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 10000000, true]);
+  sheets.Categories.push([1, "Luong", "income", "", "", ""]);
+  sheets.Transactions.push([1, "2026-06-20 10:00:00", 9000000, "in", 1, 1, "", "manual"]);
+  actionAddIncomeSource_({ name: "Luong", expected_amount: "8tr", reliability: 50 });
+
+  const history = actionGetForecast_({ periods_ahead: 1 });
+  assert.strictEqual(history.income_basis, "history");
+  assert.strictEqual(history.income_per_period, 9000000);
+
+  const reliable = actionGetForecast_({ periods_ahead: 1, income_basis_reliable: "1" });
+  assert.strictEqual(reliable.income_basis, "reliable");
+  assert.strictEqual(reliable.income_per_period, 4000000, "8tr discounted to 50%");
+  assert.ok(reliable.periods[0].projected_balance < history.periods[0].projected_balance);
+});
+
+test("forecast keeps the historical basis when there are no income sources to switch to", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 10000000, true]);
+  assert.strictEqual(actionGetForecast_({ periods_ahead: 1, income_basis_reliable: "1" }).income_basis, "history");
+});
+
+test("event templates suggest item names but never a price", () => {
+  const templates = actionBootstrap_().event_templates;
+  assert.ok(templates.length >= 3);
+  templates.forEach((template) => {
+    assert.ok(template.items.length > 0);
+    template.items.forEach((item) => {
+      assert.strictEqual(typeof item, "string", "an item is a name only - a suggested price would be invented");
+    });
+  });
 });
 
 console.log(`\n${passed} test(s) passed.`);
