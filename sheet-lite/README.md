@@ -256,8 +256,11 @@ phiên bản mới:
 Rồi kiểm lại bằng `?action=version` ở trên.
 
 Nếu bạn có nhiều bảng tính, kiểm tra kỹ đã dán code vào đúng cái mà URL trỏ
-tới. Số dòng cũng là một manh mối: v3.4 dài khoảng **2.350 dòng**, v3.0 khoảng
-1.800, v2 chỉ 909.
+tới. Số dòng cũng là một manh mối: v3.6 dài khoảng **2.530 dòng**, v3.4 khoảng
+2.350, v3.0 khoảng 1.800, v2 chỉ 909.
+
+> **v3.7 chỉ đổi giao diện, không đụng tới `Code.gs`.** Bảng tính vẫn báo
+> `version: 3.6` và đó là đúng — không cần triển khai lại gì cả.
 
 ## Nếu gặp trục trặc
 

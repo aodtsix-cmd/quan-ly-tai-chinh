@@ -1,12 +1,20 @@
 /* =========================================================================
    So tai chinh - design system
    -------------------------------------------------------------------------
-   One column, phone first. The brand colour deliberately RECEDES (a muted
-   slate-indigo) so the semantic money colours - brick for chi, pine for thu,
-   steel for chuyen khoan - are the loudest thing on screen. Every figure is
-   set in a tabular monospace so columns of dong line up everywhere; prose
-   stays in the system UI face, which also gives full Vietnamese diacritic
-   coverage with no webfont to download.
+   One column, phone first. The brand colour deliberately RECEDES so the
+   semantic money colours - brick for chi, pine for thu, steel for chuyen
+   khoan - are the loudest thing on screen. Every figure is set in a tabular
+   monospace so columns of dong line up everywhere; prose stays in the system
+   UI face, which also gives full Vietnamese diacritic coverage with no
+   webfont to download.
+
+   THEME MODEL - two independent axes, deliberately kept separate:
+     data-theme   light | dark | (absent = follow the OS)
+     data-palette indigo (default) | ocean | classic
+   Keeping them apart is what lets someone pick "cổ điển, tối" rather than
+   forcing six hand-written combinations on the user. It does mean each
+   palette needs four blocks; the specificity ladder that makes those land in
+   the right order is spelled out where the palettes are defined below.
    ========================================================================= */
 
 :root {
@@ -28,63 +36,76 @@
   --space-5: 1.5rem;
   --space-6: 2rem;
 
-  --radius: 0.875rem;
-  --radius-sm: 0.5rem;
+  --radius: 1rem;
+  --radius-sm: 0.75rem;
+  --radius-xs: 0.5rem;
   --radius-pill: 999px;
 
-  /* Light ground: a faintly warm paper, not pure white, so dense numerals
-     don't glare. Neutrals are pulled a touch toward the indigo brand. */
-  --bg: #f4f4f2;
+  /* Light ground: a faintly cool paper, not pure white, so dense numerals
+     don't glare and a white card still separates from the page behind it. */
+  --bg: #f3f4f7;
   --surface: #ffffff;
-  --surface-sunk: #eceded;
-  --ink: #1a1d23;
-  --ink-soft: #545a66;
-  --ink-faint: #878d99;
-  --hairline: #dfe0e1;
+  --surface-sunk: #eef0f4;
+  --ink: #12141a;
+  --ink-soft: #5b6472;
+  --ink-faint: #8b93a1;
+  --hairline: #e3e6eb;
 
-  --brand: #3f5175;
-  --brand-soft: #e8ebf2;
-  --brand-ink: #2c3a55;
+  --brand: #4f46e5;
+  --brand-soft: #eceafe;
+  --brand-ink: #4338ca;
+  --on-brand: #ffffff;
 
-  --out: #b8453c;
-  --out-soft: #fbeceb;
-  --in: #2c7a5b;
-  --in-soft: #e7f4ee;
-  --transfer: #5f6b7f;
-  --transfer-soft: #eceef2;
-  --warn: #a9762a;
-  --warn-soft: #fbf1e0;
+  --out: #b4442e;
+  --out-soft: #fceeea;
+  --in: #2f6f4e;
+  --in-soft: #e8f4ed;
+  --transfer: #4a6b8a;
+  --transfer-soft: #ecf1f6;
+  --warn: #a8760f;
+  --warn-soft: #fbf2df;
 
-  --shadow-bar: 0 -1px 0 var(--hairline);
-  --shadow-pop: 0 8px 32px rgba(20, 22, 26, 0.16);
+  /* Multi-layer and soft rather than one hard drop: a near-transparent wide
+     halo under a tight contact shadow is what reads as "lifted paper" instead
+     of "box with a grey edge". */
+  --shadow-1: 0 1px 2px rgba(18, 20, 26, 0.04), 0 2px 8px rgba(18, 20, 26, 0.04);
+  --shadow-2: 0 2px 4px rgba(18, 20, 26, 0.05), 0 8px 20px rgba(18, 20, 26, 0.07);
+  --shadow-brand: 0 4px 10px rgba(79, 70, 229, 0.28), 0 12px 28px rgba(79, 70, 229, 0.2);
+  --shadow-bar: 0 -1px 0 var(--hairline), 0 -8px 24px rgba(18, 20, 26, 0.06);
+  --shadow-pop: 0 12px 40px rgba(18, 20, 26, 0.2);
 
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #14161a;
-    --surface: #1d2026;
-    --surface-sunk: #262a31;
-    --ink: #e6e8ec;
-    --ink-soft: #a2a9b6;
-    --ink-faint: #737b8a;
-    --hairline: #2e333b;
+    --bg: #0f1115;
+    --surface: #171a21;
+    --surface-sunk: #1f232c;
+    --ink: #f2f4f8;
+    --ink-soft: #98a2b3;
+    --ink-faint: #6f7889;
+    --hairline: #2a2f3a;
 
-    --brand: #93a7cf;
-    --brand-soft: #232a38;
-    --brand-ink: #b8c6e4;
+    --brand: #818cf8;
+    --brand-soft: #232842;
+    --brand-ink: #a5b0ff;
+    --on-brand: #0f1115;
 
-    --out: #e2776c;
-    --out-soft: #33211f;
-    --in: #63b891;
-    --in-soft: #1a2a24;
-    --transfer: #97a3b5;
-    --transfer-soft: #262a31;
-    --warn: #d5a45c;
-    --warn-soft: #2e2519;
+    --out: #e07a5f;
+    --out-soft: #2f2019;
+    --in: #6bbf8a;
+    --in-soft: #172a20;
+    --transfer: #7fa8cf;
+    --transfer-soft: #1b2430;
+    --warn: #e0b34a;
+    --warn-soft: #2c2413;
 
-    --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.45), 0 10px 24px rgba(0, 0, 0, 0.3);
+    --shadow-brand: 0 4px 12px rgba(129, 140, 248, 0.3);
+    --shadow-bar: 0 -1px 0 var(--hairline), 0 -8px 24px rgba(0, 0, 0, 0.35);
+    --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.6);
     color-scheme: dark;
   }
 }
@@ -92,23 +113,90 @@
 /* The in-page toggle stamps data-theme on the root and must win over the
    media query in BOTH directions, so each theme is redefined explicitly. */
 :root[data-theme="light"] {
-  --bg: #f4f4f2; --surface: #ffffff; --surface-sunk: #eceded;
-  --ink: #1a1d23; --ink-soft: #545a66; --ink-faint: #878d99; --hairline: #dfe0e1;
-  --brand: #3f5175; --brand-soft: #e8ebf2; --brand-ink: #2c3a55;
-  --out: #b8453c; --out-soft: #fbeceb; --in: #2c7a5b; --in-soft: #e7f4ee;
-  --transfer: #5f6b7f; --transfer-soft: #eceef2; --warn: #a9762a; --warn-soft: #fbf1e0;
-  --shadow-pop: 0 8px 32px rgba(20, 22, 26, 0.16);
+  --bg: #f3f4f7; --surface: #ffffff; --surface-sunk: #eef0f4;
+  --ink: #12141a; --ink-soft: #5b6472; --ink-faint: #8b93a1; --hairline: #e3e6eb;
+  --brand: #4f46e5; --brand-soft: #eceafe; --brand-ink: #4338ca; --on-brand: #ffffff;
+  --out: #b4442e; --out-soft: #fceeea; --in: #2f6f4e; --in-soft: #e8f4ed;
+  --transfer: #4a6b8a; --transfer-soft: #ecf1f6; --warn: #a8760f; --warn-soft: #fbf2df;
+  --shadow-1: 0 1px 2px rgba(18, 20, 26, 0.04), 0 2px 8px rgba(18, 20, 26, 0.04);
+  --shadow-2: 0 2px 4px rgba(18, 20, 26, 0.05), 0 8px 20px rgba(18, 20, 26, 0.07);
+  --shadow-brand: 0 4px 10px rgba(79, 70, 229, 0.28), 0 12px 28px rgba(79, 70, 229, 0.2);
+  --shadow-bar: 0 -1px 0 var(--hairline), 0 -8px 24px rgba(18, 20, 26, 0.06);
+  --shadow-pop: 0 12px 40px rgba(18, 20, 26, 0.2);
   color-scheme: light;
 }
 
 :root[data-theme="dark"] {
-  --bg: #14161a; --surface: #1d2026; --surface-sunk: #262a31;
-  --ink: #e6e8ec; --ink-soft: #a2a9b6; --ink-faint: #737b8a; --hairline: #2e333b;
-  --brand: #93a7cf; --brand-soft: #232a38; --brand-ink: #b8c6e4;
-  --out: #e2776c; --out-soft: #33211f; --in: #63b891; --in-soft: #1a2a24;
-  --transfer: #97a3b5; --transfer-soft: #262a31; --warn: #d5a45c; --warn-soft: #2e2519;
-  --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --bg: #0f1115; --surface: #171a21; --surface-sunk: #1f232c;
+  --ink: #f2f4f8; --ink-soft: #98a2b3; --ink-faint: #6f7889; --hairline: #2a2f3a;
+  --brand: #818cf8; --brand-soft: #232842; --brand-ink: #a5b0ff; --on-brand: #0f1115;
+  --out: #e07a5f; --out-soft: #2f2019; --in: #6bbf8a; --in-soft: #172a20;
+  --transfer: #7fa8cf; --transfer-soft: #1b2430; --warn: #e0b34a; --warn-soft: #2c2413;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.45), 0 10px 24px rgba(0, 0, 0, 0.3);
+  --shadow-brand: 0 4px 12px rgba(129, 140, 248, 0.3);
+  --shadow-bar: 0 -1px 0 var(--hairline), 0 -8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.6);
   color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------- palettes
+   A palette only ever restates the BRAND family and the two page grounds -
+   never the money colours, which have to mean the same thing in every skin.
+
+   Specificity ladder, and why each rung is shaped the way it is:
+     :root[data-palette=x]                     (0,2,0) - beats the plain
+       :root[data-theme=light] rule above only because it comes later.
+     :root[data-palette=x][data-theme=light]   (0,3,0) - needed so an
+       explicitly-light page still picks up the palette when the OS is dark.
+     media dark + :not([data-theme=light])     (0,3,0) - the :not both raises
+       specificity above the plain dark rule AND stops a dark OS from
+       overriding someone who explicitly chose light. */
+:root[data-palette="ocean"],
+:root[data-palette="ocean"][data-theme="light"] {
+  --brand: #0e7490; --brand-soft: #e0f2f7; --brand-ink: #0b5f77; --on-brand: #ffffff;
+  --bg: #f1f6f8; --surface-sunk: #e6eff3;
+  --shadow-brand: 0 4px 10px rgba(14, 116, 144, 0.28), 0 12px 28px rgba(14, 116, 144, 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="ocean"]:not([data-theme="light"]) {
+    --brand: #4dd0e1; --brand-soft: #10303a; --brand-ink: #7ae0ee; --on-brand: #06181d;
+    --bg: #0c1418; --surface: #121c21; --surface-sunk: #17252c;
+    --shadow-brand: 0 4px 12px rgba(77, 208, 225, 0.28);
+  }
+}
+
+:root[data-palette="ocean"][data-theme="dark"] {
+  --brand: #4dd0e1; --brand-soft: #10303a; --brand-ink: #7ae0ee; --on-brand: #06181d;
+  --bg: #0c1418; --surface: #121c21; --surface-sunk: #17252c;
+  --shadow-brand: 0 4px 12px rgba(77, 208, 225, 0.28);
+}
+
+/* "Cổ điển": warm paper and ink instead of cool grey - closer to a paper
+   ledger than to a fintech app, which is the whole point of offering it. */
+:root[data-palette="classic"],
+:root[data-palette="classic"][data-theme="light"] {
+  --brand: #7a5c2e; --brand-soft: #f3ece0; --brand-ink: #5e4622; --on-brand: #ffffff;
+  --bg: #f6f2ea; --surface: #fffdf9; --surface-sunk: #efe9dd; --hairline: #e2dacb;
+  --ink: #211d17; --ink-soft: #5f574a; --ink-faint: #8e8676;
+  --shadow-brand: 0 4px 10px rgba(122, 92, 46, 0.24), 0 12px 28px rgba(122, 92, 46, 0.16);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="classic"]:not([data-theme="light"]) {
+    --brand: #d4b483; --brand-soft: #2c2417; --brand-ink: #e3c99f; --on-brand: #1a1409;
+    --bg: #16130f; --surface: #1e1a15; --surface-sunk: #26211a; --hairline: #332c23;
+    --ink: #f2ece1; --ink-soft: #a99e8c; --ink-faint: #7d7365;
+    --shadow-brand: 0 4px 12px rgba(212, 180, 131, 0.24);
+  }
+}
+
+:root[data-palette="classic"][data-theme="dark"] {
+  --brand: #d4b483; --brand-soft: #2c2417; --brand-ink: #e3c99f; --on-brand: #1a1409;
+  --bg: #16130f; --surface: #1e1a15; --surface-sunk: #26211a; --hairline: #332c23;
+  --ink: #f2ece1; --ink-soft: #a99e8c; --ink-faint: #7d7365;
+  --shadow-brand: 0 4px 12px rgba(212, 180, 131, 0.24);
 }
 
 * { box-sizing: border-box; }
@@ -210,8 +298,24 @@ p { margin: 0; }
 
 .topbar-spacer { flex: 1; }
 
+/* The period is the app's organising idea, so it stays in the bar - but as a
+   tight two-line stack, which is the only way it fits next to the wordmark
+   and the theme button on a 375px phone. */
+#period-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.15;
+  text-align: right;
+  min-width: 0;
+}
+
+#period-chip b { font-weight: 600; font-size: var(--step--2); color: var(--ink-soft); white-space: nowrap; }
+#period-chip i { font-style: normal; }
+
 .icon-btn {
   appearance: none;
+  box-shadow: none;
   border: 1px solid var(--hairline);
   background: var(--surface);
   color: var(--ink-soft);
@@ -231,13 +335,22 @@ main {
   max-width: 33rem;
   margin: 0 auto;
   padding: var(--space-4);
-  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  padding-bottom: calc(6.5rem + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
 
 .view { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* Tab change: a short fade with a few pixels of rise. Long enough to read as
+   a transition, short enough that a fast tapper never waits on it. */
+.view:not(.hidden) { animation: view-in 180ms cubic-bezier(0.22, 0.8, 0.36, 1) both; }
+
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
 
 /* --------------------------------------------------------------- bottom nav */
 
@@ -251,6 +364,8 @@ main {
   backdrop-filter: saturate(180%) blur(12px);
   box-shadow: var(--shadow-bar);
   padding-bottom: env(safe-area-inset-bottom);
+  /* The centre action button overhangs the top edge of the bar. */
+  overflow: visible;
 }
 
 .tabbar-inner {
@@ -258,10 +373,12 @@ main {
   margin: 0 auto;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
+  align-items: end;
 }
 
 .tab {
   appearance: none;
+  box-shadow: none;
   border: 0;
   background: none;
   padding: var(--space-2) var(--space-1) var(--space-3);
@@ -275,11 +392,35 @@ main {
   font-size: var(--step--2);
   font-weight: 600;
   letter-spacing: 0.01em;
-  border-top: 2px solid transparent;
+  transition: color 140ms ease;
 }
 
-.tab svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.tab[aria-selected="true"] { color: var(--brand); border-top-color: var(--brand); }
+.tab svg { width: 1.4rem; height: 1.4rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tab[aria-selected="true"] { color: var(--brand); }
+.tab[aria-selected="true"] svg { stroke-width: 2; }
+
+/* The centre "Nhập" button, MoMo's quét-QR position: the action taken many
+   times a day sits under the thumb and is the only raised thing in the bar. */
+.tab-fab { padding-top: 0; }
+
+.tab-fab .fab-disc {
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: var(--radius-pill);
+  background: var(--brand);
+  color: var(--on-brand);
+  display: grid;
+  place-items: center;
+  margin-top: -1.35rem;
+  margin-bottom: 0.15rem;
+  box-shadow: var(--shadow-brand);
+  border: 3px solid var(--surface);
+  transition: transform 140ms cubic-bezier(0.22, 0.8, 0.36, 1);
+}
+
+.tab-fab svg { width: 1.6rem; height: 1.6rem; stroke-width: 2.2; }
+.tab-fab:active .fab-disc { transform: scale(0.93); }
+.tab-fab[aria-selected="true"] .fab-disc { transform: scale(1.04); }
 
 /* ------------------------------------------------------------------ cards */
 
@@ -287,12 +428,13 @@ main {
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--hairline);
+  border: 1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
   border-radius: var(--radius);
   padding: var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  box-shadow: var(--shadow-1);
 }
 
 .card-head {
@@ -306,6 +448,7 @@ main {
 
 .link {
   appearance: none;
+  box-shadow: none;
   border: 0;
   background: none;
   padding: 0;
@@ -322,7 +465,16 @@ main {
 
 /* -------------------------------------------------------------- hero + ribbon */
 
-.hero { gap: var(--space-4); }
+/* The one card with a tint: a barely-there wash of brand behind the balance,
+   so the number the user came to see owns the top of the screen without the
+   brand colour shouting over the money colours further down. */
+.hero {
+  gap: var(--space-4);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--brand) 9%, transparent), transparent 62%),
+    var(--surface);
+  box-shadow: var(--shadow-2);
+}
 
 .hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
 
@@ -422,17 +574,36 @@ main {
 
 /* ------------------------------------------------------------- metric grid */
 
-.metric-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: hidden; }
+/* Separate tiles rather than one hairline-divided table: each metric is its
+   own independent reading, and the gaps say so. */
+.metric-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-2); }
 
 .metric {
   background: var(--surface);
-  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
-  min-height: 4.5rem;
+  gap: 0.15rem;
+  min-height: 5.25rem;
   justify-content: center;
+  min-width: 0;
 }
+
+.metric-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--radius-xs);
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  display: grid;
+  place-items: center;
+  margin-bottom: 0.15rem;
+}
+
+.metric-icon svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 .metric-label { font-size: var(--step--2); color: var(--ink-faint); font-weight: 600; }
 .metric-value { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: var(--step-1); font-weight: 600; letter-spacing: -0.02em; min-width: 0; overflow-wrap: anywhere; }
@@ -459,6 +630,24 @@ main {
 
 .row:last-child { border-bottom: 0; }
 .row:first-child { padding-top: 0; }
+
+/* A category glyph in front of every ledger line, tinted by direction: at a
+   glance the list reads as shapes and colours before it reads as words. */
+.row-icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-xs);
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--surface-sunk);
+  color: var(--ink-soft);
+}
+
+.row-icon svg { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.row-icon.dir-out { background: var(--out-soft); color: var(--out); }
+.row-icon.dir-in { background: var(--in-soft); color: var(--in); }
+.row-icon.dir-transfer { background: var(--transfer-soft); color: var(--transfer); }
 
 .row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
 .row-title { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -524,6 +713,11 @@ input.amount-input {
 
 .amount-hint { font-family: var(--font-num); font-size: var(--step--1); color: var(--ink-soft); min-height: 1.2em; }
 
+/* The bare <button> IS the primary action, and carries the brand lift with
+   it. Every variant below re-skins the background, and each one therefore
+   also has to clear the shadow - doing it that way round (opt out, per
+   variant) rather than with one broad :not() chain is what stops a newly
+   added button class from silently inheriting a purple glow it never wanted. */
 button {
   appearance: none;
   font-family: inherit;
@@ -533,16 +727,114 @@ button {
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   background: var(--brand);
-  color: #fff;
+  color: var(--on-brand);
   cursor: pointer;
   min-height: 2.9rem;
+  box-shadow: var(--shadow-brand);
+  transition: transform 100ms ease, background-color 140ms ease;
 }
 
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.secondary { background: var(--surface); color: var(--ink); border-color: var(--hairline); }
+button:active:not(:disabled) { transform: scale(0.97); }
+button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+button.secondary { background: var(--surface); color: var(--ink); border-color: var(--hairline); box-shadow: none; }
 button.secondary:hover { background: var(--surface-sunk); }
-button.danger { background: var(--out); }
+button.danger { background: var(--out); box-shadow: none; }
 button.small { font-size: var(--step--1); padding: 0.45rem 0.75rem; min-height: 2.2rem; }
+
+/* ------------------------------------------------------------ icon grid
+   The category picker. A native <select> hides forty categories behind a
+   tap and a scroll; a grid of icons is the thing people actually recognise
+   at a glance, and it is what the brief asks for. The tree is walked one
+   level at a time - parents first, then that parent's children - because a
+   single flat grid of every leaf is unreadable on a phone. */
+
+.icon-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); }
+
+.icon-tile {
+  appearance: none;
+  font-family: inherit;
+  background: var(--surface-sunk);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) 0.25rem;
+  min-height: 4.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.3rem;
+  cursor: pointer;
+  color: var(--ink-soft);
+  box-shadow: none;
+  text-align: center;
+  min-width: 0;
+}
+
+.icon-tile .glyph {
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--brand);
+  display: grid;
+  place-items: center;
+  flex: none;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.icon-tile .glyph svg { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.icon-tile .tile-name {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.2;
+  /* Two lines maximum: "Chuyển khoản cho gia đình" must not make one tile
+     three times the height of its neighbours. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.icon-tile[aria-pressed="true"] { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-ink); }
+.icon-tile[aria-pressed="true"] .glyph { background: var(--brand); color: var(--on-brand); }
+.icon-tile.has-children .tile-name::after { content: " ›"; color: var(--ink-faint); }
+
+.icon-grid-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.picked-chip { display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--step--1); font-weight: 650; color: var(--brand-ink); min-width: 0; }
+.picked-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ------------------------------------------------------------- plan hub */
+
+.hub-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-2); }
+
+.hub-tile {
+  appearance: none;
+  font-family: inherit;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  cursor: pointer;
+  color: var(--ink);
+  min-height: 5.5rem;
+  min-width: 0;
+}
+
+.hub-tile .glyph {
+  width: 2rem; height: 2rem; border-radius: var(--radius-xs);
+  background: var(--brand-soft); color: var(--brand-ink);
+  display: grid; place-items: center; margin-bottom: 0.15rem;
+}
+.hub-tile .glyph svg { width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.hub-tile b { font-size: var(--step-0); font-weight: 650; }
+.hub-tile small { font-size: var(--step--2); color: var(--ink-soft); line-height: 1.35; }
 
 .button-row { display: flex; gap: var(--space-2); }
 .button-row > * { flex: 1; }
@@ -574,6 +866,7 @@ button.small { font-size: var(--step--1); padding: 0.45rem 0.75rem; min-height: 
 .subnav::-webkit-scrollbar { display: none; }
 
 .subnav button {
+  box-shadow: none;
   flex: none;
   padding: 0.4rem 0.8rem;
   min-height: 0;
@@ -585,10 +878,38 @@ button.small { font-size: var(--step--1); padding: 0.45rem 0.75rem; min-height: 
   font-weight: 600;
 }
 
-.subnav button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+.subnav button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--on-brand); box-shadow: var(--shadow-brand); }
+
+/* Theme and palette pickers. The swatch IS the preview - naming a colour
+   ("chàm", "cổ điển") and making the user guess is worse than showing it. */
+.swatch-row { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+.swatch {
+  appearance: none;
+  font-family: inherit;
+  flex: 1 1 6rem;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  padding: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: var(--step--1);
+  font-weight: 600;
+  min-height: 2.75rem;
+}
+
+.swatch .dot { width: 1.1rem; height: 1.1rem; border-radius: 50%; flex: none; border: 1px solid rgba(0, 0, 0, 0.12); }
+.swatch[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-ink); }
+.swatch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .filters { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.filters button { padding: 0.3rem 0.7rem; min-height: 0; border-radius: var(--radius-pill); background: var(--surface); border: 1px solid var(--hairline); color: var(--ink-soft); font-size: var(--step--2); font-weight: 600; }
+.filters button { box-shadow: none; padding: 0.3rem 0.7rem; min-height: 0; border-radius: var(--radius-pill); background: var(--surface); border: 1px solid var(--hairline); color: var(--ink-soft); font-size: var(--step--2); font-weight: 600; }
 .filters button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
 
 /* ------------------------------------------------------------------- panels */
@@ -674,11 +995,16 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 
 @media (min-width: 34rem) {
   .metric-grid { grid-template-columns: repeat(3, 1fr); }
+  .icon-grid { grid-template-columns: repeat(6, 1fr); }
+  .hub-grid { grid-template-columns: repeat(3, 1fr); }
 }
 
 @media (max-width: 22.5rem) {
   main { padding: var(--space-3); }
   .card { padding: var(--space-3); }
-  .metric { padding: var(--space-2) var(--space-3); }
+  .metric { padding: var(--space-2); }
   .tab { font-size: 0.625rem; }
+  .icon-tile { min-height: 3.9rem; padding: 0.4rem 0.15rem; }
+  .icon-tile .glyph { width: 1.75rem; height: 1.75rem; }
+  .icon-tile .tile-name { font-size: 0.625rem; }
 }

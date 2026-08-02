@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Sổ tài chính</title>
 <meta name="description" content="Sổ tài chính cá nhân chạy trên Google Sheets — ghi chi tiêu, đặt ngân sách theo kỳ, theo dõi mục tiêu và dự báo dòng tiền.">
-<meta name="theme-color" content="#f4f4f2" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#14161a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f3f4f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Sổ tài chính">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -73,6 +73,15 @@
       <section class="card">
         <h1>Ghi một giao dịch</h1>
         <form id="tx-form">
+          <!-- Amount first, and the largest thing on the card: it is the one
+               field that is always filled in, and the reason the screen was
+               opened at all. -->
+          <label class="field">
+            <span class="field-label">Số tiền</span>
+            <input type="text" inputmode="numeric" id="tx-amount" class="amount-input" placeholder="500k, 1tr, 2tr5…" autocomplete="off">
+          </label>
+          <p class="amount-hint" id="tx-amount-hint"></p>
+
           <div class="segmented">
             <input type="radio" id="dir-out" name="direction" value="out" checked>
             <label for="dir-out">Chi tiền</label>
@@ -92,16 +101,17 @@
             <select id="tx-to-account"></select>
           </label>
 
-          <label class="field" id="tx-category-wrap">
-            <span class="field-label">Danh mục</span>
-            <select id="tx-category"></select>
-          </label>
-
-          <label class="field">
-            <span class="field-label">Số tiền</span>
-            <input type="text" inputmode="numeric" id="tx-amount" class="amount-input" placeholder="500k, 1tr, 2tr5…" autocomplete="off">
-          </label>
-          <p class="amount-hint" id="tx-amount-hint"></p>
+          <!-- The category value lives in a hidden input; the visible control
+               is an icon grid rendered by refreshAddForm. No name attribute,
+               so it can never shadow a property on the form element. -->
+          <div class="field" id="tx-category-wrap">
+            <div class="icon-grid-head">
+              <span class="field-label">Danh mục</span>
+              <span class="picked-chip" id="tx-category-picked"></span>
+            </div>
+            <input type="hidden" id="tx-category" value="">
+            <div class="icon-grid" id="tx-category-grid"></div>
+          </div>
 
           <label class="field">
             <span class="field-label">Mô tả</span>
@@ -146,19 +156,23 @@
     <section id="view-settings" class="view hidden" aria-label="Cài đặt"></section>
   </main>
 
+  <!-- Tab order follows the brief: the action taken many times a day sits in
+       the centre, raised, where a thumb naturally lands. -->
   <nav class="tabbar" aria-label="Điều hướng chính">
     <div class="tabbar-inner" role="tablist">
       <button type="button" class="tab" role="tab" data-tab="home" aria-selected="true">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/></svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3.5l9 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/></svg>
         Nhà
-      </button>
-      <button type="button" class="tab" role="tab" data-tab="add" aria-selected="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8.5v7M8.5 12h7"/></svg>
-        Nhập
       </button>
       <button type="button" class="tab" role="tab" data-tab="list" aria-selected="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
         Sổ
+      </button>
+      <button type="button" class="tab tab-fab" role="tab" data-tab="add" aria-selected="false">
+        <span class="fab-disc">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+        Nhập
       </button>
       <button type="button" class="tab" role="tab" data-tab="plan" aria-selected="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="M7.5 15 11 10.5l3 3L20 7"/></svg>

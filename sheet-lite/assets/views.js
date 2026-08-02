@@ -55,8 +55,9 @@ App.track = function (pct, modifier) {
   return '<div class="track"><div class="track-fill ' + (modifier || "") + '" style="width:' + width + '%"></div></div>';
 };
 
-App.metricTile = function (label, value, note) {
+App.metricTile = function (label, value, note, iconName) {
   return '<div class="metric">' +
+    (iconName ? '<span class="metric-icon">' + App.icon(iconName) + "</span>" : "") +
     '<span class="metric-label">' + App.esc(label) + "</span>" +
     '<span class="metric-value">' + value + "</span>" +
     (note ? '<span class="metric-note">' + App.esc(note) + "</span>" : "") +
@@ -98,6 +99,61 @@ App.categoryOptions = function (categories, kind, selectedId, placeholder) {
   // Any child whose parent isn't in this kind still needs to be selectable.
   pool.forEach(function (c) { if (!used[c.id]) html += option(c); });
   return html;
+};
+
+// The category picker as an icon grid, walked one level of the tree at a
+// time. A flat grid of every leaf is forty tiles on a phone screen; showing
+// the ten parents and drilling in keeps any one screen scannable, and a
+// parent with no children is selected directly rather than opening an empty
+// level.
+App.categoryGrid = function (categories, kind, selectedId, openParentId) {
+  var pool = categories.filter(function (c) { return c.kind === kind; });
+  var childrenOf = function (id) {
+    return pool.filter(function (c) { return String(c.parent_id || "") === String(id); });
+  };
+
+  function tile(category, hasChildren) {
+    var selected = String(selectedId || "") === String(category.id);
+    return '<button type="button" class="icon-tile' + (hasChildren ? " has-children" : "") + '"' +
+      ' data-pick-category="' + App.esc(category.id) + '"' +
+      (hasChildren ? ' data-open-parent="' + App.esc(category.id) + '"' : "") +
+      ' aria-pressed="' + selected + '">' +
+      '<span class="glyph">' + App.icon(App.categoryIconName(category.name)) + "</span>" +
+      '<span class="tile-name">' + App.esc(category.name) + "</span>" +
+      "</button>";
+  }
+
+  var open = openParentId
+    ? pool.filter(function (c) { return String(c.id) === String(openParentId); })[0]
+    : null;
+
+  if (open) {
+    // Inside a parent: the parent itself stays selectable, because "Ăn uống"
+    // with no sub-category is a legitimate answer.
+    return '<button type="button" class="icon-tile" data-open-parent="" aria-pressed="false">' +
+        '<span class="glyph">' + App.icon("back") + "</span>" +
+        '<span class="tile-name">Quay lại</span></button>' +
+      tile(open, false) +
+      childrenOf(open.id).map(function (child) { return tile(child, false); }).join("");
+  }
+
+  var parents = pool.filter(function (c) { return !c.parent_id; });
+  var orphans = pool.filter(function (c) {
+    return c.parent_id && !parents.some(function (p) { return String(p.id) === String(c.parent_id); });
+  });
+
+  return parents.map(function (parent) { return tile(parent, childrenOf(parent.id).length > 0); }).join("") +
+    orphans.map(function (c) { return tile(c, false); }).join("");
+};
+
+// Which tile should be lit, and what the header chip says, given a chosen id.
+App.categoryLabel = function (categories, selectedId) {
+  var match = categories.filter(function (c) { return String(c.id) === String(selectedId); })[0];
+  if (!match) return "";
+  var parent = match.parent_id
+    ? categories.filter(function (c) { return String(c.id) === String(match.parent_id); })[0]
+    : null;
+  return (parent ? parent.name + " · " : "") + match.name;
 };
 
 App.accountOptions = function (accounts, selectedId, withBalance) {
@@ -279,29 +335,30 @@ App.renderMetrics = function (data) {
   var tiles = [
     App.metricTile("Cầm cự được",
       money.survival_days !== null ? App.formatNumber(money.survival_days, 0) + '<span class="u">ngày</span>' : "—",
-      money.survival_days !== null ? "với mức chi 30 ngày qua" : "chưa có dữ liệu chi"),
+      money.survival_days !== null ? "với mức chi 30 ngày qua" : "chưa có dữ liệu chi", "clock"),
 
     App.metricTile("Dự báo cuối kỳ",
       '<span class="' + (money.at_risk ? "amount-out" : "") + '">' + App.formatVnd(money.forecast_balance) + " đ</span>",
-      "còn " + data.period.days_remaining + " ngày"),
+      "còn " + data.period.days_remaining + " ngày", "chart"),
 
     App.metricTile("Tiết kiệm kỳ này",
       metrics.current_savings_rate.has_data ? App.formatPct(metrics.current_savings_rate.rate) : "—",
-      metrics.current_savings_rate.has_data ? "phần thu giữ lại được" : "chưa ghi thu nhập"),
+      metrics.current_savings_rate.has_data ? "phần thu giữ lại được" : "chưa ghi thu nhập", "bank"),
 
     App.metricTile("Ngốn tiền nhất",
       metrics.concentration.has_data
         ? '<span class="as-text">' + App.esc(metrics.concentration.category_name) + "</span>"
         : "—",
-      metrics.concentration.has_data ? App.formatPct(metrics.concentration.pct) + " chi tiêu kỳ này" : "chưa có chi tiêu"),
+      metrics.concentration.has_data ? App.formatPct(metrics.concentration.pct) + " chi tiêu kỳ này" : "chưa có chi tiêu",
+      metrics.concentration.has_data ? App.categoryIconName(metrics.concentration.category_name) : "pie"),
 
     App.metricTile("Chi cố định",
       metrics.rigidity.has_data ? App.formatPct(metrics.rigidity.pct) : "—",
-      metrics.rigidity.has_data ? "phần thu đã bị khóa cứng" : "cần lịch sử 3 kỳ"),
+      metrics.rigidity.has_data ? "phần thu đã bị khóa cứng" : "cần lịch sử 3 kỳ", "shield"),
 
     App.metricTile("Dao động thu nhập",
       metrics.income_stability.has_data ? App.formatPct(metrics.income_stability.cv_pct) : "—",
-      metrics.income_stability.has_data ? "càng thấp càng đều" : "cần ít nhất 2 kỳ"),
+      metrics.income_stability.has_data ? "càng thấp càng đều" : "cần ít nhất 2 kỳ", "scale"),
   ];
 
   if (data.income_sustainability.has_data) {
@@ -309,7 +366,7 @@ App.renderMetrics = function (data) {
     tiles.push(App.metricTile("Thu chắc chắn",
       '<span class="' + (margin >= 0 ? "amount-in" : "amount-out") + '">' +
       App.formatPct(data.income_sustainability.covered_pct) + "</span>",
-      margin >= 0 ? "đã đủ chi thiết yếu" : "chưa đủ chi thiết yếu"));
+      margin >= 0 ? "đã đủ chi thiết yếu" : "chưa đủ chi thiết yếu", "salary"));
   }
 
   return '<div class="metric-grid">' + tiles.join("") + "</div>";
@@ -439,6 +496,7 @@ App.renderTrendCard = function (data) {
 App.renderAccountsCard = function (data) {
   var rows = data.accounts.map(function (account) {
     return '<div class="row">' +
+      '<span class="row-icon">' + App.icon(App.ACCOUNT_ICONS[account.type] || "wallet") + "</span>" +
       '<div class="row-main"><span class="row-title">' + App.esc(account.name) + "</span>" +
       '<span class="row-meta">' + App.esc(App.ACCOUNT_TYPES[account.type] || account.type) +
       (account.is_liquid ? "" : " · không tính vào tiền có thể dùng") + "</span></div>" +
@@ -540,13 +598,16 @@ App.renderTransactionRows = function (transactions) {
       html += '<p class="date-head">' + App.esc(App.formatDateHeading(date)) + "</p>";
       lastDate = date;
     }
+    var kind = tx.is_transfer ? "transfer" : tx.direction;
     var amountClass = tx.is_transfer ? "amount-transfer" : (tx.direction === "in" ? "amount-in" : "amount-out");
     var sign = tx.is_transfer ? "" : (tx.direction === "in" ? "+" : "−");
     var title = tx.description || tx.category_name || (tx.is_transfer ? "Chuyển khoản" : "Không ghi chú");
     var meta = [tx.account_name, tx.category_name, tx.source === "recurring" ? "định kỳ" : null]
       .filter(Boolean).join(" · ");
+    var glyph = tx.is_transfer ? "swap" : App.categoryIconName(tx.category_name || title);
 
     html += '<div class="row">' +
+      '<span class="row-icon dir-' + kind + '">' + App.icon(glyph) + "</span>" +
       '<div class="row-main"><span class="row-title">' + App.esc(title) + "</span>" +
       '<span class="row-meta">' + App.esc(meta) + "</span></div>" +
       '<div class="row-end"><span class="row-amount ' + amountClass + '">' + sign + App.formatVnd(tx.amount) + "</span>" +
@@ -559,6 +620,54 @@ App.renderTransactionRows = function (transactions) {
 };
 
 // ============================================================ kế hoạch (plan)
+
+// Each planning section gets an icon, a title and one line saying what
+// question it answers. Without it the tab is a row of chips above a bare
+// form, and nothing on screen tells you why you'd open "Định kỳ" over
+// "Dự báo" - which is exactly how it read before.
+App.PLAN_META = {
+  budget: ["wallet", "Ngân sách theo kỳ", "Đặt hạn mức cho từng nhóm chi trong kỳ 15 → 14, rồi theo dõi đã tiêu tới đâu."],
+  goals: ["target", "Mục tiêu tích lũy", "Những khoản cần dành dần qua nhiều kỳ — quỹ khẩn cấp, tiết kiệm, đầu tư."],
+  events: ["calendar", "Kế hoạch sự kiện", "Chuyến đi, đám cưới, chuyển nhà: ghi trước để nó nằm trong dự báo thay vì ập đến."],
+  income: ["salary", "Nguồn thu", "Khai báo từng nguồn kèm độ tin cậy, để biết thu chắc chắn có nuôi nổi chi thiết yếu không."],
+  recurring: ["repeat", "Khoản định kỳ", "Tiền phòng, thuê bao, học phí — đến hạn là app tự ghi thành giao dịch."],
+  forecast: ["chart", "Dự báo dòng tiền", "Kéo dài nhịp thu chi hiện tại về phía trước, cộng dồn số dư qua từng kỳ."],
+  simulate: ["scale", "Mô phỏng khoản chi lớn", "Trả ngay, trả góp hay hoãn lại — xem phương án nào làm số dư vỡ, và vỡ vào kỳ nào."],
+};
+
+App.planHeader = function (section) {
+  var meta = App.PLAN_META[section];
+  if (!meta) return "";
+  return '<section class="card">' +
+    '<div class="inline" style="gap:0.75rem;flex-wrap:nowrap">' +
+      '<span class="metric-icon" style="width:2.5rem;height:2.5rem;flex:none">' + App.icon(meta[0]) + "</span>" +
+      "<div><h1>" + App.esc(meta[1]) + "</h1>" +
+      '<p class="small muted">' + App.esc(meta[2]) + "</p></div>" +
+    "</div></section>";
+};
+
+// The landing state of the Kế hoạch tab. The sub-nav is a seven-chip row that
+// scrolls, and on a 320px screen three of those chips sit off the edge - there
+// is nothing telling you Dự báo or Mô phỏng exist at all. A grid shows all
+// seven at once. Deep links from the dashboard (data-goto="plan:budget") jump
+// straight past this, so the daily path is not made any longer.
+App.renderPlanHub = function () {
+  var tiles = App.PLAN_SECTIONS.map(function (pair) {
+    var meta = App.PLAN_META[pair[0]];
+    return '<button type="button" class="hub-tile" data-plan-section="' + pair[0] + '">' +
+      '<span class="glyph">' + App.icon(meta[0]) + "</span>" +
+      "<b>" + App.esc(pair[1]) + "</b>" +
+      "<small>" + App.esc(meta[2].split(".")[0]) + "</small>" +
+      "</button>";
+  }).join("");
+
+  return '<section class="card">' +
+    "<h1>Kế hoạch</h1>" +
+    '<p class="small muted">Bảy khu vực, từ hạn mức của kỳ này tới dự báo nhiều kỳ tới. ' +
+    "Chọn một khu để bắt đầu.</p>" +
+    '<div class="hub-grid">' + tiles + "</div>" +
+    "</section>";
+};
 
 App.renderBudgetPlan = function (data) {
   var expenseCategories = data.categories.filter(function (c) { return c.kind === "expense"; });
@@ -594,9 +703,12 @@ App.renderBudgetPlan = function (data) {
       "</div>";
   }).join("");
 
+  // The real date range, not the raw "2026-07" id: a period id LOOKS like a
+  // calendar month and isn't one, which is exactly the confusion to avoid.
   var periodNav = '<div class="spread">' +
     '<button type="button" class="link" data-period-shift="-1">← Kỳ trước</button>' +
-    '<span class="small num">' + App.esc(data.period.id) + (data.period.is_current ? " (kỳ này)" : "") + "</span>" +
+    '<span class="small"><b class="num">' + App.esc(App.formatPeriodRange(data.period)) + "</b>" +
+    (data.period.is_current ? ' <span class="faint">· kỳ này</span>' : "") + "</span>" +
     '<button type="button" class="link" data-period-shift="1">Kỳ sau →</button>' +
     "</div>";
 
@@ -953,6 +1065,7 @@ App.renderScenarios = function (result) {
 App.renderSettings = function (data) {
   var accountRows = (data ? data.accounts : []).map(function (account) {
     return '<div class="row">' +
+      '<span class="row-icon">' + App.icon(App.ACCOUNT_ICONS[account.type] || "wallet") + "</span>" +
       '<div class="row-main"><span class="row-title">' + App.esc(account.name) + "</span>" +
       '<span class="row-meta">' + App.esc(App.ACCOUNT_TYPES[account.type] || account.type) + "</span></div>" +
       '<div class="row-end"><span class="row-amount">' + App.formatDong(account.balance) + "</span>" +
@@ -971,7 +1084,27 @@ App.renderSettings = function (data) {
 
   var categoryCount = data ? data.categories.length : 0;
 
-  return '<section class="card">' +
+  var themeButtons = [["auto", "Theo máy"], ["light", "Sáng"], ["dark", "Tối"]].map(function (pair) {
+    return '<button type="button" class="swatch" data-set-theme="' + pair[0] + '" aria-pressed="' +
+      (App.currentTheme() === pair[0]) + '"><span>' + pair[1] + "</span></button>";
+  }).join("");
+
+  var paletteButtons = App.PALETTES.map(function (palette) {
+    return '<button type="button" class="swatch" data-set-palette="' + palette.key + '" aria-pressed="' +
+      (App.currentPalette() === palette.key) + '">' +
+      '<span class="dot" style="background:' + palette.dot + '"></span>' +
+      "<span>" + App.esc(palette.label) + "</span></button>";
+  }).join("");
+
+  var appearanceCard = '<section class="card">' +
+      '<div class="card-head"><h2>Giao diện</h2></div>' +
+      '<p class="tiny muted">Sáng hay tối, và bảng màu. Cả hai lưu riêng trên máy này.</p>' +
+      '<div class="swatch-row">' + themeButtons + "</div>" +
+      '<div class="swatch-row">' + paletteButtons + "</div>" +
+    "</section>";
+
+  return appearanceCard +
+    '<section class="card">' +
       '<div class="card-head"><h2>Kết nối</h2>' +
       '<button type="button" class="link" id="show-connection">Đổi</button></div>' +
       '<p class="small muted">Đang dùng Google Sheet qua Apps Script. Dữ liệu nằm trong tài khoản Google của bạn, không đi qua máy chủ nào khác.</p>' +

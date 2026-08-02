@@ -10,12 +10,17 @@ var App = window.App;
 App.state = {
   data: null,
   tab: "home",
-  planSection: "budget",
+  planSection: null, // null = show the hub; a key = show that section
   txFilter: "all",
   txQuery: "",
   txLimit: 40,
   periodId: null,
   loading: false,
+  // Add-form category picker: which id is chosen, and which parent's children
+  // the grid is currently showing. Both live here rather than in the DOM so a
+  // refresh of the <select> options can't lose the user's choice.
+  categoryId: "",
+  categoryParent: "",
 };
 
 // -------------------------------------------------------- simulation maths
@@ -252,9 +257,12 @@ App.load = function (options) {
 App.updateTopbar = function () {
   var data = App.state.data;
   if (!data) return;
+  // Two stacked lines rather than one long run of text: at 375px the single
+  // line wrapped mid-phrase and pushed the topbar to double height.
   App.setHtml(
     "#period-chip",
-    "Kỳ " + App.esc(App.formatPeriodRange(data.period)) + " · còn " + data.period.days_remaining + " ngày"
+    '<b class="num">' + App.esc(App.formatPeriodRange(data.period)) + "</b>" +
+    '<i class="tiny faint">còn ' + data.period.days_remaining + " ngày</i>"
   );
 };
 
@@ -308,7 +316,11 @@ App.renderCurrentTab = function () {
   // A render that throws must not blank the page. This is the net that a
   // mismatched backend payload used to fall straight through.
   try {
-    if (App.state.tab === "home") App.setHtml("#view-home", App.renderDashboard(data)), App.loadDailySummary();
+    if (App.state.tab === "home") {
+      App.setHtml("#view-home", App.renderDashboard(data));
+      App.animateBalance();
+      App.loadDailySummary();
+    }
     else if (App.state.tab === "add") App.refreshAddForm();
     else if (App.state.tab === "list") App.renderList();
     else if (App.state.tab === "plan") App.renderPlan();
@@ -322,6 +334,22 @@ App.renderCurrentTab = function () {
 };
 
 // --------------------------------------------------------------- dashboard
+
+// Runs once per real load, not on every re-render: a number that re-animates
+// every time a background refresh finishes reads as a glitch, not a flourish.
+App.balanceAnimatedFor = null;
+
+App.animateBalance = function () {
+  var node = App.$(".hero-balance");
+  var data = App.state.data;
+  if (!node || !data) return;
+  var value = data.money.liquid_balance;
+  if (App.balanceAnimatedFor === value) return;
+  App.balanceAnimatedFor = value;
+  App.countUp(node, value, function (current) {
+    return App.formatVnd(current) + '<span class="unit">đ</span>';
+  });
+};
 
 App.aiSummaryLoadedFor = null;
 
@@ -373,12 +401,11 @@ App.refreshAddForm = function () {
 
   var account = App.$("#tx-account");
   var toAccount = App.$("#tx-to-account");
-  var category = App.$("#tx-category");
 
-  var keepAccount = account.value, keepTo = toAccount.value, keepCategory = category.value;
+  var keepAccount = account.value, keepTo = toAccount.value;
   account.innerHTML = App.accountOptions(data.accounts, keepAccount, true);
   toAccount.innerHTML = App.accountOptions(data.accounts, keepTo, true);
-  category.innerHTML = App.categoryOptions(data.categories, direction === "in" ? "income" : "expense", keepCategory);
+  App.renderCategoryGrid();
 
   App.show("#tx-to-wrap", direction === "transfer");
   App.show("#tx-category-wrap", direction !== "transfer");
@@ -388,6 +415,31 @@ App.refreshAddForm = function () {
   if (!dateInput.value) dateInput.value = App.today();
 
   App.setHtml("#add-recent", App.renderTransactionRows(data.transactions.slice(0, 5)));
+};
+
+// Only the grid and its chip are touched here - never the amount, the note or
+// the date. The rule that the add form is not re-rendered underneath the user
+// still holds; this is one control refreshing itself.
+App.renderCategoryGrid = function () {
+  var data = App.state.data;
+  var grid = App.$("#tx-category-grid");
+  if (!data || !grid) return;
+  var kind = App.currentDirection() === "in" ? "income" : "expense";
+
+  grid.innerHTML = App.categoryGrid(data.categories, kind, App.state.categoryId, App.state.categoryParent);
+  App.$("#tx-category").value = App.state.categoryId || "";
+
+  var label = App.categoryLabel(data.categories, App.state.categoryId);
+  App.setHtml("#tx-category-picked", label
+    ? App.icon(App.categoryIconName(label)) + "<span>" + App.esc(label) + "</span>"
+    : '<span class="faint tiny">Để trống là tự phân loại theo luật</span>');
+};
+
+App.pickCategory = function (id) {
+  // Tapping the lit tile again clears it: leaving the category blank is a
+  // real choice - it hands the row to the auto-categorisation rules.
+  App.state.categoryId = String(App.state.categoryId) === String(id) ? "" : String(id);
+  App.renderCategoryGrid();
 };
 
 App.updateAmountHint = function () {
@@ -668,7 +720,7 @@ App.openEditDialog = function (id) {
         '<input type="radio" id="edit-in" name="direction" value="in"' + (tx.direction === "in" ? " checked" : "") + '><label for="edit-in">Thu</label>' +
       "</div>" +
       '<label class="field"><span class="field-label">Số tiền</span>' +
-      '<input type="text" inputmode="numeric" name="amount" class="amount-input" value="' + App.esc(tx.amount) + '"></label>' +
+      '<input type="text" inputmode="numeric" name="amount" class="amount-input" value="' + App.esc(App.formatVnd(tx.amount)) + '"></label>' +
       '<label class="field"><span class="field-label">Ngày</span>' +
       '<input type="date" name="occurred_at" value="' + App.esc(App.dateOnly(tx.occurred_at)) + '"></label>' +
       '<label class="field"><span class="field-label">Tài khoản</span>' +
@@ -721,10 +773,20 @@ App.PLAN_SECTIONS = [
 
 App.renderPlan = function () {
   var data = App.state.data;
-  var nav = '<div class="subnav">' + App.PLAN_SECTIONS.map(function (pair) {
-    return '<button type="button" data-plan-section="' + pair[0] + '" aria-pressed="' +
-      (App.state.planSection === pair[0]) + '">' + pair[1] + "</button>";
-  }).join("") + "</div>";
+
+  // No section chosen yet: show the hub instead of silently landing on
+  // whichever section happens to be first.
+  if (!App.state.planSection) {
+    App.setHtml("#view-plan", App.renderPlanHub());
+    return;
+  }
+
+  var nav = '<div class="subnav">' +
+    '<button type="button" data-plan-section="" aria-pressed="false" aria-label="Tất cả khu vực">☰</button>' +
+    App.PLAN_SECTIONS.map(function (pair) {
+      return '<button type="button" data-plan-section="' + pair[0] + '" aria-pressed="' +
+        (App.state.planSection === pair[0]) + '">' + pair[1] + "</button>";
+    }).join("") + "</div>";
 
   var body;
   if (App.state.planSection === "budget") body = App.renderBudgetPlan(data);
@@ -735,7 +797,7 @@ App.renderPlan = function () {
   else if (App.state.planSection === "forecast") body = App.renderForecastPlan();
   else body = App.renderSimulationPlan();
 
-  App.setHtml("#view-plan", nav + body);
+  App.setHtml("#view-plan", nav + App.planHeader(App.state.planSection) + body);
   if (App.state.planSection === "events") App.resetEventItems();
 };
 
@@ -985,10 +1047,15 @@ App.askAi = function (topic, context, panelSelector, buttonSelector) {
 // One delegated click handler for the whole app: views are re-rendered
 // wholesale, so per-element listeners would need constant rebinding.
 document.addEventListener("click", function (event) {
+  // Every id in this selector must have a case below, and every case below
+  // must have its id in this selector. A button added to one and not the
+  // other renders perfectly and does nothing when clicked - which has already
+  // shipped once. Audit both lists after touching either.
   var target = event.target.closest("[data-tab], [data-goto], [data-plan-section], [data-filter], " +
     "[data-dismiss-alert], [data-delete-tx], [data-edit-tx], [data-hide-goal], [data-hide-recurring], " +
     "[data-delete-rule], [data-edit-account], [data-apply-suggestion], [data-period-shift], [data-close-dialog], " +
-    "[data-hide-income], [data-delete-event], [data-event-to-goal], #add-event-item, #save-import, " +
+    "[data-hide-income], [data-delete-event], [data-event-to-goal], [data-pick-category], [data-open-parent], " +
+    "[data-set-theme], [data-set-palette], #add-event-item, #save-import, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
     "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, " +
     "#save-connection-anyway, #device-link-btn, #copy-device-link, #theme-toggle");
@@ -998,6 +1065,19 @@ document.addEventListener("click", function (event) {
 
   if (attr("data-tab")) { App.switchTab(attr("data-tab")); return; }
 
+  // Drilling into a parent is checked BEFORE selection: a parent that has
+  // children opens them, and is selectable on its own only from inside.
+  // hasAttribute, not the value - the "quay lại" tile carries an empty one.
+  if (target.hasAttribute("data-open-parent")) {
+    App.state.categoryParent = attr("data-open-parent");
+    App.renderCategoryGrid();
+    return;
+  }
+  if (attr("data-pick-category")) { App.pickCategory(attr("data-pick-category")); return; }
+
+  if (attr("data-set-theme")) { App.setTheme(attr("data-set-theme")); App.renderSettingsTab(); return; }
+  if (attr("data-set-palette")) { App.setPalette(attr("data-set-palette")); App.renderSettingsTab(); return; }
+
   if (attr("data-goto")) {
     var parts = attr("data-goto").split(":");
     if (parts[1]) App.state.planSection = parts[1];
@@ -1005,8 +1085,10 @@ document.addEventListener("click", function (event) {
     return;
   }
 
-  if (attr("data-plan-section")) {
-    App.state.planSection = attr("data-plan-section");
+  // hasAttribute, not the value: the "☰" chip carries an empty one, which is
+  // how it returns to the hub.
+  if (target.hasAttribute("data-plan-section")) {
+    App.state.planSection = attr("data-plan-section") || null;
     App.renderPlan();
     // Keep the chosen chip in view instead of letting the row snap back.
     var chip = App.$('[data-plan-section="' + attr("data-plan-section") + '"]');
@@ -1308,7 +1390,13 @@ document.addEventListener("input", function (event) {
 });
 
 document.addEventListener("change", function (event) {
-  if (event.target.name === "direction" && event.target.closest("#tx-form")) App.refreshAddForm();
+  if (event.target.name === "direction" && event.target.closest("#tx-form")) {
+    // Chi and Thu draw from different halves of the category tree, so a
+    // choice made under one direction is meaningless under the other.
+    App.state.categoryId = "";
+    App.state.categoryParent = "";
+    App.refreshAddForm();
+  }
   if (event.target.id === "event-template") App.resetEventItems(event.target.value);
   if (event.target.id === "import-file" && event.target.files && event.target.files.length) {
     App.analyzeImages(event.target.files);
@@ -1344,7 +1432,7 @@ App.openAccountDialog = function (id) {
         }).join("") +
       "</select></label>" +
       '<label class="field"><span class="field-label">Số dư thực tế</span>' +
-      '<input type="text" inputmode="numeric" name="balance" value="' + App.esc(account.balance) + '"></label>' +
+      '<input type="text" inputmode="numeric" name="balance" value="' + App.esc(App.formatVnd(account.balance)) + '"></label>' +
       '<p class="tiny muted">Sửa số dư ở đây là để chỉnh lại cho khớp thực tế, không phải để ghi nhận thu nhập — ' +
       "khoản thu thật thì nên nhập ở tab Nhập.</p>" +
       '<label class="field"><span class="field-label">Hiển thị</span><select name="is_active">' +
@@ -1373,7 +1461,7 @@ App.createGoalFromEvent = function (eventId) {
       '<label class="field"><span class="field-label">Tên mục tiêu</span>' +
       '<input type="text" name="name" value="' + App.esc(event.name) + '" required></label>' +
       '<label class="field"><span class="field-label">Cần tích lũy</span>' +
-      '<input type="text" inputmode="numeric" name="target_amount" value="' + App.esc(event.remaining_total) + '" required>' +
+      '<input type="text" inputmode="numeric" name="target_amount" value="' + App.esc(App.formatVnd(event.remaining_total)) + '" required>' +
       '<span class="tiny faint">Lấy từ phần còn phải trả của sự kiện.</span></label>' +
       '<label class="field"><span class="field-label">Hạn chót</span>' +
       '<input type="date" name="deadline" value="' + App.esc(event.event_date) + '" required></label>' +
