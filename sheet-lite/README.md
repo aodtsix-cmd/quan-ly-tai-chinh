@@ -212,13 +212,51 @@ Hai bản **không chia sẻ dữ liệu** — chúng là hai sổ riêng biệt
 
 ---
 
+## Kiểm tra bản nào đang chạy (5 giây)
+
+Dán URL Web App của bạn vào trình duyệt, **thêm `?action=version` vào cuối**:
+
+```
+https://script.google.com/macros/s/…/exec?action=version
+```
+
+- `{"ok":true,"data":{"version":"3.4"}}` → đang chạy bản mới, tốt.
+- Báo lỗi hoặc số cũ hơn → bảng tính đang phục vụ code cũ, làm theo mục dưới.
+
+Cách xem này cố ý **không cần mã kết nối**: một bản triển khai chạy code cũ sẽ
+chặn ở bước kiểm tra mã trước khi kịp nói nó là bản nào.
+
+## Dán code mới rồi mà app vẫn báo "mã cũ"
+
+Đây là cái bẫy lớn nhất của Apps Script, và nó **hỏng trong im lặng**:
+
+> Apps Script phục vụ **phiên bản đã triển khai**, không phải code đang nằm
+> trong trình soạn thảo.
+
+Dán code mới vào rồi bấm lưu **không** làm URL chạy code mới. Phải tạo một
+phiên bản mới:
+
+1. Dán `Code.gs` mới nhất, bấm **lưu** (biểu tượng đĩa mềm 💾).
+   *Chưa lưu thì bước sau sẽ triển khai lại đúng code cũ.*
+2. **Triển khai → Quản lý bản triển khai**
+3. Bấm **biểu tượng bút chì ✏** ở bản triển khai đang dùng
+   *(sửa bản đang có, đừng tạo bản mới — tạo mới sẽ ra URL khác)*
+4. Ô **Phiên bản** đang là một con số → đổi thành **Phiên bản mới**
+5. Bấm **Triển khai**
+
+Rồi kiểm lại bằng `?action=version` ở trên.
+
+Nếu bạn có nhiều bảng tính, kiểm tra kỹ đã dán code vào đúng cái mà URL trỏ
+tới. Số dòng cũng là một manh mối: v3.4 dài khoảng **2.350 dòng**, v3.0 khoảng
+1.800, v2 chỉ 909.
+
 ## Nếu gặp trục trặc
 
 | Hiện tượng | Nguyên nhân thường gặp |
 | --- | --- |
 | "Không kết nối được với Apps Script" | URL sai, hoặc bản triển khai chưa để "Bất kỳ ai có đường liên kết". |
 | "Sai token" | `APP_TOKEN` trong Script Properties khác với mật khẩu đã nhập. |
-| Sửa `Code.gs` rồi mà không thấy đổi | Chưa tạo **phiên bản mới** khi triển khai lại. Vào Cài đặt trong app xem số "mã v…" để biết bản nào đang chạy. |
+| Sửa `Code.gs` rồi mà không thấy đổi | Chưa tạo **phiên bản mới** khi triển khai lại — xem mục ngay dưới bảng này. |
 | Không rõ thiếu gì | Cài đặt → **Kiểm tra thiết lập**, nó liệt kê từng mục đạt/chưa đạt. |
 | Phần AI không hiện | Chưa đặt `GEMINI_API_KEY`. Đây là hành vi bình thường, không phải lỗi. |
 | Mất kết nối sau khi đổi máy/trình duyệt | URL và mật khẩu lưu theo từng trình duyệt. Nhập lại ở màn hình đầu. |

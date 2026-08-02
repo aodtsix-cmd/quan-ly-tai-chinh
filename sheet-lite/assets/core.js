@@ -87,6 +87,19 @@ App.unwrap = function (payload) {
   return Promise.reject(new Error(message));
 };
 
+// Deliberately token-less: a deployment running old code rejects the token
+// check before it can identify itself, so this is the only way to find out
+// what is actually deployed. Resolves to null when the deployment is too old
+// to answer at all - which is itself the answer.
+App.EXPECTED_VERSION = "3.4";
+
+App.fetchVersion = function () {
+  return fetch(App.config.url + "?action=version")
+    .then(App.parseResponse)
+    .then(function (payload) { return (payload && payload.ok && payload.data.version) || null; })
+    .catch(function () { return null; });
+};
+
 App.errorText = function (err) {
   var message = String((err && err.message) || err);
   if (message.indexOf("Failed to fetch") !== -1 || message.indexOf("NetworkError") !== -1) {

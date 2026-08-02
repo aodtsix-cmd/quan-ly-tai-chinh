@@ -72,7 +72,7 @@
 // redeploy actually took - forgetting to pick "Phiên bản: Mới" when
 // redeploying is the single easiest mistake to make with Apps Script, and it
 // fails silently: the old code just keeps serving.
-var VERSION = "3.3";
+var VERSION = "3.4";
 
 var SHEET_ACCOUNTS = "Accounts";
 var SHEET_CATEGORIES = "Categories";
@@ -313,6 +313,17 @@ function handle_(e, method) {
     var params = method === "GET"
       ? (e.parameter || {})
       : JSON.parse((e.postData && e.postData.contents) || "{}");
+    // Answered WITHOUT a token, deliberately. Apps Script serves the deployed
+    // VERSION, not what's in the editor, so "I pasted the new code but the app
+    // still says it's old" is the single most common way this setup goes
+    // wrong - and it fails silently. You cannot diagnose that through an
+    // authenticated call, because a stale deployment rejects the token check
+    // before it can tell you anything. This exposes nothing but a build
+    // number, and it means the URL can be pasted straight into a browser.
+    if (params.action === "version") {
+      return jsonOutput_({ ok: true, data: { version: VERSION } });
+    }
+
     checkToken_(params.token);
 
     // Read-only actions run directly; anything that writes takes the script

@@ -903,6 +903,29 @@ test("handle_ returns ok:false with a message instead of throwing on a bad actio
   assert.ok(parsed.message.indexOf("khong_ton_tai") !== -1);
 });
 
+test("the version action answers WITHOUT a token, so a stale deploy is diagnosable", () => {
+  // A deployment serving old code rejects the token check before it can say
+  // anything about itself, so this one action has to be reachable unauthenticated.
+  const output = handle_({ parameter: { action: "version" } }, "GET");
+  const parsed = JSON.parse(output.getContent());
+  assert.strictEqual(parsed.ok, true);
+  assert.strictEqual(parsed.data.version, VERSION);
+});
+
+test("the version action leaks nothing except the build number", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 9999999, true]);
+  const parsed = JSON.parse(handle_({ parameter: { action: "version" } }, "GET").getContent());
+  assert.deepStrictEqual(Object.keys(parsed.data), ["version"]);
+});
+
+test("every OTHER action still requires a token", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  ["bootstrap", "health_check", "export_csv", "add_transaction"].forEach((action) => {
+    const parsed = JSON.parse(handle_({ parameter: { action: action } }, "GET").getContent());
+    assert.strictEqual(parsed.ok, false, action + " must not be reachable without a token");
+  });
+});
+
 test("handle_ rejects a request with a wrong token before running any action", () => {
   sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
   const output = handle_({ parameter: { token: "nope", action: "bootstrap" } }, "GET");

@@ -207,13 +207,26 @@ App.load = function (options) {
       // response has none of the fields this frontend reads - which used to
       // throw deep inside rendering and leave a blank page with no clue why.
       if (!data || !data.period || !data.money || !data.health || !data.metrics) {
-        App.showFatal("Mã trên Google Sheet đã cũ hơn giao diện",
-          "<p>Kết nối thì được, nhưng bảng tính đang chạy một bản <code>Code.gs</code> cũ, " +
-          "thiếu những số liệu mà trang này cần.</p>" +
-          "<p>Mở Apps Script của bảng tính, dán lại <code>Code.gs</code> mới nhất, rồi " +
-          "<b>Triển khai → Quản lý bản triển khai → sửa (✏) → Phiên bản: <u>Mới</u> → Triển khai</b>. " +
-          "Chọn đúng “Phiên bản: Mới” mới ăn — giữ nguyên bản cũ thì URL vẫn chạy mã cũ.</p>" +
-          "<p>Nếu đây là một bảng tính khác, bấm “Đổi kết nối” để trỏ sang bảng tính đúng.</p>");
+        // Ask the deployment what it actually is, so the message can name the
+        // real gap instead of guessing. This is the whole reason the version
+        // action skips the token check.
+        App.fetchVersion().then(function (deployed) {
+          App.showFatal("Bảng tính đang chạy mã cũ hơn giao diện",
+            "<p><b>Điểm mấu chốt:</b> Apps Script phục vụ <u>phiên bản đã triển khai</u>, " +
+            "không phải code đang nằm trong trình soạn thảo. Dán code mới vào mà không tạo " +
+            "phiên bản mới thì URL vẫn chạy code cũ, và nó không báo lỗi gì cả.</p>" +
+            "<p>Đang chạy: <b>" + (deployed ? "v" + App.esc(deployed) : "bản cũ hơn v3.4") +
+            "</b> · Giao diện cần: <b>v" + App.EXPECTED_VERSION + "</b></p>" +
+            "<p>Trong Apps Script, làm đúng thứ tự này:</p>" +
+            "<p>1. Dán <code>Code.gs</code> mới nhất, bấm <b>lưu</b> (biểu tượng đĩa mềm 💾). " +
+            "Chưa lưu thì bước sau sẽ triển khai lại đúng code cũ.<br>" +
+            "2. <b>Triển khai → Quản lý bản triển khai</b><br>" +
+            "3. Bấm <b>biểu tượng bút chì ✏</b> ở bản triển khai đang dùng<br>" +
+            "4. Ô <b>Phiên bản</b> đang là một con số — đổi thành <b>Phiên bản mới</b><br>" +
+            "5. Bấm <b>Triển khai</b>, rồi quay lại đây bấm <b>Thử lại</b></p>" +
+            "<p>Nếu bạn có nhiều bảng tính, hãy chắc chắn đã dán code vào đúng cái mà URL này trỏ tới — " +
+            "không thì bấm “Đổi kết nối”.</p>");
+        });
         return null;
       }
 
