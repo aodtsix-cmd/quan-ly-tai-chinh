@@ -260,16 +260,38 @@ App.updateTopbar = function () {
 
 // -------------------------------------------------------------------- tabs
 
+App.closeDialog = function () {
+  var dialog = App.$("#tx-dialog");
+  if (dialog && dialog.open) dialog.close();
+};
+
+// A modal has to be dismissable three ways or it feels like a trap: the X,
+// clicking the dim area outside it, and Escape. <dialog> gives Escape for
+// free; the other two are wired here, once, for every dialog the app opens.
+(function wireDialogDismissal() {
+  var dialog = document.getElementById("tx-dialog");
+  if (!dialog) return;
+  dialog.addEventListener("click", function (event) {
+    // A click landing on the <dialog> itself rather than its content is a
+    // click on the backdrop - the content sits in an inner wrapper.
+    if (event.target === dialog) App.closeDialog();
+  });
+})();
+
 App.TABS = ["home", "add", "list", "plan", "settings"];
 
-App.switchTab = function (tab) {
+App.switchTab = function (tab, options) {
+  var keepScroll = options && options.keepScroll;
   App.state.tab = tab;
   App.TABS.forEach(function (name) {
     App.show("#view-" + name, name === tab);
     var button = App.$('[data-tab="' + name + '"]');
     if (button) button.setAttribute("aria-selected", String(name === tab));
   });
-  window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  // Only jump to the top when the tab actually changes. Re-rendering in place
+  // - switching a Kế hoạch sub-section, saving a row - must leave the reader
+  // where they were.
+  if (!keepScroll) window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
   App.renderCurrentTab();
 };
 
@@ -480,27 +502,70 @@ App.fileToScaledBase64 = function (file) {
   });
 };
 
-App.analyzeImage = function (file) {
-  App.setHtml("#import-result", '<p class="notice notice-info">Đang đọc ảnh… việc này mất vài giây.</p>');
+// Images are read ONE AT A TIME rather than in parallel: every write action
+// behind this API takes a script lock anyway, Apps Script cold-starts badly
+// under a burst, and a serial loop is what makes per-image progress and
+// per-image failure reporting possible. Ten screenshots is an ordinary batch.
+App.analyzeImages = function (files) {
+  var list = Array.prototype.slice.call(files);
+  App.importCandidates = [];
+  var seenRefs = {};
+  var failed = [];
 
-  App.fileToScaledBase64(file)
-    .then(function (image) {
-      return App.apiPost("analyze_image", { image_base64: image.base64, mime_type: image.mimeType });
-    })
-    .then(function (result) {
-      if (!result.available) {
-        App.setHtml("#import-result", '<p class="notice notice-info">' +
-          (result.reason === "no_key"
-            ? "Tính năng này cần GEMINI_API_KEY trong Script Properties của bảng tính. Chưa có thì cứ nhập tay ở trên."
-            : "Chưa đọc được ảnh này. Thử ảnh rõ hơn, hoặc nhập tay ở trên.") + "</p>");
-        return;
-      }
-      App.importCandidates = result.candidates;
-      App.setHtml("#import-result", App.renderImportCandidates(App.state.data, result.candidates));
-    })
-    .catch(function (err) {
-      App.setHtml("#import-result", '<p class="notice notice-error">' + App.esc(App.errorText(err)) + "</p>");
-    });
+  function paintProgress(index) {
+    App.setHtml("#import-result",
+      '<p class="notice notice-info">Đang đọc ảnh ' + (index + 1) + "/" + list.length +
+      "… mỗi ảnh mất vài giây.</p>" +
+      (App.importCandidates.length
+        ? '<p class="tiny muted">Đã tìm thấy ' + App.importCandidates.length + " giao dịch.</p>"
+        : ""));
+  }
+
+  function step(index) {
+    if (index >= list.length) return finish();
+    paintProgress(index);
+
+    return App.fileToScaledBase64(list[index])
+      .then(function (image) {
+        return App.apiPost("analyze_image", { image_base64: image.base64, mime_type: image.mimeType });
+      })
+      .then(function (result) {
+        if (!result.available) {
+          failed.push({ name: list[index].name, reason: result.reason });
+          return;
+        }
+        result.candidates.forEach(function (candidate) {
+          // De-duplicate across images too: the same receipt screenshotted
+          // twice, or a list view plus its detail view, is a real habit.
+          if (seenRefs[candidate.external_ref]) return;
+          seenRefs[candidate.external_ref] = true;
+          App.importCandidates.push(candidate);
+        });
+      })
+      .catch(function (err) {
+        failed.push({ name: list[index].name, reason: App.errorText(err) });
+      })
+      .then(function () { return step(index + 1); });
+  }
+
+  function finish() {
+    var noKey = failed.some(function (f) { return f.reason === "no_key"; });
+    var notice = "";
+    if (noKey) {
+      notice = '<p class="notice notice-info">Tính năng này cần GEMINI_API_KEY trong Script Properties ' +
+        "của bảng tính. Chưa có thì cứ nhập tay ở trên.</p>";
+    } else if (failed.length) {
+      notice = '<p class="notice notice-info">' + failed.length + "/" + list.length +
+        " ảnh không đọc được (" + App.esc(failed.map(function (f) { return f.name; }).join(", ")) +
+        "). Các ảnh còn lại vẫn dùng được bên dưới.</p>";
+    }
+    App.setHtml("#import-result", notice +
+      (App.importCandidates.length || !noKey
+        ? App.renderImportCandidates(App.state.data, App.importCandidates)
+        : ""));
+  }
+
+  step(0);
 };
 
 App.saveImport = function () {
@@ -595,7 +660,7 @@ App.openEditDialog = function (id) {
   var kind = tx.direction === "in" ? "income" : "expense";
   App.setHtml("#tx-dialog-body",
     '<div class="dialog-head"><h2>Sửa giao dịch</h2>' +
-    '<button type="button" class="link" data-close-dialog>Đóng</button></div>' +
+    '<button type="button" class="icon-btn" data-close-dialog aria-label="Đóng">\u2715</button></div>' +
     '<form id="edit-form">' +
       '<input type="hidden" name="id" value="' + App.esc(tx.id) + '">' +
       '<div class="segmented">' +
@@ -767,7 +832,7 @@ App.runForecast = function () {
       var labels = result.periods.map(function (p) { return p.period_id.slice(5) + "/" + p.period_id.slice(2, 4); });
       var rows = result.periods.map(function (p) {
         return '<div class="kv"><dt>Kỳ ' + App.esc(p.period_id) +
-          (p.event_cost > 0 ? ' <span class="tiny amount-out">(sự kiện −' + App.formatCompact(p.event_cost) + ")</span>" : "") +
+          (p.event_cost > 0 ? ' <span class="tiny amount-out">(sự kiện −' + App.formatVnd(p.event_cost) + ")</span>" : "") +
           "</dt><dd class=\"" + (p.projected_balance < 0 ? "amount-out" : "") + '">' +
           App.formatDong(p.projected_balance) + "</dd></div>";
       }).join("");
@@ -775,11 +840,11 @@ App.runForecast = function () {
       App.setHtml("#forecast-result",
         App.lineChart(labels, balances) +
         '<dl class="stack-tight">' + rows + "</dl>" +
-        '<p class="tiny faint">Dựa trên thu ' + App.formatCompact(result.income_per_period) + " đ" +
+        '<p class="tiny faint">Dựa trên thu ' + App.formatVnd(result.income_per_period) + " đ" +
         (result.income_basis === "reliable" ? " (thu chắc chắn)" : " (trung bình " + result.periods_of_history + " kỳ gần nhất)") +
-        " và chi " + App.formatCompact(result.avg_expense) + " đ mỗi kỳ" +
-        (result.goal_contribution > 0 ? ", trừ " + App.formatCompact(result.goal_contribution) + " đ cho mục tiêu" : "") +
-        (result.event_total > 0 ? ", trừ " + App.formatCompact(result.event_total) + " đ cho sự kiện đã lên kế hoạch" : "") +
+        " và chi " + App.formatVnd(result.avg_expense) + " đ mỗi kỳ" +
+        (result.goal_contribution > 0 ? ", trừ " + App.formatVnd(result.goal_contribution) + " đ cho mục tiêu" : "") +
+        (result.event_total > 0 ? ", trừ " + App.formatVnd(result.event_total) + " đ cho sự kiện đã lên kế hoạch" : "") +
         ".</p>");
     })
     .catch(function (err) {
@@ -940,7 +1005,14 @@ document.addEventListener("click", function (event) {
     return;
   }
 
-  if (attr("data-plan-section")) { App.state.planSection = attr("data-plan-section"); App.renderPlan(); return; }
+  if (attr("data-plan-section")) {
+    App.state.planSection = attr("data-plan-section");
+    App.renderPlan();
+    // Keep the chosen chip in view instead of letting the row snap back.
+    var chip = App.$('[data-plan-section="' + attr("data-plan-section") + '"]');
+    if (chip && chip.scrollIntoView) chip.scrollIntoView({ block: "nearest", inline: "center" });
+    return;
+  }
   if (attr("data-filter")) { App.state.txFilter = attr("data-filter"); App.state.txLimit = 40; App.renderList(); return; }
 
   // Dismissing an alert only hides it for this visit - there is no "muted"
@@ -957,7 +1029,7 @@ document.addEventListener("click", function (event) {
   }
 
   if (attr("data-edit-tx")) { App.openEditDialog(attr("data-edit-tx")); return; }
-  if (attr("data-close-dialog")) { App.$("#tx-dialog").close(); return; }
+  if (attr("data-close-dialog")) { App.closeDialog(); return; }
 
   if (attr("data-hide-goal")) {
     if (!window.confirm("Ẩn mục tiêu này? Lịch sử vẫn được giữ, chỉ không hiển thị nữa.")) return;
@@ -1217,6 +1289,12 @@ document.addEventListener("submit", function (event) {
 });
 
 document.addEventListener("input", function (event) {
+  // Every money field in the app is an inputmode=numeric text box, so one
+  // delegated handler covers the add form, the edit dialog, budgets, goals,
+  // income, event items and the import review rows alike.
+  if (event.target.matches && event.target.matches('input[inputmode="numeric"]')) {
+    App.formatAmountInput(event.target);
+  }
   if (event.target.id === "tx-amount") App.updateAmountHint();
   if (event.target.id === "tx-search") {
     App.state.txQuery = event.target.value;
@@ -1232,8 +1310,8 @@ document.addEventListener("input", function (event) {
 document.addEventListener("change", function (event) {
   if (event.target.name === "direction" && event.target.closest("#tx-form")) App.refreshAddForm();
   if (event.target.id === "event-template") App.resetEventItems(event.target.value);
-  if (event.target.id === "import-file" && event.target.files && event.target.files[0]) {
-    App.analyzeImage(event.target.files[0]);
+  if (event.target.id === "import-file" && event.target.files && event.target.files.length) {
+    App.analyzeImages(event.target.files);
   }
 
   // Recording an actual amount on an event item saves straight away - it is a
@@ -1254,7 +1332,7 @@ App.openAccountDialog = function (id) {
 
   App.setHtml("#tx-dialog-body",
     '<div class="dialog-head"><h2>Sửa tài khoản</h2>' +
-    '<button type="button" class="link" data-close-dialog>Đóng</button></div>' +
+    '<button type="button" class="icon-btn" data-close-dialog aria-label="Đóng">\u2715</button></div>' +
     '<form id="account-edit-form">' +
       '<input type="hidden" name="id" value="' + App.esc(account.id) + '">' +
       '<label class="field"><span class="field-label">Tên</span>' +
@@ -1289,7 +1367,7 @@ App.createGoalFromEvent = function (eventId) {
 
   App.setHtml("#tx-dialog-body",
     '<div class="dialog-head"><h2>Tạo mục tiêu cho sự kiện</h2>' +
-    '<button type="button" class="link" data-close-dialog>Đóng</button></div>' +
+    '<button type="button" class="icon-btn" data-close-dialog aria-label="Đóng">\u2715</button></div>' +
     '<form id="event-goal-form">' +
       '<input type="hidden" name="event_id" value="' + App.esc(event.id) + '">' +
       '<label class="field"><span class="field-label">Tên mục tiêu</span>' +
@@ -1314,7 +1392,7 @@ App.createGoalFromEvent = function (eventId) {
 App.showConnectionForm = function () {
   App.setHtml("#tx-dialog-body",
     '<div class="dialog-head"><h2>Kết nối Google Sheet</h2>' +
-    '<button type="button" class="link" data-close-dialog>Đóng</button></div>' +
+    '<button type="button" class="icon-btn" data-close-dialog aria-label="Đóng">\u2715</button></div>' +
     '<form id="connection-form">' +
       '<label class="field"><span class="field-label">Địa chỉ bảng tính</span>' +
       '<input type="text" name="url" value="' + App.esc(App.config ? App.config.url : "") +
@@ -1371,7 +1449,7 @@ App.showDeviceLink = function () {
 
   App.setHtml("#tx-dialog-body",
     '<div class="dialog-head"><h2>Mở sổ trên thiết bị khác</h2>' +
-    '<button type="button" class="link" data-close-dialog>Đóng</button></div>' +
+    '<button type="button" class="icon-btn" data-close-dialog aria-label="Đóng">\u2715</button></div>' +
     '<p class="small muted">Mở đường dẫn này trên điện thoại hay máy khác là vào thẳng sổ, ' +
     "không phải gõ lại gì.</p>" +
     '<textarea id="device-link" rows="4" readonly style="font-family:var(--font-num);font-size:0.75rem">' +

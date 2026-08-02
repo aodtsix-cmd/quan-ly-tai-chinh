@@ -102,7 +102,7 @@ App.categoryOptions = function (categories, kind, selectedId, placeholder) {
 
 App.accountOptions = function (accounts, selectedId, withBalance) {
   return accounts.map(function (account) {
-    var label = account.name + (withBalance ? " · " + App.formatCompact(account.balance) + " đ" : "");
+    var label = account.name + (withBalance ? " · " + App.formatDong(account.balance) : "");
     return '<option value="' + App.esc(account.id) + '"' +
       (String(selectedId) === String(account.id) ? " selected" : "") + ">" +
       App.esc(label) + "</option>";
@@ -262,7 +262,7 @@ App.renderHero = function (data) {
       App.healthChip(health.has_data ? health.level : null) +
     "</div>" +
     '<div class="hero-sub small muted">' +
-      "<span>Tổng tài sản <b class=\"num\">" + App.formatCompact(data.money.net_worth) + " đ</b></span>" +
+      "<span>Tổng tài sản <b class=\"num\">" + App.formatVnd(data.money.net_worth) + " đ</b></span>" +
       (health.runway_months !== null
         ? "<span>Cầm cự <b class=\"num\">" + App.formatNumber(health.runway_months) + "</b> kỳ nếu mất thu nhập</span>"
         : "") +
@@ -282,7 +282,7 @@ App.renderMetrics = function (data) {
       money.survival_days !== null ? "với mức chi 30 ngày qua" : "chưa có dữ liệu chi"),
 
     App.metricTile("Dự báo cuối kỳ",
-      '<span class="' + (money.at_risk ? "amount-out" : "") + '">' + App.formatCompact(money.forecast_balance) + " đ</span>",
+      '<span class="' + (money.at_risk ? "amount-out" : "") + '">' + App.formatVnd(money.forecast_balance) + " đ</span>",
       "còn " + data.period.days_remaining + " ngày"),
 
     App.metricTile("Tiết kiệm kỳ này",
@@ -326,7 +326,7 @@ App.renderBudgetReminders = function (data) {
     var modifier = status.over_budget ? "is-over" : (status.pct_used > 85 ? "is-warn" : "");
     return '<div class="bar-item">' +
       '<div class="bar-top"><span>' + App.esc(status.category_name) + "</span>" +
-      '<span class="bar-figures">' + App.formatCompact(status.spent) + " / " + App.formatCompact(status.amount) + "</span></div>" +
+      '<span class="bar-figures">' + App.formatVnd(status.spent) + " / " + App.formatVnd(status.amount) + "</span></div>" +
       App.track(status.pct_used, modifier) +
       '<p class="tiny ' + (status.over_budget ? "amount-out" : "muted") + '">' + App.esc(text) + "</p>" +
       "</div>";
@@ -385,6 +385,40 @@ App.renderEventCard = function (data) {
     "</p></section>";
 };
 
+// Where the money actually went this period, as proportion rather than a
+// list of numbers - the one question a list of transactions answers slowly.
+// Children roll up into their parent, so this reads at the level people
+// actually budget at.
+App.renderBreakdownCard = function (data) {
+  var concentration = data.metrics.concentration;
+  if (!concentration.has_data || !concentration.breakdown) return "";
+  var rows = concentration.breakdown.slice(0, 6);
+  if (rows.length < 2) return "";
+
+  // One stacked bar reads the split instantly; the list underneath carries
+  // the exact figures, since a bar segment can't be read to the đồng.
+  var palette = ["var(--out)", "var(--warn)", "var(--brand)", "var(--transfer)", "var(--in)", "var(--ink-faint)"];
+  var segments = rows.map(function (row, index) {
+    return '<div style="width:' + row.pct.toFixed(2) + "%;background:" + palette[index % palette.length] +
+      '" title="' + App.esc(row.category_name) + '"></div>';
+  }).join("");
+
+  var list = rows.map(function (row, index) {
+    return '<div class="kv">' +
+      '<dt><span class="legend-dot" style="background:' + palette[index % palette.length] + '"></span>' +
+      App.esc(row.category_name) + "</dt>" +
+      "<dd>" + App.formatDong(row.amount) + ' <span class="faint">· ' + App.formatPct(row.pct) + "</span></dd>" +
+      "</div>";
+  }).join("");
+
+  return '<section class="card">' +
+    '<div class="card-head"><h2>Tiền đi đâu kỳ này</h2>' +
+    '<span class="small muted num">' + App.formatDong(concentration.total) + "</span></div>" +
+    '<div class="stackbar">' + segments + "</div>" +
+    '<dl class="stack-tight">' + list + "</dl>" +
+    "</section>";
+};
+
 App.renderTrendCard = function (data) {
   var periods = (data.metrics.savings_trend.periods || []).filter(function (p) { return p.rate !== null; });
   if (periods.length < 2) return "";
@@ -429,7 +463,7 @@ App.renderBalanceCard = function (data) {
   function line(label, value, pct, target, modifier) {
     return '<div class="bar-item">' +
       '<div class="bar-top"><span>' + App.esc(label) + "</span>" +
-      '<span class="bar-figures">' + App.formatCompact(value) + " đ · " + App.formatPct(pct) + "</span></div>" +
+      '<span class="bar-figures">' + App.formatDong(value) + " · " + App.formatPct(pct) + "</span></div>" +
       App.track(pct, modifier) +
       '<p class="tiny faint">Tham chiếu: khoảng ' + target + "%</p></div>";
   }
@@ -488,6 +522,7 @@ App.renderDashboard = function (data) {
     App.renderGoalsSummary(data) +
     App.renderEventCard(data) +
     App.renderBalanceCard(data) +
+    App.renderBreakdownCard(data) +
     App.renderTrendCard(data) +
     App.renderAccountsCard(data);
 };
@@ -539,8 +574,8 @@ App.renderBudgetPlan = function (data) {
     var suggestion = data.budget_suggestions[category.id];
     var value = status ? status.amount : "";
     var hint = status
-      ? "Đã tiêu " + App.formatCompact(status.spent) + " đ · " + App.formatPct(status.pct_used)
-      : (suggestion ? "Gợi ý từ lịch sử: " + App.formatCompact(suggestion) + " đ" : "Chưa có gợi ý");
+      ? "Đã tiêu " + App.formatDong(status.spent) + " · " + App.formatPct(status.pct_used)
+      : (suggestion ? "Gợi ý từ lịch sử: " + App.formatDong(suggestion) : "Chưa có gợi ý");
 
     var bar = status
       ? App.track(status.pct_used, status.over_budget ? "is-over" : (status.pct_used > 85 ? "is-warn" : ""))
@@ -553,7 +588,7 @@ App.renderBudgetPlan = function (data) {
         : "") +
       "</div>" +
       '<input type="text" inputmode="numeric" id="budget-' + App.esc(category.id) + '" data-budget-input="' + App.esc(category.id) + '"' +
-      ' value="' + App.esc(value) + '" placeholder="Bỏ trống nếu không đặt">' +
+      ' value="' + App.esc(value === "" ? "" : App.formatVnd(value)) + '" placeholder="Bỏ trống nếu không đặt">' +
       bar +
       '<p class="tiny muted">' + App.esc(hint) + "</p>" +
       "</div>";
@@ -587,10 +622,10 @@ App.renderGoalsPlan = function (data) {
     var status = goal.is_overdue ? "Đã quá hạn" : (goal.is_off_track ? "Chậm tiến độ" : "Đúng tiến độ");
     return '<div class="bar-item">' +
       '<div class="bar-top"><span>' + App.esc(goal.name) + "</span>" +
-      '<span class="bar-figures">' + App.formatCompact(goal.current_balance) + " / " + App.formatCompact(goal.target_amount) + " đ</span></div>" +
+      '<span class="bar-figures">' + App.formatVnd(goal.current_balance) + " / " + App.formatVnd(goal.target_amount) + " đ</span></div>" +
       App.track(goal.progress_pct, modifier) +
       '<div class="spread tiny muted"><span>' + App.esc(status) + " · còn " + goal.periods_remaining + " kỳ · cần " +
-      App.formatCompact(goal.required_per_period) + " đ/kỳ</span>" +
+      App.formatVnd(goal.required_per_period) + " đ/kỳ</span>" +
       '<button type="button" class="link link-danger" data-hide-goal="' + App.esc(goal.id) + '">Ẩn</button></div>' +
       '<p class="tiny faint">Theo dõi qua tài khoản ' + App.esc(goal.account_name) + " · hạn " + App.esc(goal.deadline) + "</p>" +
       "</div>";
@@ -693,7 +728,7 @@ App.renderImportCandidates = function (data, candidates) {
           (candidate.direction === "in" ? " checked" : "") + '><label for="cd-in-' + index + '">Thu</label>' +
         "</span>" +
       "</label>" +
-      '<input type="text" inputmode="numeric" data-cand-amount value="' + App.esc(candidate.amount) + '" aria-label="Số tiền">' +
+      '<input type="text" inputmode="numeric" data-cand-amount value="' + App.esc(App.formatVnd(candidate.amount)) + '" aria-label="Số tiền">' +
       '<input type="text" data-cand-note value="' + App.esc(candidate.note) + '" placeholder="Mô tả" aria-label="Mô tả">' +
       '<select data-cand-account aria-label="Tài khoản">' + App.accountOptions(data.accounts, null, true) + "</select>" +
       '<select data-cand-category aria-label="Danh mục">' + App.categoryOptions(data.categories, kind, candidate.category_id) + "</select>" +
@@ -714,7 +749,7 @@ App.renderIncomePlan = function (data) {
   var rows = data.income_sources.map(function (source) {
     return '<div class="bar-item">' +
       '<div class="bar-top"><span>' + App.esc(source.name) + "</span>" +
-      '<span class="bar-figures">' + App.formatCompact(source.expected_amount) + " đ · " + source.reliability + "%</span></div>" +
+      '<span class="bar-figures">' + App.formatDong(source.expected_amount) + " · " + source.reliability + "%</span></div>" +
       App.track(source.reliability, source.reliability >= 80 ? "is-good" : (source.reliability >= 50 ? "" : "is-warn")) +
       '<div class="spread tiny muted"><span>Tính chắc chắn được ' + App.formatDong(source.reliable_amount) + "/kỳ</span>" +
       '<button type="button" class="link link-danger" data-hide-income="' + App.esc(source.id) + '">Ẩn</button></div>' +
@@ -777,8 +812,8 @@ App.renderEventsPlan = function (data) {
       return '<div class="kv">' +
         "<dt>" + App.esc(item.name) + "</dt>" +
         '<dd><input type="text" inputmode="numeric" data-event-item="' + App.esc(item.id) + '"' +
-        ' value="' + (item.actual_amount ? App.esc(item.actual_amount) : "") + '"' +
-        ' placeholder="' + (item.expected_amount ? "dự kiến " + App.formatCompact(item.expected_amount) : "chưa ước lượng") + '"' +
+        ' value="' + (item.actual_amount ? App.esc(App.formatVnd(item.actual_amount)) : "") + '"' +
+        ' placeholder="' + (item.expected_amount ? "dự kiến " + App.formatVnd(item.expected_amount) : "chưa ước lượng") + '"' +
         ' style="width:8rem;min-height:2.2rem;padding:0.3rem 0.5rem;font-size:0.875rem"></dd>' +
         "</div>";
     }).join("");
@@ -836,7 +871,7 @@ App.renderEventsPlan = function (data) {
       ? '<section class="card"><h2>Đã diễn ra</h2>' + past.map(function (event) {
           return '<div class="row"><div class="row-main"><span class="row-title">' + App.esc(event.name) + "</span>" +
             '<span class="row-meta">' + App.esc(event.event_date) + "</span></div>" +
-            '<div class="row-end"><span class="row-amount">' + App.formatCompact(event.actual_total) + " đ</span>" +
+            '<div class="row-end"><span class="row-amount">' + App.formatVnd(event.actual_total) + " đ</span>" +
             '<span class="row-actions"><button type="button" class="link link-danger" data-delete-event="' +
             App.esc(event.id) + '">Xóa</button></span></div></div>';
         }).join("") + "</section>"

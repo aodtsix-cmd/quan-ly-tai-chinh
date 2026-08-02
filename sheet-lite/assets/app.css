@@ -113,6 +113,12 @@
 
 * { box-sizing: border-box; }
 
+/* Nothing may push the page sideways. Long full-length amounts (now that
+   figures are spelled out rather than abbreviated) and long category names
+   are the usual culprits, and a flex child defaults to min-width:auto, which
+   refuses to shrink below its content and quietly overflows the card. */
+html, body { max-width: 100%; overflow-x: clip; }
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {
@@ -277,6 +283,8 @@ main {
 
 /* ------------------------------------------------------------------ cards */
 
+.card { min-width: 0; max-width: 100%; }
+
 .card {
   background: var(--surface);
   border: 1px solid var(--hairline);
@@ -333,7 +341,8 @@ main {
 
 .hero-balance .unit { font-size: 0.45em; font-weight: 500; color: var(--ink-soft); margin-left: 0.15em; }
 
-.hero-sub { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+.hero-sub { display: flex; gap: var(--space-3) var(--space-4); flex-wrap: wrap; }
+.hero-sub > span { min-width: 0; overflow-wrap: anywhere; }
 
 .chip {
   display: inline-flex;
@@ -426,7 +435,7 @@ main {
 }
 
 .metric-label { font-size: var(--step--2); color: var(--ink-faint); font-weight: 600; }
-.metric-value { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: var(--step-1); font-weight: 600; letter-spacing: -0.02em; }
+.metric-value { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: var(--step-1); font-weight: 600; letter-spacing: -0.02em; min-width: 0; overflow-wrap: anywhere; }
 /* Words inside a figure slot (a unit, or a category name used as the value)
    step back out of the tabular face - only digits belong in it. */
 .metric-value .u { font-family: var(--font-ui); font-size: var(--step--1); font-weight: 550; color: var(--ink-soft); margin-left: 0.25em; letter-spacing: 0; }
@@ -455,7 +464,7 @@ main {
 .row-title { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-meta { font-size: var(--step--2); color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-end { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 0.15rem; flex: none; }
-.row-amount { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
+.row-amount { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; font-size: var(--step--1); }
 
 .row-actions { display: flex; gap: var(--space-3); }
 .row-actions .link { font-size: var(--step--2); font-weight: 600; }
@@ -477,8 +486,9 @@ main {
 .bar-item { display: flex; flex-direction: column; gap: 0.3rem; padding: var(--space-3) 0; border-bottom: 1px solid var(--hairline); }
 .bar-item:last-child { border-bottom: 0; }
 .bar-item:first-child { padding-top: 0; }
-.bar-top { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); }
-.bar-figures { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: var(--step--1); color: var(--ink-soft); white-space: nowrap; }
+.bar-top { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+.bar-top > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.bar-figures { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: var(--step--1); color: var(--ink-soft); white-space: nowrap; margin-left: auto; }
 
 /* ------------------------------------------------------------------- forms */
 
@@ -490,6 +500,7 @@ label.field { display: flex; flex-direction: column; gap: var(--space-2); }
 
 input[type="text"], input[type="date"], input[type="number"], input[type="password"], select, textarea {
   width: 100%;
+  max-width: 100%;
   font-family: inherit;
   font-size: 1rem; /* 16px keeps iOS Safari from zooming on focus */
   padding: 0.7rem 0.75rem;
@@ -609,8 +620,8 @@ button.small { font-size: var(--step--1); padding: 0.45rem 0.75rem; min-height: 
 .notice-info { background: var(--surface-sunk); color: var(--ink-soft); }
 
 .kv { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--step--1); padding: 0.2rem 0; }
-.kv dt { color: var(--ink-soft); }
-.kv dd { margin: 0; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 600; }
+.kv dt { color: var(--ink-soft); min-width: 0; overflow-wrap: anywhere; }
+.kv dd { margin: 0; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 600; min-width: 0; text-align: right; white-space: nowrap; }
 
 .scroll-x { overflow-x: auto; }
 
@@ -624,6 +635,11 @@ button.small { font-size: var(--step--1); padding: 0.45rem 0.75rem; min-height: 
 .chart .area { fill: var(--brand); opacity: 0.1; }
 .chart .endpoint { fill: var(--brand); }
 .chart .tick { fill: var(--ink-faint); font-size: 9px; font-family: var(--font-num); }
+
+/* Proportion bar: one row, segments sized by share of spend. */
+.stackbar { display: flex; height: 0.75rem; border-radius: var(--radius-pill); overflow: hidden; background: var(--surface-sunk); }
+.stackbar > div { min-width: 2px; }
+.legend-dot { display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 50%; margin-right: 0.4rem; vertical-align: baseline; }
 
 .sparkline { width: 100%; height: 2.5rem; display: block; }
 .sparkline path { fill: none; stroke: var(--brand); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
@@ -650,10 +666,19 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 
 .stack { display: flex; flex-direction: column; gap: var(--space-3); }
 .stack-tight { display: flex; flex-direction: column; gap: var(--space-2); }
-.inline { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.spread { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.inline { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
+.inline > * { min-width: 0; }
+.spread { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.spread > * { min-width: 0; }
 .grow { flex: 1; }
 
 @media (min-width: 34rem) {
   .metric-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 22.5rem) {
+  main { padding: var(--space-3); }
+  .card { padding: var(--space-3); }
+  .metric { padding: var(--space-2) var(--space-3); }
+  .tab { font-size: 0.625rem; }
 }

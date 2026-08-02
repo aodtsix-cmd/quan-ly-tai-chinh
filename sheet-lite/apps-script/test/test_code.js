@@ -1308,6 +1308,52 @@ test("makeExternalRef_ is stable for the same transaction and differs for others
   assert.notStrictEqual(a, makeExternalRef_(100000, "in", "An trua"));
 });
 
+// ------------------------------------- Sheets hands back Dates, not strings
+
+test("a date cell read back as a Date object is normalised to a string", () => {
+  // Sheets coerces "2026-06-20 10:00:00" into a real date value on write, so
+  // getValues() returns a Date. Everything downstream parses strings.
+  sheets.Transactions.push([1, new RealDate(2026, 5, 20, 10, 0, 0), 500000, "out", 1, 1, "", "manual", ""]);
+  const row = sheetRowsAsObjects_(SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Transactions"), TRANSACTIONS_HEADER)[0];
+  assert.strictEqual(typeof row.occurred_at, "string");
+  assert.strictEqual(String(row.occurred_at).slice(0, 10), "2026-06-20");
+});
+
+test("period metrics still compute when every date arrives as a Date object", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 10000000, true]);
+  sheets.Categories.push([1, "An uong", "expense", "", "essential", "variable"]);
+  // 2026-06-20 falls in the completed period 2026-06; 2026-08-01 in the
+  // current one. Before normalisation both produced period id "NaN-NaN" and
+  // the whole analytics layer silently read as null/zero.
+  sheets.Transactions.push([1, new RealDate(2026, 5, 20, 10, 0, 0), 1500000, "out", 1, 1, "", "manual", ""]);
+  sheets.Transactions.push([2, new RealDate(2026, 6, 16, 9, 0, 0), 300000, "out", 1, 1, "", "manual", ""]);
+
+  const boot = actionBootstrap_({});
+  assert.strictEqual(boot.money.essential_expense_per_period, 1500000, "completed-period essential spend");
+  assert.strictEqual(boot.metrics.current_savings_rate.expense, 300000, "current-period spend");
+  assert.ok(boot.health.runway_months > 6);
+  assert.strictEqual(boot.transactions.length, 2);
+});
+
+test("a period_id coerced into a date still matches its budget", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 1000000, true]);
+  sheets.Categories.push([1, "An uong", "expense", "", "", ""]);
+  // Sheets can turn "2026-07" into a date too.
+  sheets.PeriodBudgets.push([1, 1, new RealDate(2026, 6, 1), 1000000]);
+  sheets.Transactions.push([1, "2026-07-16 10:00:00", 600000, "out", 1, 1, "", "manual", ""]);
+  const statuses = actionBootstrap_({}).budget_statuses;
+  assert.strictEqual(statuses.length, 1, "the budget must still be found for period 2026-07");
+  assert.strictEqual(statuses[0].pct_used, 60);
+});
+
+test("a recurring next_due read as a Date still fires and advances", () => {
+  sheets.Accounts.push([1, "Bank", "bank", 5000000, true]);
+  sheets.Recurring.push([1, "Tien nha", 2000000, "out", 1, "", "monthly", new RealDate(2026, 6, 1), true]);
+  const boot = actionBootstrap_({});
+  assert.strictEqual(boot.recurring_generated, 1);
+  assert.strictEqual(sheets.Accounts.find((r) => r[0] === 1)[3], 3000000);
+});
+
 console.log(`\n${passed} test(s) passed.`);
 if (process.exitCode) {
   console.error("SOME TESTS FAILED");

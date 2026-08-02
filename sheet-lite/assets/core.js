@@ -91,7 +91,7 @@ App.unwrap = function (payload) {
 // check before it can identify itself, so this is the only way to find out
 // what is actually deployed. Resolves to null when the deployment is too old
 // to answer at all - which is itself the answer.
-App.EXPECTED_VERSION = "3.5";
+App.EXPECTED_VERSION = "3.6";
 
 App.fetchVersionFor = function (url) {
   return fetch(url + "?action=version")
@@ -224,6 +224,39 @@ App.tryParseAmount = function (text) {
   }
   var digits = raw.replace(/[.,]/g, "");
   return /^\d+$/.test(digits) ? parseInt(digits, 10) : null;
+};
+
+// Groups digits with thousand separators AS YOU TYPE, so 10000000 reads as
+// 10.000.000 and can't be mistaken for 1.000.000 at a glance - the single
+// easiest way to record a wrong amount.
+//
+// Two rules make this safe. It bails the moment a letter appears, so typing
+// the shorthand "1tr" is never mangled (the main Flask app once chewed "1tr"
+// down to "1" keystroke by keystroke and saved 1 đồng). And it restores the
+// caret by counting digits, not characters, so inserting a separator doesn't
+// throw the cursor to the end mid-word.
+App.formatAmountInput = function (input) {
+  var raw = input.value;
+  if (/[a-zA-Z]/.test(raw)) return;
+
+  var digits = raw.replace(/\D/g, "").slice(0, 15);
+  if (!digits) {
+    if (raw !== "") input.value = "";
+    return;
+  }
+  var formatted = new Intl.NumberFormat("vi-VN").format(Number(digits));
+  if (formatted === raw) return;
+
+  var caret = input.selectionStart === null ? raw.length : input.selectionStart;
+  var digitsBeforeCaret = raw.slice(0, caret).replace(/\D/g, "").length;
+  input.value = formatted;
+
+  var position = 0, seen = 0;
+  while (position < formatted.length && seen < digitsBeforeCaret) {
+    if (/\d/.test(formatted.charAt(position))) seen++;
+    position++;
+  }
+  try { input.setSelectionRange(position, position); } catch (err) { /* not all inputs support it */ }
 };
 
 // ------------------------------------------------------------- DOM helpers

@@ -72,7 +72,7 @@
 // redeploy actually took - forgetting to pick "Phiên bản: Mới" when
 // redeploying is the single easiest mistake to make with Apps Script, and it
 // fails silently: the old code just keeps serving.
-var VERSION = "3.5";
+var VERSION = "3.6";
 
 var SHEET_ACCOUNTS = "Accounts";
 var SHEET_CATEGORIES = "Categories";
@@ -419,6 +419,33 @@ function getSheetOptional_(name) {
   return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
 }
 
+// Google Sheets coerces anything that LOOKS like a date into a real date
+// value, so a cell written as the string "2026-08-02 12:00:00" comes back from
+// getValues() as a JS Date - never as the string that was written. Left
+// unconverted, String(date) yields "Sat Aug 02 2026 ..." and every downstream
+// parse silently produces NaN: period ids become "NaN-NaN", essential spend
+// reads as null, the whole analytics layer quietly zeroes out. Normalising at
+// this single read choke point fixes existing rows as well as new ones.
+var TIMEZONE_CACHE = null;
+
+function normaliseCell_(value) {
+  // Object.prototype.toString rather than `instanceof Date`: instanceof fails
+  // whenever the value came from a different realm than the Date constructor
+  // in scope, which is exactly the kind of thing that makes a bug look fixed
+  // in a test and stay broken in production.
+  if (value && Object.prototype.toString.call(value) === "[object Date]") {
+    if (TIMEZONE_CACHE === null) TIMEZONE_CACHE = getTimeZone_();
+    return Utilities.formatDate(value, TIMEZONE_CACHE, "yyyy-MM-dd HH:mm:ss");
+  }
+  return value;
+}
+
+// A period id is "YYYY-MM", which Sheets may also have turned into a date.
+// Every comparison of one goes through here.
+function toPeriodId_(value) {
+  return String(normaliseCell_(value)).slice(0, 7);
+}
+
 function sheetRowsAsObjects_(sheet, header) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
@@ -426,7 +453,7 @@ function sheetRowsAsObjects_(sheet, header) {
   var rows = [];
   for (var i = 0; i < values.length; i++) {
     var obj = {};
-    for (var c = 0; c < header.length; c++) obj[header[c]] = values[i][c];
+    for (var c = 0; c < header.length; c++) obj[header[c]] = normaliseCell_(values[i][c]);
     // Skip fully-blank trailing rows (Sheets sometimes reports a longer
     // lastRow than there is real data).
     if (obj.id !== "" && obj.id !== null && obj.id !== undefined) rows.push(obj);
@@ -1308,7 +1335,7 @@ function getPeriodBudgetStatus_(periodBudgetRows, transactions, categories, peri
   categories.forEach(function (c) { nameById[c.id] = c.name; });
 
   var statuses = [];
-  periodBudgetRows.filter(function (b) { return String(b.period_id) === String(periodId); }).forEach(function (b) {
+  periodBudgetRows.filter(function (b) { return toPeriodId_(b.period_id) === String(periodId); }).forEach(function (b) {
     var spent = getActualSpendInPeriod_(transactions, b.category_id, periodId, startDay);
     var amount = Number(b.amount);
     statuses.push({
@@ -1346,7 +1373,7 @@ function suggestPeriodBudgetAmounts_(periodBudgetRows, transactions, categories,
 
     if (c.stability === "fixed") {
       var previous = periodBudgetRows.filter(function (b) {
-        return String(b.category_id) === String(c.id) && String(b.period_id) === String(previousId);
+        return String(b.category_id) === String(c.id) && toPeriodId_(b.period_id) === String(previousId);
       })[0];
       if (previous) {
         suggestions[c.id] = Number(previous.amount);
@@ -1373,7 +1400,7 @@ function actionSetPeriodBudget_(params) {
   var sheet = getSheet_(SHEET_PERIOD_BUDGETS);
   var rows = sheetRowsAsObjects_(sheet, PERIOD_BUDGETS_HEADER);
   for (var i = 0; i < rows.length; i++) {
-    if (Number(rows[i].category_id) === categoryId && String(rows[i].period_id) === periodId) {
+    if (Number(rows[i].category_id) === categoryId && toPeriodId_(rows[i].period_id) === periodId) {
       setCell_(sheet, PERIOD_BUDGETS_HEADER, i + 2, "amount", amount);
       return { id: rows[i].id, updated: true };
     }
