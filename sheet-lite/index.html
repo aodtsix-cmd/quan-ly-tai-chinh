@@ -24,23 +24,29 @@
       <span class="eyebrow">Bước cuối</span>
       <h1>Nối vào Google Sheet của bạn</h1>
       <p class="small muted">
-        Dữ liệu nằm trong bảng tính Google của chính bạn. Trang này chỉ là giao diện —
-        nó cần địa chỉ Web App (Apps Script) và mật khẩu bạn đã đặt.
-        Chưa dựng bảng tính? Làm theo <a class="link" href="README.md">hướng dẫn cài đặt</a>.
+        Trang này là giao diện; sổ của bạn nằm trong Google Sheet của chính bạn.
+        Điền hai ô dưới đây một lần duy nhất để nối chúng lại — máy sẽ nhớ, lần sau
+        mở là vào thẳng.
       </p>
       <form id="connection-form">
         <label class="field">
-          <span class="field-label">URL Web App</span>
+          <span class="field-label">Địa chỉ bảng tính</span>
           <input type="text" name="url" placeholder="https://script.google.com/macros/s/…/exec" required>
+          <span class="tiny faint">Lấy trong Apps Script: <b>Triển khai → Bản triển khai mới → Ứng dụng web</b>, rồi copy URL hiện ra. Nó kết thúc bằng <span class="num">/exec</span>.</span>
         </label>
         <label class="field">
-          <span class="field-label">Mật khẩu (APP_TOKEN)</span>
-          <input type="password" name="token" autocomplete="current-password" placeholder="Mật khẩu trong Script Properties" required>
+          <span class="field-label">Mã kết nối</span>
+          <input type="password" name="token" autocomplete="current-password" placeholder="VD: K7RQ-2MXP-9TFA" required>
+          <span class="tiny faint">Mã do bảng tính tự sinh ra. Xem lại bất cứ lúc nào ở menu <b>Sổ tài chính → ② Xem mã kết nối</b> trên thanh công cụ Google Sheet.</span>
         </label>
         <button type="submit">Bắt đầu</button>
         <div id="connection-message"></div>
       </form>
-      <p class="tiny faint">Thông tin này chỉ lưu trong trình duyệt máy bạn (localStorage), không gửi đi đâu khác.</p>
+      <p class="tiny faint">
+        Hai thông tin này chỉ lưu trong trình duyệt máy bạn, không gửi đi đâu khác.
+        Chưa dựng bảng tính?
+        <a class="link" href="https://github.com/aodtsix-cmd/quan-ly-tai-chinh/blob/main/sheet-lite/README.md" target="_blank" rel="noopener">Xem hướng dẫn cài đặt</a>.
+      </p>
     </section>
   </main>
 </div>

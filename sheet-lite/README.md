@@ -51,14 +51,31 @@ Bấm Triển khai rồi **copy URL** (dạng `https://script.google.com/macros/
 > Phải chọn "Bất kỳ ai có đường liên kết" thì trang web mới gọi được. Script
 > vẫn chạy dưới quyền của bạn và vẫn chặn mọi request không có đúng mã kết nối.
 
-### 5. Mở trang và nối vào
+### 5. Mở app và nối vào bảng tính
 
-Mở https://aodtsix-cmd.github.io/quan-ly-tai-chinh/sheet-lite/ , dán URL ở bước
-4 và mã kết nối ở bước 3. Xong — bắt đầu ghi giao dịch được ngay.
+Chỗ này dễ nhầm, vì có **hai đường link khác nhau**:
 
-Nếu bạn lỡ bỏ qua bước 3, cũng không sao: lần đầu trang web gọi vào, mã sẽ tự
-dựng các tab còn thiếu. Chỉ có mã kết nối là phải lấy từ Apps Script (menu
-**Sổ tài chính → ② Xem mã kết nối**).
+| | Là gì | Dùng thế nào |
+| --- | --- | --- |
+| **Link app** | `aodtsix-cmd.github.io/quan-ly-tai-chinh/sheet-lite/` | Cái bạn mở hằng ngày. Cố định, không đổi. |
+| **Link bảng tính** | `script.google.com/macros/s/…/exec` | "Cửa vào" bảng tính riêng của bạn, lấy ở bước 4. **Không mở trực tiếp link này.** |
+
+Mở **link app** trên điện thoại hoặc máy tính. Lần đầu vào, nó hiện một màn hình
+có đúng hai ô:
+
+1. **Địa chỉ bảng tính** → dán link bảng tính ở bước 4
+2. **Mã kết nối** → dán mã ở bước 3
+3. Bấm **Bắt đầu**
+
+Xong. Trình duyệt nhớ luôn, từ lần sau mở link app là vào thẳng sổ.
+
+Sở dĩ cần bước này: link app là một trang tĩnh trên GitHub, ai mở cũng được và
+nó không tự biết bảng tính của bạn nằm ở đâu. Hai ô trên là thứ nối chúng lại,
+và chỉ được lưu trong trình duyệt máy bạn.
+
+Nếu bạn lỡ bỏ qua bước 3, cũng không sao: lần đầu app gọi vào, mã sẽ tự dựng các
+tab còn thiếu. Chỉ có mã kết nối là phải lấy từ bảng tính (menu **Sổ tài chính →
+② Xem mã kết nối**).
 
 ### 6. (Tùy chọn) Thêm vào màn hình chính iPhone
 

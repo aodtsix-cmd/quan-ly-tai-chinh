@@ -6,6 +6,12 @@
       "runtimeExecutable": "venv/bin/python3",
       "runtimeArgs": ["src/web_app.py"],
       "port": 8000
+    },
+    {
+      "name": "sheet_lite_static",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8788", "--directory", "sheet-lite"],
+      "port": 8788
     }
   ]
 }

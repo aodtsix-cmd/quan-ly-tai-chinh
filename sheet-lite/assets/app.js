@@ -932,12 +932,14 @@ App.showConnectionForm = function () {
     '<div class="dialog-head"><h2>Kết nối Google Sheet</h2>' +
     '<button type="button" class="link" data-close-dialog>Đóng</button></div>' +
     '<form id="connection-form">' +
-      '<label class="field"><span class="field-label">URL Web App</span>' +
+      '<label class="field"><span class="field-label">Địa chỉ bảng tính</span>' +
       '<input type="text" name="url" value="' + App.esc(App.config ? App.config.url : "") +
-      '" placeholder="https://script.google.com/macros/s/…/exec" required></label>' +
-      '<label class="field"><span class="field-label">Mật khẩu (APP_TOKEN)</span>' +
+      '" placeholder="https://script.google.com/macros/s/…/exec" required>' +
+      '<span class="tiny faint">URL từ Apps Script → Triển khai → Ứng dụng web, kết thúc bằng /exec.</span></label>' +
+      '<label class="field"><span class="field-label">Mã kết nối</span>' +
       '<input type="password" name="token" value="' + App.esc(App.config ? App.config.token : "") +
-      '" autocomplete="current-password" required></label>' +
+      '" autocomplete="current-password" required>' +
+      '<span class="tiny faint">Xem lại ở menu Sổ tài chính → ② Xem mã kết nối trên Google Sheet.</span></label>' +
       "<button type=\"submit\">Lưu và tải lại</button>" +
       '<div id="connection-message"></div>' +
     "</form>"
