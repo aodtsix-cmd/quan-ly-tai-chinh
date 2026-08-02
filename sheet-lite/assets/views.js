@@ -941,6 +941,7 @@ App.renderSettings = function (data) {
       '<button type="button" class="link" id="show-connection">Đổi</button></div>' +
       '<p class="small muted">Đang dùng Google Sheet qua Apps Script. Dữ liệu nằm trong tài khoản Google của bạn, không đi qua máy chủ nào khác.</p>' +
       '<p class="tiny faint" id="connection-url"></p>' +
+      '<button type="button" class="secondary small" id="device-link-btn">Mở sổ trên thiết bị khác</button>' +
     "</section>" +
 
     '<section class="card">' +

@@ -925,7 +925,8 @@ document.addEventListener("click", function (event) {
     "[data-delete-rule], [data-edit-account], [data-apply-suggestion], [data-period-shift], [data-close-dialog], " +
     "[data-hide-income], [data-delete-event], [data-event-to-goal], #add-event-item, #save-import, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
-    "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, #theme-toggle");
+    "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, " +
+    "#save-connection-anyway, #device-link-btn, #copy-device-link, #theme-toggle");
   if (!target) return;
 
   var attr = function (name) { return target.getAttribute(name); };
@@ -1028,6 +1029,15 @@ document.addEventListener("click", function (event) {
     case "save-connection-anyway":
       App.saveConfig(App.pendingConfig);
       location.reload();
+      break;
+    case "device-link-btn": App.showDeviceLink(); break;
+    case "copy-device-link":
+      App.$("#device-link").select();
+      navigator.clipboard.writeText(App.$("#device-link").value).then(function () {
+        App.notice("#device-link-message", "Đã sao chép.", "ok");
+      }).catch(function () {
+        App.notice("#device-link-message", "Không tự sao chép được — bôi đen ô trên rồi copy tay.", "info");
+      });
       break;
     case "theme-toggle": App.cycleTheme(); App.updateThemeButton(); break;
     case "retry-load": App.showLoading(); App.load(); break;
@@ -1328,15 +1338,77 @@ App.updateThemeButton = function () {
   if (button) button.title = "Giao diện: " + App.THEME_LABEL[App.currentTheme()];
 };
 
+// ------------------------------------------------------------ connect link
+
+// A connection can be handed over in the URL fragment: #url=…&token=….
+// The fragment is chosen deliberately over a query string - browsers never
+// send it to the server, so GitHub Pages never sees the token, and it stays
+// out of server logs entirely. It is still a password in a link, so the UI
+// that generates one says so plainly and the hash is wiped from the address
+// bar the moment it has been read.
+App.readConnectLink = function () {
+  var hash = String(location.hash || "").replace(/^#/, "");
+  if (!hash) return null;
+  var params = new URLSearchParams(hash);
+  var url = params.get("url");
+  if (!url) return null;
+  return { url: url.trim(), token: (params.get("token") || "").trim() };
+};
+
+App.clearConnectLink = function () {
+  if (window.history && window.history.replaceState) {
+    window.history.replaceState(null, "", location.pathname + location.search);
+  } else {
+    location.hash = "";
+  }
+};
+
+// Built from the config already in this browser, so the token never leaves
+// the device except into a link the user chooses to move.
+App.showDeviceLink = function () {
+  var link = location.origin + location.pathname +
+    "#url=" + encodeURIComponent(App.config.url) + "&token=" + encodeURIComponent(App.config.token);
+
+  App.setHtml("#tx-dialog-body",
+    '<div class="dialog-head"><h2>Mở sổ trên thiết bị khác</h2>' +
+    '<button type="button" class="link" data-close-dialog>Đóng</button></div>' +
+    '<p class="small muted">Mở đường dẫn này trên điện thoại hay máy khác là vào thẳng sổ, ' +
+    "không phải gõ lại gì.</p>" +
+    '<textarea id="device-link" rows="4" readonly style="font-family:var(--font-num);font-size:0.75rem">' +
+    App.esc(link) + "</textarea>" +
+    '<button type="button" id="copy-device-link">Sao chép đường dẫn</button>' +
+    '<p class="notice notice-info">Đường dẫn này <b>chứa mã kết nối</b> — ai có nó là mở được sổ của bạn. ' +
+    "Chỉ gửi cho chính mình, đừng đăng công khai hay gửi vào nhóm chat.</p>" +
+    '<div id="device-link-message"></div>');
+  App.$("#tx-dialog").showModal();
+};
+
 // -------------------------------------------------------------------- boot
 
 (function boot() {
   App.config = App.loadConfig();
   App.updateThemeButton();
 
+  // A #url=…&token=… link connects this device outright; a link with only the
+  // URL just pre-fills it, which is the safe form to pass around in writing.
+  var link = App.readConnectLink();
+  if (link) {
+    App.clearConnectLink();
+    if (link.token) {
+      App.config = { url: link.url, token: link.token };
+      App.saveConfig(App.config);
+    } else {
+      App.pendingPrefillUrl = link.url;
+    }
+  }
+
   if (!App.config || !App.config.url || !App.config.token) {
     App.show("#onboarding", true);
     App.show("#app-shell", false);
+    if (App.pendingPrefillUrl) {
+      var field = App.$('#onboarding [name="url"]');
+      if (field) field.value = App.pendingPrefillUrl;
+    }
     return;
   }
   App.show("#onboarding", false);
@@ -1344,4 +1416,12 @@ App.updateThemeButton = function () {
   App.switchTab("home");
   App.showLoading();
   App.load();
+
+  // Already connected, but arrived on a link carrying a different address -
+  // open the connection form pre-filled rather than switching silently.
+  if (App.pendingPrefillUrl && App.pendingPrefillUrl !== App.config.url) {
+    App.showConnectionForm();
+    var pending = App.$('#tx-dialog [name="url"]');
+    if (pending) pending.value = App.pendingPrefillUrl;
+  }
 })();
