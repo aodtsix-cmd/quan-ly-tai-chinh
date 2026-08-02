@@ -806,6 +806,7 @@ App.renderSettingsTab = function () {
   if (urlNode && App.config) {
     urlNode.textContent = App.config.url.replace(/\/exec.*$/, "/exec");
   }
+  App.checkForUpdate();
   var versionNode = App.$("#code-version");
   if (versionNode && App.state.data) {
     // Shown because forgetting "Phiên bản: Mới" on a redeploy fails silently -
@@ -813,6 +814,21 @@ App.renderSettingsTab = function () {
     // catch it without guessing.
     versionNode.textContent = "mã v" + (App.state.data.version || "?");
   }
+};
+
+// A soft, non-blocking heads-up. The app works fine on an older Code.gs as
+// long as the payload shape matches - only the newest features are missing -
+// so this must never look like an error, just an offer.
+App.checkForUpdate = function () {
+  var node = App.$("#version-notice");
+  if (!node || !App.state.data) return;
+  var deployed = String(App.state.data.version || "");
+  if (!deployed || deployed === App.EXPECTED_VERSION) return;
+
+  node.innerHTML = '<p class="notice notice-info">Bảng tính đang chạy <b>v' + App.esc(deployed) +
+    "</b>, bản mới nhất là <b>v" + App.EXPECTED_VERSION + "</b>. Mọi thứ bạn đang dùng vẫn chạy bình thường — " +
+    "chỉ những tính năng mới nhất là chưa có. Muốn cập nhật thì dán lại " +
+    '<code>Code.gs</code> rồi <b>Triển khai → Quản lý bản triển khai → ✏ → Phiên bản: Mới</b>.</p>';
 };
 
 App.runHealthCheck = function () {

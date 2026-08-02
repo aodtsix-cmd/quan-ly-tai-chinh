@@ -108,6 +108,12 @@ App.errorText = function (err) {
   if (message.indexOf("Sai token") !== -1) {
     return "Sai mã kết nối. Xem lại mã đúng ở Google Sheet: menu Sổ tài chính → ② Xem mã kết nối, rồi nhập lại ở Cài đặt.";
   }
+  // A feature the frontend knows about but the deployed Code.gs doesn't yet.
+  // The raw text leaks an internal action name and helps nobody.
+  if (message.indexOf("Hanh dong khong hop le") !== -1) {
+    return "Bảng tính đang chạy bản mã cũ hơn nên chưa có tính năng này. " +
+      "Dán lại Code.gs mới nhất rồi triển khai với “Phiên bản: Mới” là dùng được.";
+  }
   if (message.indexOf("Chua dat APP_TOKEN") !== -1) {
     return "Bảng tính chưa có mã kết nối. Mở Apps Script và chạy hàm setupEverything một lần — nó sẽ tạo và hiện mã cho bạn.";
   }

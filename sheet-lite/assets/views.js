@@ -946,6 +946,7 @@ App.renderSettings = function (data) {
     '<section class="card">' +
       '<div class="card-head"><h2>Tình trạng bảng tính</h2>' +
       '<span class="tiny faint num" id="code-version"></span></div>' +
+      '<div id="version-notice"></div>' +
       '<p class="small muted">Bảng tính tự dựng khi mở lần đầu. Nếu có gì bất thường, bấm kiểm tra để biết chính xác thiếu chỗ nào.</p>' +
       '<div class="button-row">' +
         '<button type="button" class="secondary" id="run-health-check">Kiểm tra thiết lập</button>' +
