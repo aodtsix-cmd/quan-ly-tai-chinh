@@ -1511,3 +1511,8 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 .neon-plan-section .chart .tick { fill: var(--neon-ink-dim); }
 .neon-plan-section .kv dt { color: var(--neon-ink-soft); }
 .neon-plan-section .kv dd { color: var(--neon-ink); }
+
+.neon-vault-hero {
+  border-radius: 1.5rem; padding: 1.25rem; background: linear-gradient(160deg, rgba(63, 245, 165, 0.12) 0%, var(--neon-surface) 70%);
+  border: 1px solid rgba(63, 245, 165, 0.26);
+}

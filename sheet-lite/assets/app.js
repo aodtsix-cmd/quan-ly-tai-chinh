@@ -18,6 +18,7 @@ App.state = {
   txAccount: "",
   txSort: "desc", // "desc" = server order (newest first); "asc" reverses it
   txOpenId: null, // which ledger row's inline detail is expanded
+  goalDetailId: null, // which goal's detail view is open (null = the Hũ list)
   periodId: null,
   loading: false,
   // Add-form category picker: which id is chosen, and which parent's children
@@ -800,7 +801,7 @@ App.PLAN_SECTIONS = [
 // dark content" pattern already proven by the topbar/tabbar on Nhà/Nhập),
 // but planHeader's own card is skipped for these since each one draws its
 // own header instead of using the generic icon+title+desc card.
-App.PLAN_NEON_SECTIONS = { analytics: true, budget: true, forecast: true };
+App.PLAN_NEON_SECTIONS = { analytics: true, budget: true, forecast: true, goals: true };
 
 App.renderPlan = function () {
   var data = App.state.data;
@@ -1064,9 +1065,10 @@ document.addEventListener("click", function (event) {
     "[data-delete-rule], [data-edit-account], [data-apply-suggestion], [data-period-shift], [data-close-dialog], " +
     "[data-hide-income], [data-delete-event], [data-event-to-goal], [data-pick-category], [data-open-parent], " +
     "[data-pick-account], [data-pick-to-account], [data-toggle-tx], [data-dup-tx], [data-reset-tx-filters], " +
+    "[data-goal-detail], [data-goal-back], [data-goal-quick], [data-pick-topup-account], " +
     "[data-set-theme], [data-set-palette], [data-set-lang], #add-event-item, #save-import, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
-    "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, " +
+    "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, #goal-topup-submit, " +
     "#save-connection-anyway, #device-link-btn, #copy-device-link, #theme-toggle, " +
     "#tx-today-btn, #tx-nudge, #home-bell, #home-networth-eye, #tx-sort-toggle, #tx-search-clear");
   if (!target) return;
@@ -1178,6 +1180,24 @@ document.addEventListener("click", function (event) {
     App.apiPost("deactivate_goal", { id: attr("data-hide-goal") })
       .then(function () { return App.load({ quiet: true }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
+    return;
+  }
+
+  if (attr("data-goal-detail")) { App.state.goalDetailId = attr("data-goal-detail"); App.renderPlan(); return; }
+  if (target.hasAttribute("data-goal-back")) { App.state.goalDetailId = null; App.renderPlan(); return; }
+
+  if (attr("data-goal-quick")) {
+    var quickGoal = App.state.data.goals.filter(function (g) { return String(g.id) === String(App.state.goalDetailId); })[0];
+    var quickVal = attr("data-goal-quick") === "rest" ? String(Math.max(0, quickGoal ? quickGoal.remaining_amount : 0)) : attr("data-goal-quick");
+    App.$("#goal-topup-amount").value = App.formatVnd(quickVal);
+    return;
+  }
+
+  if (attr("data-pick-topup-account")) {
+    App.$("#goal-topup-account").value = attr("data-pick-topup-account");
+    App.$$("#goal-topup-account-chips .neon-chip").forEach(function (chip) {
+      chip.setAttribute("aria-pressed", String(chip.getAttribute("data-pick-topup-account") === attr("data-pick-topup-account")));
+    });
     return;
   }
 
@@ -1316,8 +1336,48 @@ document.addEventListener("click", function (event) {
         }
       }, 0);
       break;
+    case "goal-topup-submit": App.submitGoalTopup(target); break;
   }
 });
+
+// A top-up is recorded the same way any other transfer is: two linked
+// legs via add_transfer, never a special "goal contribution" write path.
+// That's what makes it show up as an ordinary internal transfer everywhere
+// else in the app (Sổ, the transfer-exclusion in every risk metric) rather
+// than a parallel kind of money movement with its own rules.
+App.submitGoalTopup = function (button) {
+  var goalId = button.getAttribute("data-goal-id");
+  var goal = App.state.data.goals.filter(function (g) { return String(g.id) === String(goalId); })[0];
+  if (!goal) return;
+
+  var rawAmount = App.$("#goal-topup-amount").value.trim();
+  var fromAccount = App.$("#goal-topup-account").value;
+  var parsed = App.tryParseAmount(rawAmount);
+  if (!rawAmount || parsed === null || parsed <= 0) {
+    App.notice("#goal-topup-message", App.t("add.error_amount_required"), "error");
+    return;
+  }
+  if (!fromAccount || String(fromAccount) === String(goal.account_id)) {
+    App.notice("#goal-topup-message", App.t("add.error_same_account"), "error");
+    return;
+  }
+
+  button.disabled = true;
+  App.notice("#goal-topup-message", "", "info");
+  App.apiPost("add_transfer", {
+    from_account_id: fromAccount, to_account_id: goal.account_id,
+    amount: rawAmount, description: App.t("plan.goals.topup_description", { name: goal.name }),
+    occurred_at: App.today(),
+  })
+    .then(function () {
+      App.notice("#goal-topup-message", App.t("plan.goals.topup_saved"), "ok");
+      return App.load({ quiet: true });
+    })
+    .catch(function (err) {
+      App.notice("#goal-topup-message", App.errorText(err), "error");
+    })
+    .finally(function () { if (App.$("#goal-topup-submit")) App.$("#goal-topup-submit").disabled = false; });
+};
 
 // Forms: also delegated, for the same re-render reason.
 document.addEventListener("submit", function (event) {

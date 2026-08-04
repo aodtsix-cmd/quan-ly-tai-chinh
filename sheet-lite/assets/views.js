@@ -982,20 +982,67 @@ App.renderBudgetPlan = function (data) {
   "</div>";
 };
 
+// Ported from FinanceVaultsNeon.dc.html + FinanceVaultDetailNeon.dc.html.
+// "Vault detail" is a genuinely new interaction this app didn't have before
+// (goals only ever rendered inline in one flat list) - App.state.goalDetailId
+// adds a second state to the existing "goals" plan section rather than a
+// new top-level route, the same way Sổ's row-expansion adds state to one
+// screen instead of a new page.
+//
+// Two handoff features are NOT reproduced, both fabricated without real
+// backing data: the "Trích tự động" (auto-allocation) toggle - this app has
+// no scheduled-transfer feature at all - and "Sửa mục tiêu" (edit target/
+// deadline) - there is no update_goal action, only create + deactivate.
+// The 6-bar contribution-history chart is also skipped (see the recent-list
+// comment below for why); everything else here is real.
 App.renderGoalsPlan = function (data) {
-  var items = data.goals.map(function (goal) {
-    var modifier = goal.is_overdue ? "is-over" : (goal.is_off_track ? "is-warn" : "is-good");
-    var status = goal.is_overdue ? App.t("plan.goals.overdue") : (goal.is_off_track ? App.t("plan.goals.off_track") : App.t("plan.goals.on_track"));
-    return '<div class="bar-item">' +
-      '<div class="bar-top"><span>' + App.esc(goal.name) + "</span>" +
-      '<span class="bar-figures">' + App.formatVnd(goal.current_balance) + " / " + App.formatVnd(goal.target_amount) + " đ</span></div>" +
-      App.track(goal.progress_pct, modifier) +
-      '<div class="spread tiny muted"><span>' + App.esc(App.t("plan.goals.progress_line", {
-        status: status, periods: goal.periods_remaining, amount: App.formatVnd(goal.required_per_period),
-      })) + "</span>" +
-      '<button type="button" class="link link-danger" data-hide-goal="' + App.esc(goal.id) + '">' + App.esc(App.t("common.hide")) + "</button></div>" +
-      '<p class="tiny faint">' + App.esc(App.t("plan.goals.tracked_via", { account: goal.account_name, deadline: goal.deadline })) + "</p>" +
-      "</div>";
+  if (App.state.goalDetailId) {
+    var goal = data.goals.filter(function (g) { return String(g.id) === String(App.state.goalDetailId); })[0];
+    if (goal) return App.renderGoalDetail(data, goal);
+    App.state.goalDetailId = null; // hidden/deleted elsewhere - fall through to the list
+  }
+
+  var totalSaved = data.goals.reduce(function (sum, g) { return sum + g.current_balance; }, 0);
+  var totalTarget = data.goals.reduce(function (sum, g) { return sum + g.target_amount; }, 0);
+  var goalColors = ["var(--neon-green)", "var(--neon-purple)", "var(--neon-orange)", "var(--neon-red)", "var(--neon-ink-soft)"];
+  var hero = data.goals.length > 0 ? '<div class="neon-vault-hero">' +
+    '<div class="neon-summary-label">' + App.esc(App.t("plan.goals.total_saved")) + "</div>" +
+    '<div style="margin-top:0.5rem;display:flex;align-items:flex-end;gap:0.625rem;flex-wrap:wrap">' +
+      '<span class="num" style="font-size:1.875rem;font-weight:700;letter-spacing:-0.02em">' + App.formatVnd(totalSaved) + "đ</span>" +
+      (totalTarget > 0 ? '<span class="num tiny muted" style="margin-bottom:0.25rem">/ ' + App.formatVnd(totalTarget) + "đ</span>" : "") +
+    "</div>" +
+    (totalTarget > 0
+      ? '<div style="margin-top:0.875rem;height:0.625rem;border-radius:999px;background:var(--neon-surface-3);overflow:hidden;display:flex">' +
+        data.goals.map(function (g, i) {
+          return '<div style="height:100%;background:' + goalColors[i % goalColors.length] + ";width:" + Math.min(100, g.current_balance / totalTarget * 100) + '%"></div>';
+        }).join("") + "</div>" +
+        '<div class="tiny" style="margin-top:0.75rem;color:var(--neon-ink-2)">' + App.esc(App.t("plan.goals.total_saved_pct", { pct: Math.round(Math.min(100, totalSaved / totalTarget * 100)) })) + "</div>"
+      : "") +
+  "</div>" : "";
+
+  var items = data.goals.map(function (g, i) {
+    var color = g.is_overdue ? "var(--neon-red)" : (g.is_off_track ? "var(--neon-orange)" : "var(--neon-green)");
+    var status = g.is_overdue ? App.t("plan.goals.overdue") : (g.is_off_track ? App.t("plan.goals.off_track") : App.t("plan.goals.on_track"));
+    var glyph = App.categoryIconName(g.name) || "target";
+    return '<div class="neon-jar-card">' +
+      '<div style="display:flex;align-items:flex-start;gap:0.75rem">' +
+        '<span class="neon-ledger-row-icon" style="width:2.625rem;height:2.625rem">' + App.icon(glyph === "dots" ? "target" : glyph) + "</span>" +
+        '<div style="flex:1;min-width:0">' +
+          '<div class="spread" style="align-items:baseline"><span style="font-size:0.875rem;font-weight:700">' + App.esc(g.name) + '</span>' +
+            '<span class="num" style="font-size:0.9375rem;font-weight:700;color:' + color + '">' + Math.round(g.progress_pct) + "%</span></div>" +
+          '<div class="tiny muted" style="margin-top:0.1875rem">' + App.esc(status) + " · " + App.esc(App.t("plan.goals.periods_left", { n: g.periods_remaining })) + "</div>" +
+        "</div>" +
+      "</div>" +
+      '<div style="margin-top:0.8125rem;height:0.5rem;border-radius:999px;background:var(--neon-surface-3);overflow:hidden"><div style="height:100%;border-radius:999px;background:' + color + ";width:" + Math.min(100, g.progress_pct) + '%"></div></div>' +
+      '<div class="spread num tiny" style="margin-top:0.625rem;color:var(--neon-ink-soft)">' +
+        "<span><b style=\"color:var(--neon-ink);font-weight:700\">" + App.formatVnd(g.current_balance) + "</b> / " + App.formatVnd(g.target_amount) + "đ</span>" +
+        '<span>' + App.esc(App.t("plan.goals.per_period_short", { amount: App.formatVnd(g.required_per_period) })) + "</span>" +
+      "</div>" +
+      '<div style="margin-top:0.8125rem;display:flex;gap:0.5rem">' +
+        '<button type="button" class="neon-action-btn neon-action-edit" data-goal-detail="' + App.esc(g.id) + '">' + App.esc(App.t("plan.goals.topup_button")) + "</button>" +
+        '<button type="button" class="neon-action-btn neon-action-dup" data-goal-detail="' + App.esc(g.id) + '">' + App.esc(App.t("plan.goals.detail_button")) + "</button>" +
+      "</div>" +
+    "</div>";
   }).join("");
 
   var aiButton = data.goals.length >= 2
@@ -1007,10 +1054,15 @@ App.renderGoalsPlan = function (data) {
     ? '<p class="tiny muted">' + App.esc(App.t("plan.goals.emergency_hint", { amount: App.formatDong(data.money.emergency_fund_target) })) + "</p>"
     : "";
 
-  return '<section class="card">' +
-    '<div class="card-head"><h2>' + App.esc(App.t("plan.goals.active_title")) + "</h2></div>" +
-    (items || App.emptyState(App.t("plan.goals.none"))) + aiButton + "</section>" +
-    '<section class="card"><h2>' + App.esc(App.t("plan.goals.add_title")) + '</h2><form id="goal-form">' +
+  return '<div style="display:flex;flex-direction:column;gap:0.875rem">' +
+    '<div style="padding:0.125rem">' +
+      '<div style="font-size:1.0625rem;font-weight:700;letter-spacing:-0.01em">' + App.esc(App.t("plan.goals.active_title")) + "</div>" +
+      '<div class="tiny muted" style="margin-top:0.125rem">' + App.esc(App.t("plan.goals.hub_subtitle", { n: data.goals.length })) + "</div>" +
+    "</div>" +
+    hero +
+    '<div class="stack-tight">' + (items || App.emptyState(App.t("plan.goals.none"))) + "</div>" +
+    aiButton +
+    '<div class="card"><h2>' + App.esc(App.t("plan.goals.add_title")) + '</h2><form id="goal-form">' +
       '<label class="field"><span class="field-label">' + App.esc(App.t("plan.goals.name_label")) + "</span>" +
       '<input type="text" name="name" placeholder="' + App.esc(App.t("plan.goals.name_placeholder")) + '" required></label>' +
       '<label class="field"><span class="field-label">' + App.esc(App.t("plan.goals.type_label")) + '</span><select name="goal_type">' +
@@ -1027,7 +1079,100 @@ App.renderGoalsPlan = function (data) {
       emergencyHint +
       "<button type=\"submit\">" + App.esc(App.t("plan.goals.submit")) + "</button>" +
       '<div id="goal-message"></div>' +
-    "</form></section>";
+    "</form></div>" +
+  "</div>";
+};
+
+App.renderGoalDetail = function (data, goal) {
+  var color = goal.is_overdue ? "var(--neon-red)" : (goal.is_off_track ? "var(--neon-orange)" : "var(--neon-green)");
+
+  var recentContribs = (data.transactions || []).filter(function (tx) {
+    return tx.is_transfer && tx.direction === "in" && String(tx.account_id) === String(goal.account_id);
+  }).slice(0, 5);
+
+  var recentHtml = recentContribs.length === 0
+    ? '<p class="tiny muted">' + App.esc(App.t("plan.goals.recent_none")) + "</p>"
+    : recentContribs.map(function (tx) {
+        return '<div style="display:flex;align-items:center;gap:0.625rem">' +
+          '<span class="neon-ledger-row-icon" style="width:1.75rem;height:1.75rem">' + App.icon("swap") + "</span>" +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="font-size:0.75rem;font-weight:600">' + App.esc(tx.description || App.t("ledger.transfer_title")) + "</div>" +
+            '<div class="tiny muted num">' + App.esc(App.formatDayMonth(tx.occurred_at)) + "</div>" +
+          "</div>" +
+          '<span class="num" style="font-size:0.78rem;font-weight:700;color:var(--neon-green)">+' + App.formatVnd(tx.amount) + "đ</span>" +
+        "</div>";
+      }).join("");
+
+  return '<div style="display:flex;flex-direction:column;gap:0.875rem">' +
+    '<div style="display:flex;align-items:center;gap:0.75rem;padding:0.125rem">' +
+      '<button type="button" class="icon-btn" data-goal-back aria-label="' + App.esc(App.t("common.back")) + '">' + App.icon("back") + "</button>" +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:1.0625rem;font-weight:700;letter-spacing:-0.01em">' + App.esc(goal.name) + "</div>" +
+        '<div class="tiny muted">' + App.esc(App.label("goal_type", goal.goal_type)) + "</div>" +
+      "</div>" +
+    "</div>" +
+    '<div class="neon-vault-hero">' +
+      '<div style="display:flex;align-items:center;gap:1rem">' +
+        '<div style="position:relative;flex:none;width:6rem;height:6rem">' + App.donut(goal.progress_pct, color) +
+          '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">' +
+            '<span class="num" style="font-size:1.375rem;font-weight:700">' + Math.round(goal.progress_pct) + "%</span>" +
+            '<span style="font-size:0.5625rem;font-weight:600;color:var(--neon-ink-soft);letter-spacing:0.05em">' + App.esc(App.t("plan.goals.donut_label")) + "</span>" +
+          "</div>" +
+        "</div>" +
+        '<div style="flex:1;min-width:0">' +
+          '<div class="num" style="font-size:1.5rem;font-weight:700;letter-spacing:-0.02em">' + App.formatVnd(goal.current_balance) + "đ</div>" +
+          '<div class="num tiny muted" style="margin-top:0.1875rem">/ ' + App.formatVnd(goal.target_amount) + "đ</div>" +
+          (goal.remaining_amount > 0
+            ? '<div class="tiny" style="margin-top:0.625rem;font-weight:600;color:' + color + '">' + App.esc(App.t("plan.goals.remaining_label", { amount: App.formatVnd(goal.remaining_amount) })) + "</div>"
+            : "") +
+        "</div>" +
+      "</div>" +
+      '<div style="margin-top:1rem;padding-top:0.875rem;border-top:1px solid var(--neon-line);display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">' +
+        '<div><div class="neon-summary-label">' + App.esc(App.t("plan.goals.per_period_label")) + '</div>' +
+          '<div class="num" style="margin-top:0.25rem;font-size:0.875rem;font-weight:700">' + App.formatVnd(goal.required_per_period) + "đ</div></div>" +
+        '<div><div class="neon-summary-label">' + App.esc(App.t("plan.goals.eta_label")) + '</div>' +
+          '<div class="num" style="margin-top:0.25rem;font-size:0.875rem;font-weight:700">' + App.esc(goal.remaining_amount <= 0 ? App.t("plan.goals.eta_done") : App.t("plan.goals.eta_periods", { n: goal.periods_remaining })) + "</div></div>" +
+      "</div>" +
+    "</div>" +
+    '<div class="card">' +
+      "<h2>" + App.esc(App.t("plan.goals.topup_title")) + "</h2>" +
+      '<div class="neon-hero" style="margin-top:0.75rem;padding:1rem;--tint:rgba(63,245,165,0.14);--tint-border:rgba(63,245,165,0.35);--accent:var(--neon-green)">' +
+        '<input type="text" inputmode="numeric" id="goal-topup-amount" placeholder="0đ" style="text-align:center;width:100%;border:0;background:transparent;font-family:var(--font-num);font-variant-numeric:tabular-nums;font-size:2rem;font-weight:700;color:var(--neon-green);outline:none">' +
+      "</div>" +
+      '<div style="margin-top:0.625rem;display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem">' +
+        [["500000", "500k"], ["1000000", "1tr"], ["2500000", "2tr5"], ["rest", App.t("plan.goals.quick_rest")]].map(function (pair) {
+          return '<button type="button" class="neon-chip" data-goal-quick="' + pair[0] + '">' + App.esc(pair[1]) + "</button>";
+        }).join("") +
+      "</div>" +
+      '<div style="margin-top:0.875rem"><div class="tiny muted" style="margin-bottom:0.5rem;font-weight:600">' + App.esc(App.t("plan.goals.topup_source_label")) + "</div>" +
+        '<div id="goal-topup-account-chips" style="display:flex;gap:0.5rem;flex-wrap:wrap">' +
+          data.accounts.filter(function (a) { return String(a.id) !== String(goal.account_id); }).map(function (a, i) {
+            return '<button type="button" class="neon-chip" data-pick-topup-account="' + App.esc(a.id) + '" aria-pressed="' + (i === 0) + '">' + App.esc(a.name) + "</button>";
+          }).join("") +
+        "</div>" +
+        '<input type="hidden" id="goal-topup-account" value="' + App.esc((data.accounts.filter(function (a) { return String(a.id) !== String(goal.account_id); })[0] || {}).id || "") + '">' +
+      "</div>" +
+      '<div class="neon-ledger-detail-box" style="margin-top:0.8125rem">' +
+        '<p class="tiny" style="margin:0;color:var(--neon-ink-soft)">' + App.t("plan.goals.topup_transfer_note") + "</p>" +
+      "</div>" +
+      '<button type="button" id="goal-topup-submit" data-goal-id="' + App.esc(goal.id) + '" style="margin-top:0.8125rem;width:100%">' + App.esc(App.t("plan.goals.topup_submit")) + "</button>" +
+      '<div id="goal-topup-message"></div>' +
+    "</div>" +
+    '<div class="card">' +
+      "<div class=\"spread\" style=\"align-items:baseline\"><h2 style=\"margin:0\">" + App.esc(App.t("plan.goals.recent_title")) + "</h2></div>" +
+      '<div class="stack-tight" style="margin-top:0.625rem">' + recentHtml + "</div>" +
+    "</div>" +
+    '<div class="card">' +
+      "<h2>" + App.esc(App.t("plan.goals.settings_title")) + "</h2>" +
+      '<dl class="stack-tight" style="margin-top:0.5rem">' +
+        '<div class="kv"><dt>' + App.esc(App.t("plan.goals.settings_account")) + "</dt><dd>" + App.esc(goal.account_name) + "</dd></div>" +
+        '<div class="kv"><dt>' + App.esc(App.t("plan.goals.target_label")) + "</dt><dd class=\"num\">" + App.formatVnd(goal.target_amount) + "đ</dd></div>" +
+        '<div class="kv"><dt>' + App.esc(App.t("plan.goals.deadline_label")) + "</dt><dd class=\"num\">" + App.esc(goal.deadline) + "</dd></div>" +
+      "</dl>" +
+      '<button type="button" class="neon-action-btn neon-action-del" style="width:100%;margin-top:0.875rem" data-hide-goal="' + App.esc(goal.id) + '">' + App.esc(App.t("common.hide")) + "</button>" +
+      '<p class="tiny" style="margin-top:0.5rem;color:var(--neon-ink-dim)">' + App.esc(App.t("plan.goals.hide_note")) + "</p>" +
+    "</div>" +
+  "</div>";
 };
 
 App.renderRecurringPlan = function (data) {
