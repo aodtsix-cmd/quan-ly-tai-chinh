@@ -14,6 +14,10 @@ App.state = {
   txFilter: "all",
   txQuery: "",
   txLimit: 40,
+  txCategory: "",
+  txAccount: "",
+  txSort: "desc", // "desc" = server order (newest first); "asc" reverses it
+  txOpenId: null, // which ledger row's inline detail is expanded
   periodId: null,
   loading: false,
   // Add-form category picker: which id is chosen, and which parent's children
@@ -711,49 +715,23 @@ App.saveImport = function () {
 App.filteredTransactions = function () {
   var data = App.state.data;
   var query = App.state.txQuery.trim().toLowerCase();
-  return data.transactions.filter(function (tx) {
+  var rows = data.transactions.filter(function (tx) {
     if (App.state.txFilter === "out" && (tx.direction !== "out" || tx.is_transfer)) return false;
     if (App.state.txFilter === "in" && (tx.direction !== "in" || tx.is_transfer)) return false;
     if (App.state.txFilter === "transfer" && !tx.is_transfer) return false;
+    if (App.state.txCategory && String(tx.category_id) !== String(App.state.txCategory)) return false;
+    if (App.state.txAccount && String(tx.account_id) !== String(App.state.txAccount)) return false;
     if (!query) return true;
-    return [tx.description, tx.category_name, tx.account_name]
+    return [tx.description, tx.category_name, tx.account_name, tx.amount]
       .join(" ").toLowerCase().indexOf(query) !== -1;
   });
+  // The server already sorts newest-first; "asc" just reverses that view,
+  // no re-fetch needed.
+  return App.state.txSort === "asc" ? rows.slice().reverse() : rows;
 };
 
 App.renderList = function () {
-  var data = App.state.data;
-  var filtered = App.filteredTransactions();
-  var shown = filtered.slice(0, App.state.txLimit);
-
-  var filters = [
-    ["all", App.t("ledger.filter.all")], ["out", App.t("ledger.filter.out")],
-    ["in", App.t("ledger.filter.in")], ["transfer", App.t("ledger.filter.transfer")],
-  ].map(function (pair) {
-    return '<button type="button" data-filter="' + pair[0] + '" aria-pressed="' +
-      (App.state.txFilter === pair[0]) + '">' + App.esc(pair[1]) + "</button>";
-  }).join("");
-
-  var more = filtered.length > shown.length
-    ? '<button type="button" class="secondary" id="show-more">' +
-      App.esc(App.t("ledger.show_more", { n: Math.min(40, filtered.length - shown.length) })) + "</button>"
-    : "";
-
-  var footnote = data.transaction_count > data.transactions.length
-    ? '<p class="tiny faint">' + App.esc(App.t("ledger.footnote", {
-        shown: data.transactions.length, total: data.transaction_count,
-      })) + "</p>"
-    : "";
-
-  App.setHtml("#view-list",
-    '<section class="card">' +
-      '<input type="text" id="tx-search" placeholder="' + App.esc(App.t("ledger.search_placeholder")) + '" value="' +
-        App.esc(App.state.txQuery) + '">' +
-      '<div class="filters">' + filters + "</div>" +
-    "</section>" +
-    '<section class="card"><div class="rows">' + App.renderTransactionRows(shown) + "</div>" +
-    more + footnote + "</section>"
-  );
+  App.setHtml("#view-list", App.renderLedger(App.state.data));
 };
 
 App.openEditDialog = function (id) {
@@ -1103,12 +1081,12 @@ document.addEventListener("click", function (event) {
     "[data-dismiss-alert], [data-delete-tx], [data-edit-tx], [data-hide-goal], [data-hide-recurring], " +
     "[data-delete-rule], [data-edit-account], [data-apply-suggestion], [data-period-shift], [data-close-dialog], " +
     "[data-hide-income], [data-delete-event], [data-event-to-goal], [data-pick-category], [data-open-parent], " +
-    "[data-pick-account], [data-pick-to-account], " +
+    "[data-pick-account], [data-pick-to-account], [data-toggle-tx], [data-dup-tx], [data-reset-tx-filters], " +
     "[data-set-theme], [data-set-palette], [data-set-lang], #add-event-item, #save-import, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
     "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, " +
     "#save-connection-anyway, #device-link-btn, #copy-device-link, #theme-toggle, " +
-    "#tx-today-btn, #tx-nudge, #home-bell, #home-networth-eye");
+    "#tx-today-btn, #tx-nudge, #home-bell, #home-networth-eye, #tx-sort-toggle, #tx-search-clear");
   if (!target) return;
 
   var attr = function (name) { return target.getAttribute(name); };
@@ -1166,6 +1144,36 @@ document.addEventListener("click", function (event) {
     return;
   }
   if (attr("data-filter")) { App.state.txFilter = attr("data-filter"); App.state.txLimit = 40; App.renderList(); return; }
+
+  if (target.hasAttribute("data-reset-tx-filters")) {
+    App.state.txFilter = "all"; App.state.txQuery = ""; App.state.txCategory = ""; App.state.txAccount = "";
+    App.state.txLimit = 40;
+    App.renderList();
+    return;
+  }
+
+  if (attr("data-toggle-tx")) {
+    var toggleId = attr("data-toggle-tx");
+    App.state.txOpenId = String(App.state.txOpenId) === String(toggleId) ? null : toggleId;
+    App.renderList();
+    return;
+  }
+
+  // Duplicate re-posts today, not the original date - "log the same coffee
+  // again" is the use case, not "backdate a correction". Transfer rows have
+  // no duplicate button at all: each is one leg of a linked pair, and
+  // duplicating a single leg would silently create an unbalanced entry.
+  if (attr("data-dup-tx")) {
+    var srcTx = App.state.data.transactions.filter(function (t) { return String(t.id) === String(attr("data-dup-tx")); })[0];
+    if (!srcTx || srcTx.is_transfer) return;
+    App.apiPost("add_transaction", {
+      direction: srcTx.direction, account_id: srcTx.account_id, category_id: srcTx.category_id,
+      amount: String(srcTx.amount), description: srcTx.description, occurred_at: App.today(),
+    })
+      .then(function () { return App.load({ quiet: true }); })
+      .catch(function (err) { window.alert(App.errorText(err)); });
+    return;
+  }
 
   // Dismissing an alert only hides it for this visit - there is no "muted"
   // state anywhere, so a condition that is still true comes back next load.
@@ -1244,6 +1252,15 @@ document.addEventListener("click", function (event) {
 
   switch (target.id) {
     case "show-more": App.state.txLimit += 40; App.renderList(); break;
+    case "tx-sort-toggle":
+      App.state.txSort = App.state.txSort === "desc" ? "asc" : "desc";
+      App.renderList();
+      break;
+    case "tx-search-clear":
+      App.state.txQuery = "";
+      App.state.txLimit = 40;
+      App.renderList();
+      break;
     case "save-budgets": App.saveBudgets(); break;
     case "run-forecast": App.runForecast(); break;
     case "run-simulation": App.runSimulation(); break;
@@ -1490,6 +1507,12 @@ document.addEventListener("change", function (event) {
   }
   if (event.target.id === "tx-date") App.updateDateDisplay();
   if (event.target.id === "event-template") App.resetEventItems(event.target.value);
+  if (event.target.id === "tx-category-filter") {
+    App.state.txCategory = event.target.value; App.state.txLimit = 40; App.renderList();
+  }
+  if (event.target.id === "tx-account-filter") {
+    App.state.txAccount = event.target.value; App.state.txLimit = 40; App.renderList();
+  }
   if (event.target.id === "import-file" && event.target.files && event.target.files.length) {
     App.analyzeImages(event.target.files);
   }

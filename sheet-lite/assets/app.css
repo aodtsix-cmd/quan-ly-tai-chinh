@@ -1036,7 +1036,7 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
    it"), so --font-ui/--font-num are used exactly as everywhere else in the
    app. */
 
-#view-home, #view-add {
+#view-home, #view-add, #view-list {
   --neon-bg: #0a0b0e;
   --neon-surface: #14161c;
   --neon-surface-2: #1a1d25;
@@ -1059,26 +1059,26 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 /* Bleed to the shared shell's own edges rather than sitting as a card on the
    page background - main's centring/padding stays (so width still matches
    every other tab), but the content itself reads as its own dark surface. */
-#view-home, #view-add { background: var(--neon-bg); color: var(--neon-ink); border-radius: var(--radius); margin: calc(var(--space-4) * -1); padding: var(--space-4); gap: var(--space-4) !important; }
+#view-home, #view-add, #view-list { background: var(--neon-bg); color: var(--neon-ink); border-radius: var(--radius); margin: calc(var(--space-4) * -1); padding: var(--space-4); gap: var(--space-4) !important; }
 
 @media (max-width: 22.5rem) {
-  #view-home, #view-add { margin: calc(var(--space-3) * -1); padding: var(--space-3); }
+  #view-home, #view-add, #view-list { margin: calc(var(--space-3) * -1); padding: var(--space-3); }
 }
 
-#view-home .card, #view-add .card {
+#view-home .card, #view-add .card, #view-list .card {
   background: var(--neon-surface);
   border-color: var(--neon-line);
   color: var(--neon-ink);
   box-shadow: 0 20px 40px -26px rgba(0, 0, 0, 0.9);
 }
 
-#view-home .muted, #view-add .muted { color: var(--neon-ink-soft); }
-#view-home .faint, #view-add .faint { color: var(--neon-ink-faint); }
-#view-home .eyebrow, #view-add .eyebrow { color: var(--neon-ink-soft); }
-#view-home a.link, #view-add a.link, #view-home .link, #view-add .link { color: var(--neon-purple); }
-#view-home .amount-out, #view-add .amount-out { color: var(--neon-red); }
-#view-home .amount-in, #view-add .amount-in { color: var(--neon-green); }
-#view-home .amount-transfer, #view-add .amount-transfer { color: var(--neon-ink-soft); }
+#view-home .muted, #view-add .muted, #view-list .muted { color: var(--neon-ink-soft); }
+#view-home .faint, #view-add .faint, #view-list .faint { color: var(--neon-ink-faint); }
+#view-home .eyebrow, #view-add .eyebrow, #view-list .eyebrow { color: var(--neon-ink-soft); }
+#view-home a.link, #view-add a.link, #view-list a.link, #view-home .link, #view-add .link, #view-list .link { color: var(--neon-purple); }
+#view-home .amount-out, #view-add .amount-out, #view-list .amount-out { color: var(--neon-red); }
+#view-home .amount-in, #view-add .amount-in, #view-list .amount-in { color: var(--neon-green); }
+#view-home .amount-transfer, #view-add .amount-transfer, #view-list .amount-transfer { color: var(--neon-ink-soft); }
 
 /* The daily AI-summary panel (#ai-daily) is the app's shared .ai-panel
    component, unstyled here until caught live: on Nhà it kept the indigo
@@ -1090,28 +1090,100 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 
 /* Generic buttons (first-run card's CTAs, anything not one of the bespoke
    neon components below) get the same opt-out-per-variant treatment as the
-   rest of the app, just re-skinned - so nothing dropped onto these two dark
+   rest of the app, just re-skinned - so nothing dropped onto these dark
    views keeps the old indigo look by accident. Every bespoke component
    further down (.neon-bell, .neon-eye, .neon-chip, .neon-today-btn, the two
-   flanking quickbar buttons) has to be named in this exclusion list too, or
-   an ID-scoped rule like this one beats a same-or-fewer-class override no
-   matter how it's written - found live: the quickbar's "Nhập ảnh"/"Phân
-   tích" buttons and the alert bell rendered gradient-filled before this
-   list named them explicitly. */
-#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile),
-#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile) {
+   flanking quickbar buttons, and - added for Sổ - .neon-filter-pill,
+   .neon-action-btn, .neon-ledger-row, .neon-search-clear) has to be named in
+   this exclusion list too, or an ID-scoped rule like this one beats a
+   same-or-fewer-class override no matter how it's written - found live
+   twice now: the quickbar's "Nhập ảnh"/"Phân tích" buttons and the alert
+   bell during v3.9, then every ledger row rendering as a solid gradient
+   block during the Sổ rebuild, both before their classes were added here. */
+#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear),
+#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear),
+#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear) {
   background: var(--neon-gradient); color: var(--neon-bg); box-shadow: 0 16px 34px -14px rgba(177, 140, 255, 0.8);
 }
-#view-home button.secondary, #view-add button.secondary {
+#view-home button.secondary, #view-add button.secondary, #view-list button.secondary {
   background: var(--neon-surface); border-color: var(--neon-line); color: var(--neon-ink); box-shadow: none;
 }
-#view-home .icon-btn, #view-add .icon-btn { background: var(--neon-surface); border-color: var(--neon-line); color: var(--neon-ink-soft); }
+#view-home .icon-btn, #view-add .icon-btn, #view-list .icon-btn { background: var(--neon-surface); border-color: var(--neon-line); color: var(--neon-ink-soft); }
 
 /* Alerts keep their own semantics but sit on the dark surface instead of the
    light tint cards - same information, recoloured to the neon system rather
    than looking like a mistake dropped onto a dark screen. */
 #view-home .alert-danger { background: rgba(255, 107, 122, 0.12); color: var(--neon-red); border-color: rgba(255, 107, 122, 0.35); }
 #view-home .alert-warning { background: rgba(255, 145, 66, 0.12); color: var(--neon-orange); border-color: rgba(255, 145, 66, 0.35); }
+
+/* ------------------------------------------------------------- ledger (Sổ) */
+/* Ported from FinanceLedgerNeon.dc.html. No back-chevron/sort-icon header
+   (Sổ is a tab in this app's 5-tab shell, not a pushed screen the way the
+   handoff assumed) - title + period range + count is enough context. Day-net
+   totals stay in FULL VND, not the handoff's "tr/k" shorthand: v3.6 already
+   established "no abbreviation anywhere" as a hard rule from the user's own
+   brief, and this screen doesn't get an exception. */
+.neon-search {
+  height: 2.875rem; border-radius: 0.875rem; border: 1px solid var(--neon-line);
+  background: var(--neon-surface); padding: 0 0.875rem; display: flex; align-items: center; gap: 0.625rem;
+}
+.neon-search svg { width: 0.875rem; height: 0.875rem; flex: none; fill: none; stroke: var(--neon-ink-dim); stroke-width: 2; }
+.neon-search input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: 0.8125rem; outline: none; color: var(--neon-ink); }
+.neon-search input::placeholder { color: var(--neon-ink-dim); }
+.neon-search-clear {
+  flex: none; width: 1.375rem; height: 1.375rem; padding: 0; border: 0; border-radius: 999px;
+  background: var(--neon-surface-3); color: var(--neon-ink-soft); font-size: 0.75rem; cursor: pointer; box-shadow: none;
+}
+.neon-filter-row { display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.25rem; scrollbar-width: none; }
+.neon-filter-row::-webkit-scrollbar { display: none; }
+.neon-filter-pill {
+  flex: 0 0 auto; height: 2.375rem; padding: 0 0.9375rem; border-radius: 999px; cursor: pointer;
+  font-size: 0.75rem; font-weight: 700; border: 1px solid var(--neon-line); background: var(--neon-surface); color: var(--neon-ink-soft);
+  box-shadow: none;
+}
+.neon-filter-pill[aria-pressed="true"] { border: 1.5px solid var(--neon-green); background: rgba(63, 245, 165, 0.13); color: var(--neon-green); }
+.neon-filter-divider { flex: 0 0 auto; width: 1px; background: var(--neon-line); margin: 0.375rem 0.125rem; }
+.neon-filter-select {
+  flex: 0 0 auto; height: 2.375rem; padding: 0 1.75rem 0 0.9375rem; border-radius: 999px; border: 1px solid var(--neon-line);
+  background: var(--neon-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b93a4' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 0.625rem center / 0.75rem;
+  color: var(--neon-ink-soft); font-size: 0.75rem; font-weight: 700; appearance: none; -webkit-appearance: none; cursor: pointer;
+}
+.neon-filter-select.is-active { border-color: var(--neon-purple); color: var(--neon-purple); }
+.neon-summary-grid { border-radius: 1.125rem; background: var(--neon-surface); border: 1px solid var(--neon-line); padding: 0.875rem 1rem; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.625rem; }
+.neon-summary-label { font-size: 0.656rem; font-weight: 600; letter-spacing: 0.04em; color: var(--neon-ink-soft); }
+.neon-summary-value { margin-top: 0.25rem; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.8125rem; font-weight: 700; }
+.neon-day-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.625rem; padding: 0.125rem 0.125rem 0.5625rem; }
+.neon-day-label { font-size: 0.75rem; font-weight: 700; color: var(--neon-ink-2); }
+.neon-day-total { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.72rem; font-weight: 600; color: var(--neon-ink-dim); }
+.neon-ledger-card { border-radius: 1.125rem; background: var(--neon-surface); border: 1px solid var(--neon-line); overflow: hidden; }
+.neon-ledger-row {
+  width: 100%; border: 0; background: transparent; padding: 0.75rem 0.875rem; display: flex; align-items: center; gap: 0.75rem;
+  cursor: pointer; text-align: left; box-shadow: none; border-top: 1px solid var(--neon-line-soft);
+}
+.neon-ledger-card > div:first-child > .neon-ledger-row { border-top: 0; }
+.neon-ledger-row-icon { flex: none; width: 2.25rem; height: 2.25rem; border-radius: 0.75rem; background: var(--neon-surface-3); display: grid; place-items: center; }
+.neon-ledger-row-icon svg { width: 1.05rem; height: 1.05rem; }
+.neon-ledger-row-title { font-size: 0.8125rem; font-weight: 600; color: var(--neon-ink); }
+.neon-ledger-row-meta { margin-top: 0.125rem; display: flex; align-items: center; gap: 0.4375rem; font-size: 0.656rem; font-weight: 500; color: var(--neon-ink-soft); }
+.neon-ledger-row-amount { flex: none; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.875rem; font-weight: 700; }
+.neon-ledger-detail { padding: 0 0.875rem 0.8125rem; display: flex; flex-direction: column; gap: 0.625rem; }
+.neon-ledger-detail-box { padding: 0.6875rem 0.75rem; border-radius: 0.75rem; background: var(--neon-surface-2); border: 1px solid var(--neon-line); display: flex; flex-direction: column; gap: 0.375rem; }
+.neon-ledger-detail-row { display: flex; align-items: center; justify-content: space-between; gap: 0.625rem; font-size: 0.6875rem; }
+.neon-ledger-detail-row dt { color: var(--neon-ink-soft); font-weight: 600; }
+.neon-ledger-detail-row dd { margin: 0; font-weight: 600; }
+.neon-ledger-actions { display: flex; gap: 0.5rem; }
+.neon-action-btn {
+  flex: 1; height: 2.5rem; border-radius: 0.75rem; font-size: 0.75rem; font-weight: 700; cursor: pointer; box-shadow: none;
+}
+.neon-action-edit { border: 1px solid rgba(177, 140, 255, 0.4); background: rgba(177, 140, 255, 0.1); color: var(--neon-purple); }
+.neon-action-dup { border: 1px solid var(--neon-line); background: transparent; color: var(--neon-ink-soft); }
+.neon-action-dup[disabled] { opacity: 0.4; cursor: not-allowed; }
+.neon-action-del { border: 1px solid rgba(255, 107, 122, 0.35); background: rgba(255, 107, 122, 0.08); color: var(--neon-red); }
+.neon-ledger-empty {
+  border-radius: 1.25rem; background: var(--neon-surface); border: 1px dashed var(--neon-surface-3);
+  padding: 1.625rem 1.25rem; display: flex; flex-direction: column; align-items: center; gap: 0.5rem; text-align: center;
+}
+.neon-ledger-empty-icon { width: 2.625rem; height: 2.625rem; border-radius: 0.875rem; background: var(--neon-surface-3); display: grid; place-items: center; font-size: 1.1875rem; }
 
 /* ------------------------------------------------------------- home: header */
 

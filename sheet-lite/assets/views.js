@@ -541,36 +541,162 @@ App.renderDashboard = function (data) {
 
 // ================================================================ sổ (list)
 
-App.renderTransactionRows = function (transactions) {
-  if (transactions.length === 0) return App.emptyState(App.t("ledger.no_match"));
+// Ported from FinanceLedgerNeon.dc.html (Dark Neon handoff, 2026-08-04). This
+// tab is reached directly from the bottom bar in this app's 5-tab shell, not
+// pushed from Home the way the handoff assumed, so there is no back-chevron
+// header here - title + period range + count carries the same context.
+//
+// "Nguồn phân loại" (classification source) in the row-detail panel is
+// approximated from the one field the backend actually sends per row
+// (`source`: manual/recurring/ocr) plus `is_transfer` - there is no
+// rule-match flag in the bootstrap payload, so a rule-matched manual entry
+// reads as "Chọn tay" the same as a hand-picked one. Real, not hidden: fixing
+// it would need a new Code.gs field, which this frontend-only pass doesn't add.
+App.LEDGER_SOURCE_LABELS = {
+  transfer: ["ledger.rule.transfer", "var(--neon-ink-soft)"],
+  recurring: ["ledger.rule.recurring", "var(--neon-orange)"],
+  ocr: ["ledger.rule.ocr", "var(--neon-purple)"],
+  manual: ["ledger.rule.manual", "var(--neon-ink-soft)"],
+};
 
-  var html = "";
-  var lastDate = null;
-  transactions.forEach(function (tx) {
-    var date = App.dateOnly(tx.occurred_at);
-    if (date !== lastDate) {
-      html += '<p class="date-head">' + App.esc(App.formatDateHeading(date)) + "</p>";
-      lastDate = date;
-    }
-    var kind = tx.is_transfer ? "transfer" : tx.direction;
-    var amountClass = tx.is_transfer ? "amount-transfer" : (tx.direction === "in" ? "amount-in" : "amount-out");
-    var sign = tx.is_transfer ? "" : (tx.direction === "in" ? "+" : "−");
-    var title = tx.description || tx.category_name || (tx.is_transfer ? App.t("ledger.transfer_title") : App.t("common.no_description_row"));
-    var meta = [tx.account_name, tx.category_name, tx.source === "recurring" ? App.t("common.recurring_tag") : null]
-      .filter(Boolean).join(" · ");
-    var glyph = tx.is_transfer ? "swap" : App.categoryIconName(tx.category_name || title);
+App.renderLedger = function (data) {
+  var all = App.filteredTransactions();
+  var shown = all.slice(0, App.state.txLimit);
 
-    html += '<div class="row">' +
-      '<span class="row-icon dir-' + kind + '">' + App.icon(glyph) + "</span>" +
-      '<div class="row-main"><span class="row-title">' + App.esc(title) + "</span>" +
-      '<span class="row-meta">' + App.esc(meta) + "</span></div>" +
-      '<div class="row-end"><span class="row-amount ' + amountClass + '">' + sign + App.formatVnd(tx.amount) + "</span>" +
-      '<span class="row-actions">' +
-        '<button type="button" class="link" data-edit-tx="' + App.esc(tx.id) + '">' + App.esc(App.t("common.edit")) + "</button>" +
-        '<button type="button" class="link link-danger" data-delete-tx="' + App.esc(tx.id) + '">' + App.esc(App.t("common.delete")) + "</button>" +
-      "</span></div></div>";
-  });
-  return html;
+  var typeFilters = [
+    ["all", App.t("ledger.filter.all")], ["out", App.t("ledger.filter.out")],
+    ["in", App.t("ledger.filter.in")], ["transfer", App.t("ledger.filter.transfer")],
+  ].map(function (pair) {
+    return '<button type="button" class="neon-filter-pill" data-filter="' + pair[0] + '" aria-pressed="' +
+      (App.state.txFilter === pair[0]) + '">' + App.esc(pair[1]) + "</button>";
+  }).join("");
+
+  var categoryChoices = data.categories.filter(function (c) { return c.kind !== "transfer"; });
+  var categorySelect = '<select id="tx-category-filter" class="neon-filter-select' +
+    (App.state.txCategory ? " is-active" : "") + '" aria-label="' + App.esc(App.t("ledger.filter.category_all")) + '">' +
+    '<option value="">' + App.esc(App.t("ledger.filter.category_all")) + "</option>" +
+    categoryChoices.map(function (c) {
+      return '<option value="' + App.esc(c.id) + '"' + (String(App.state.txCategory) === String(c.id) ? " selected" : "") + ">" +
+        App.esc(c.name) + "</option>";
+    }).join("") + "</select>";
+
+  var accountSelect = '<select id="tx-account-filter" class="neon-filter-select' +
+    (App.state.txAccount ? " is-active" : "") + '" aria-label="' + App.esc(App.t("ledger.filter.account_all")) + '">' +
+    '<option value="">' + App.esc(App.t("ledger.filter.account_all")) + "</option>" +
+    App.accountOptions(data.accounts, App.state.txAccount, false) + "</select>";
+
+  var sums = all.reduce(function (acc, tx) {
+    if (tx.is_transfer) return acc;
+    if (tx.direction === "in") acc.income += tx.amount; else acc.expense += tx.amount;
+    return acc;
+  }, { income: 0, expense: 0 });
+  var net = sums.income - sums.expense;
+
+  var summary = '<div class="neon-summary-grid">' +
+    '<div><div class="neon-summary-label">' + App.esc(App.t("ledger.summary.in")) + '</div>' +
+      '<div class="neon-summary-value" style="color:var(--neon-green)">+' + App.formatVnd(sums.income) + "đ</div></div>" +
+    '<div><div class="neon-summary-label">' + App.esc(App.t("ledger.summary.out")) + '</div>' +
+      '<div class="neon-summary-value" style="color:var(--neon-red)">−' + App.formatVnd(sums.expense) + "đ</div></div>" +
+    '<div><div class="neon-summary-label">' + App.esc(App.t("ledger.summary.net")) + '</div>' +
+      '<div class="neon-summary-value">' + (net >= 0 ? "+" : "−") + App.formatVnd(Math.abs(net)) + "đ</div></div>" +
+  "</div>";
+
+  var hasActiveFilter = App.state.txFilter !== "all" || App.state.txQuery || App.state.txCategory || App.state.txAccount;
+  var body;
+  if (shown.length === 0) {
+    body = '<div class="neon-ledger-empty">' +
+      '<span class="neon-ledger-empty-icon">' + App.icon("search") + "</span>" +
+      '<div style="font-size:0.844rem;font-weight:700">' + App.esc(App.t("ledger.empty.title")) + "</div>" +
+      '<div class="tiny muted">' + App.esc(App.t("ledger.empty.subtitle")) + "</div>" +
+      (hasActiveFilter
+        ? '<button type="button" class="neon-action-btn neon-action-edit" style="flex:none;padding:0 1rem;margin-top:0.375rem" data-reset-tx-filters>' +
+          App.esc(App.t("ledger.empty.reset")) + "</button>"
+        : "") +
+    "</div>";
+  } else {
+    var groups = [];
+    var byDate = {};
+    shown.forEach(function (tx) {
+      var date = App.dateOnly(tx.occurred_at);
+      if (!byDate[date]) { byDate[date] = []; groups.push(date); }
+      byDate[date].push(tx);
+    });
+    body = groups.map(function (date) {
+      var rows = byDate[date];
+      var dayNet = rows.reduce(function (acc, tx) {
+        if (tx.is_transfer) return acc;
+        return acc + (tx.direction === "in" ? tx.amount : -tx.amount);
+      }, 0);
+      var rowsHtml = rows.map(function (tx) {
+        var isTransfer = tx.is_transfer;
+        var color = isTransfer ? "var(--neon-ink-soft)" : (tx.direction === "in" ? "var(--neon-green)" : "var(--neon-red)");
+        var sign = isTransfer ? "" : (tx.direction === "in" ? "+" : "−");
+        var title = tx.description || tx.category_name || (isTransfer ? App.t("ledger.transfer_title") : App.t("common.no_description_row"));
+        var glyph = isTransfer ? "swap" : App.categoryIconName(tx.category_name || title);
+        var meta = [tx.account_name, App.formatDayMonth(tx.occurred_at)].filter(Boolean).join(" · ");
+        var sourceKey = isTransfer ? "transfer" : (App.LEDGER_SOURCE_LABELS[tx.source] ? tx.source : "manual");
+        var sourceLabel = App.LEDGER_SOURCE_LABELS[sourceKey];
+        var isOpen = String(App.state.txOpenId) === String(tx.id);
+        var canDuplicate = !isTransfer;
+
+        var detail = isOpen
+          ? '<div class="neon-ledger-detail">' +
+              '<dl class="neon-ledger-detail-box">' +
+                '<div class="neon-ledger-detail-row"><dt>' + App.esc(App.t("ledger.detail.note")) + '</dt><dd>' + App.esc(tx.description || "—") + "</dd></div>" +
+                '<div class="neon-ledger-detail-row"><dt>' + App.esc(App.t("ledger.detail.source")) + '</dt><dd style="color:' + sourceLabel[1] + '">' + App.esc(App.t(sourceLabel[0])) + "</dd></div>" +
+                '<div class="neon-ledger-detail-row"><dt>' + App.esc(App.t("ledger.detail.id")) + '</dt><dd class="num" style="color:var(--neon-ink-dim)">#' + App.esc(tx.id) + "</dd></div>" +
+              "</dl>" +
+              '<div class="neon-ledger-actions">' +
+                '<button type="button" class="neon-action-btn neon-action-edit" data-edit-tx="' + App.esc(tx.id) + '">' + App.esc(App.t("common.edit")) + "</button>" +
+                '<button type="button" class="neon-action-btn neon-action-dup"' + (canDuplicate ? ' data-dup-tx="' + App.esc(tx.id) + '"' : " disabled") + ">" + App.esc(App.t("ledger.action.duplicate")) + "</button>" +
+                '<button type="button" class="neon-action-btn neon-action-del" data-delete-tx="' + App.esc(tx.id) + '">' + App.esc(App.t("common.delete")) + "</button>" +
+              "</div>" +
+            "</div>"
+          : "";
+
+        return '<div>' +
+          '<button type="button" class="neon-ledger-row" data-toggle-tx="' + App.esc(tx.id) + '">' +
+            '<span class="neon-ledger-row-icon">' + App.icon(glyph) + "</span>" +
+            '<div style="flex:1;min-width:0">' +
+              '<div class="neon-ledger-row-title">' + App.esc(title) + "</div>" +
+              '<div class="neon-ledger-row-meta"><span class="num">' + App.esc(meta) + "</span></div>" +
+            "</div>" +
+            '<span class="neon-ledger-row-amount" style="color:' + color + '">' + sign + App.formatVnd(tx.amount) + "đ</span>" +
+          "</button>" + detail +
+        "</div>";
+      }).join("");
+
+      return '<div>' +
+        '<div class="neon-day-head"><span class="neon-day-label">' + App.esc(App.formatDateHeading(date)) + '</span>' +
+          '<span class="neon-day-total num">' + (dayNet >= 0 ? "+" : "−") + App.formatVnd(Math.abs(dayNet)) + "đ</span></div>" +
+        '<div class="neon-ledger-card">' + rowsHtml + "</div>" +
+      "</div>";
+    }).join("");
+  }
+
+  var footer = all.length > shown.length
+    ? '<button type="button" class="secondary" id="show-more">' +
+      App.esc(App.t("ledger.show_more_count", { shown: shown.length, total: data.transaction_count })) + "</button>"
+    : (data.transaction_count > data.transactions.length
+      ? '<p class="tiny faint">' + App.esc(App.t("ledger.footnote", { shown: data.transactions.length, total: data.transaction_count })) + "</p>"
+      : "");
+
+  return '<div style="display:flex;flex-direction:column;gap:0.625rem">' +
+    '<div style="display:flex;align-items:center;gap:0.75rem;padding:0.125rem 0.125rem 0">' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:1.0625rem;font-weight:700;letter-spacing:-0.01em">' + App.esc(App.t("ledger.header_title")) + "</div>" +
+        '<div class="tiny muted" style="margin-top:0.125rem">' + App.esc(App.t("ledger.period_range", { range: App.formatPeriodRange(data.period) })) +
+          " · " + App.esc(App.t("ledger.header_count", { n: all.length })) + "</div>" +
+      "</div>" +
+      '<button type="button" class="icon-btn" id="tx-sort-toggle" aria-label="' + App.esc(App.t("ledger.sort_aria")) + '">' + App.icon("sort") + "</button>" +
+    "</div>" +
+    '<div class="neon-search">' + App.icon("search") +
+      '<input type="text" id="tx-search" placeholder="' + App.esc(App.t("ledger.search_placeholder")) + '" value="' + App.esc(App.state.txQuery) + '">' +
+      (App.state.txQuery ? '<button type="button" class="neon-search-clear" id="tx-search-clear">×</button>' : "") +
+    "</div>" +
+    '<div class="neon-filter-row">' + typeFilters + '<span class="neon-filter-divider"></span>' + categorySelect + accountSelect + "</div>" +
+    summary + body + (footer ? footer : "") +
+  "</div>";
 };
 
 // ============================================================ kế hoạch (plan)
