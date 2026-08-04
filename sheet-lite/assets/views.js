@@ -1524,7 +1524,33 @@ App.renderScenarios = function (result) {
 
 // =============================================================== cài đặt
 
+// Ported from FinanceProfileNeon.dc.html's header only - its user identity
+// (name/email/avatar), "PRO" badge, and months-used/streak/bank-sync-status
+// stat cards are all fabricated data this app has no source for (no login,
+// no per-account sync, no subscription). Kept: a real 3-stat row (accounts/
+// transactions/rules, all already-known counts) and the divider-row visual
+// language for the accounts list, wrapping the REST of Settings (appearance,
+// language, connection, categories, rules, data export - none of which the
+// handoff's own Profile screen covers) unchanged in structure, just re-skinned
+// via .neon-plan-section the same way Ngân sách/Dự báo/Phân tích are.
 App.renderSettings = function (data) {
+  var header = '<div style="padding:0.125rem">' +
+      '<div style="font-size:1.0625rem;font-weight:700;letter-spacing:-0.01em">' + App.esc(App.t("settings.page_title")) + "</div>" +
+      '<div class="tiny muted" style="margin-top:0.125rem">' + App.esc(App.t("settings.page_subtitle")) + "</div>" +
+    "</div>" +
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.625rem">' +
+      [
+        [data ? data.accounts.length : 0, App.t("settings.stat_accounts")],
+        [data ? data.transaction_count : 0, App.t("settings.stat_transactions")],
+        [data ? data.rules.length : 0, App.t("settings.stat_rules")],
+      ].map(function (pair) {
+        return '<div class="card" style="padding:0.8125rem 0.75rem">' +
+          '<div class="num" style="font-size:1.1875rem;font-weight:700">' + pair[0] + "</div>" +
+          '<div class="tiny muted" style="margin-top:0.1875rem;line-height:1.25">' + App.esc(pair[1]) + "</div>" +
+        "</div>";
+      }).join("") +
+    "</div>";
+
   var accountRows = (data ? data.accounts : []).map(function (account) {
     return '<div class="row">' +
       '<span class="row-icon">' + App.icon(App.ACCOUNT_ICONS[account.type] || "wallet") + "</span>" +
@@ -1581,7 +1607,7 @@ App.renderSettings = function (data) {
       '<div class="swatch-row">' + langButtons + "</div>" +
     "</section>";
 
-  return appearanceCard + languageCard +
+  return header + appearanceCard + languageCard +
     '<section class="card">' +
       '<div class="card-head"><h2>' + App.esc(App.t("settings.connection_title")) + "</h2>" +
       '<button type="button" class="link" id="show-connection">' + App.esc(App.t("common.change")) + "</button></div>" +

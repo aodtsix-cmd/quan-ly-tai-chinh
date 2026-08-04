@@ -940,7 +940,7 @@ App.runSimulation = function () {
 // ---------------------------------------------------------------- settings
 
 App.renderSettingsTab = function () {
-  App.setHtml("#view-settings", App.renderSettings(App.state.data));
+  App.setHtml("#view-settings", '<div class="neon-plan-section" style="display:flex;flex-direction:column;gap:0.875rem">' + App.renderSettings(App.state.data) + "</div>");
   var urlNode = App.$("#connection-url");
   if (urlNode && App.config) {
     urlNode.textContent = App.config.url.replace(/\/exec.*$/, "/exec");

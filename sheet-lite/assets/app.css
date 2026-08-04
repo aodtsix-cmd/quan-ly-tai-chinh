@@ -1102,10 +1102,10 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
    twice now: the quickbar's "Nhập ảnh"/"Phân tích" buttons and the alert
    bell during v3.9, then every ledger row rendering as a solid gradient
    block during the Sổ rebuild, both before their classes were added here. */
-#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear),
-#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear),
-#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear),
-.neon-plan-section button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear) {
+#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch),
+#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch),
+#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch),
+.neon-plan-section button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch) {
   background: var(--neon-gradient); color: var(--neon-bg); box-shadow: 0 16px 34px -14px rgba(177, 140, 255, 0.8);
 }
 #view-home button.secondary, #view-add button.secondary, #view-list button.secondary, .neon-plan-section button.secondary {
@@ -1511,8 +1511,25 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 .neon-plan-section .chart .tick { fill: var(--neon-ink-dim); }
 .neon-plan-section .kv dt { color: var(--neon-ink-soft); }
 .neon-plan-section .kv dd { color: var(--neon-ink); }
+.neon-plan-section .notice { border-radius: 0.875rem; }
+.neon-plan-section .notice-info { background: var(--neon-surface); color: var(--neon-ink-soft); border: 1px solid var(--neon-line); }
+.neon-plan-section .notice-ok { background: rgba(63, 245, 165, 0.1); color: var(--neon-green); border: 1px solid rgba(63, 245, 165, 0.3); }
+.neon-plan-section .notice-error { background: rgba(255, 107, 122, 0.1); color: var(--neon-red); border: 1px solid rgba(255, 107, 122, 0.3); }
 
 .neon-vault-hero {
   border-radius: 1.5rem; padding: 1.25rem; background: linear-gradient(160deg, rgba(63, 245, 165, 0.12) 0%, var(--neon-surface) 70%);
   border: 1px solid rgba(63, 245, 165, 0.26);
 }
+
+/* ------------------------------------------------------------ settings */
+/* .swatch (theme/palette/language pickers) is a <button>, so without this it
+   falls into the same gradient-by-default trap as every other bespoke
+   component here - it's in the exclusion list above AND needs its own
+   dark-surface look, same two-part fix as .neon-ledger-row and .neon-chip. */
+.neon-plan-section .swatch {
+  background: var(--neon-surface); border-color: var(--neon-line); color: var(--neon-ink-soft); box-shadow: none;
+}
+.neon-plan-section .swatch[aria-pressed="true"] { border-color: var(--neon-green); background: rgba(63, 245, 165, 0.12); color: var(--neon-green); }
+.neon-plan-section .row { border-color: var(--neon-line); }
+.neon-plan-section .row-icon { background: var(--neon-surface-3); color: var(--neon-ink-2); }
+.neon-plan-section .row-meta { color: var(--neon-ink-soft); }

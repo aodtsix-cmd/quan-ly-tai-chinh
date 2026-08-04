@@ -1136,6 +1136,11 @@ App.I18N = {
     "plan.simulate.scenario.installment": "Trả góp {{n}} kỳ",
     "plan.simulate.scenario.delay": "Hoãn {{n}} kỳ rồi trả hết",
 
+    "settings.page_title": "Cài đặt",
+    "settings.page_subtitle": "Tài khoản, danh mục, luật phân loại, kết nối và giao diện.",
+    "settings.stat_accounts": "tài khoản",
+    "settings.stat_transactions": "giao dịch đã ghi",
+    "settings.stat_rules": "luật phân loại",
     "settings.appearance_title": "Giao diện",
     "settings.appearance_hint": "Sáng hay tối, và bảng màu. Cả hai lưu riêng trên máy này.",
     "settings.language_title": "Ngôn ngữ",
@@ -1745,6 +1750,11 @@ App.I18N = {
     "plan.simulate.scenario.installment": "{{n}}-period installments",
     "plan.simulate.scenario.delay": "Delay {{n}} periods, then pay in full",
 
+    "settings.page_title": "Settings",
+    "settings.page_subtitle": "Accounts, categories, classification rules, connection, and appearance.",
+    "settings.stat_accounts": "accounts",
+    "settings.stat_transactions": "transactions logged",
+    "settings.stat_rules": "classification rules",
     "settings.appearance_title": "Appearance",
     "settings.appearance_hint": "Light or dark, and a color palette. Both are saved on this device only.",
     "settings.language_title": "Language",
