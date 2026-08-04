@@ -449,7 +449,8 @@ App.refreshAddForm = function () {
   App.updateDateDisplay();
 
   App.updateAmountHint();
-  App.setHtml("#add-recent", App.renderTransactionRows(data.transactions.slice(0, 5)));
+  var recentRows = data.transactions.slice(0, 5).map(App.neonRecentRow).join("");
+  App.setHtml("#add-recent", recentRows || App.emptyState(App.t("ledger.no_match")));
 };
 
 // Only the grid and its chip are touched here - never the amount, the note or
@@ -621,11 +622,7 @@ App.analyzeImages = function (files) {
   var failed = [];
 
   function paintProgress(index) {
-    App.setHtml("#import-result",
-      '<p class="notice notice-info">' + App.esc(App.t("import.progress", { current: index + 1, total: list.length })) + "</p>" +
-      (App.importCandidates.length
-        ? '<p class="tiny muted">' + App.esc(App.t("import.found_so_far", { n: App.importCandidates.length })) + "</p>"
-        : ""));
+    App.setHtml("#import-result", App.renderImportProgress(index, list.length, App.importCandidates.length));
   }
 
   function step(index) {

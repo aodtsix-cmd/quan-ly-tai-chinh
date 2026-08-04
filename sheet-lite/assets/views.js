@@ -443,34 +443,36 @@ App.renderHomeCashflow = function (data) {
   "</section>";
 };
 
-// Each transaction is its own floating card here (the handoff's own visual
-// signature for this list), unlike Sổ's shared-card-with-dividers layout -
-// a deliberate, small duplication of App.renderTransactionRows's direction/
-// transfer/icon logic, kept because the two lists are meant to look
-// different on purpose. No edit/delete here: Nhà is a glance, not a place to
-// manage entries - "Xem sổ →" is one tap away for that.
+// A single floating-card row (the handoff's own visual signature for a
+// glance list), shared by Nhà's "Giao dịch gần đây" and Nhập's own
+// "Vừa ghi gần đây" mini-list - both are read-only glances at the same
+// shape of data, so one row renderer serves both rather than duplicating
+// the direction/transfer/icon logic a second time. Neither list offers
+// edit/delete: Sổ ("Xem sổ →"/"Xem tất cả") is one tap away for that.
+App.neonRecentRow = function (tx) {
+  var isTransfer = tx.is_transfer;
+  var color = isTransfer ? "var(--neon-ink-soft)" : (tx.direction === "in" ? "var(--neon-green)" : "var(--neon-red)");
+  var sign = isTransfer ? "" : (tx.direction === "in" ? "+" : "−");
+  var title = tx.description || tx.category_name || (isTransfer ? App.t("ledger.transfer_title") : App.t("common.no_description_row"));
+  var glyph = isTransfer ? "swap" : App.categoryIconName(tx.category_name || title);
+  var metaCategory = isTransfer
+    ? '<span style="color:var(--neon-ink-soft)">' + App.esc(App.t("ledger.transfer_title")) + "</span>"
+    : (tx.category_name ? '<span style="color:var(--neon-orange)">' + App.esc(tx.category_name) + "</span>" : "");
+  var metaRest = [tx.account_name, App.dateOnly(tx.occurred_at).slice(5)].filter(Boolean).join(" · ");
+  return '<div class="neon-recent-row">' +
+    '<span class="neon-recent-icon">' + App.icon(glyph) + "</span>" +
+    '<div style="flex:1;min-width:0">' +
+      '<div class="neon-recent-title">' + App.esc(title) + "</div>" +
+      '<div class="neon-recent-meta">' + metaCategory + (metaCategory ? "<span>·</span>" : "") + '<span class="num">' + App.esc(metaRest) + "</span></div>" +
+    "</div>" +
+    '<span class="neon-recent-amount" style="color:' + color + '">' + sign + App.formatVnd(tx.amount) + "đ</span>" +
+  "</div>";
+};
+
 App.renderHomeRecent = function (data) {
   var recent = (data.transactions || []).slice(0, 6);
   if (recent.length === 0) return "";
-  var rows = recent.map(function (tx) {
-    var isTransfer = tx.is_transfer;
-    var color = isTransfer ? "var(--neon-ink-soft)" : (tx.direction === "in" ? "var(--neon-green)" : "var(--neon-red)");
-    var sign = isTransfer ? "" : (tx.direction === "in" ? "+" : "−");
-    var title = tx.description || tx.category_name || (isTransfer ? App.t("ledger.transfer_title") : App.t("common.no_description_row"));
-    var glyph = isTransfer ? "swap" : App.categoryIconName(tx.category_name || title);
-    var metaCategory = isTransfer
-      ? '<span style="color:var(--neon-ink-soft)">' + App.esc(App.t("ledger.transfer_title")) + "</span>"
-      : (tx.category_name ? '<span style="color:var(--neon-orange)">' + App.esc(tx.category_name) + "</span>" : "");
-    var metaRest = [tx.account_name, App.dateOnly(tx.occurred_at).slice(5)].filter(Boolean).join(" · ");
-    return '<div class="neon-recent-row">' +
-      '<span class="neon-recent-icon">' + App.icon(glyph) + "</span>" +
-      '<div style="flex:1;min-width:0">' +
-        '<div class="neon-recent-title">' + App.esc(title) + "</div>" +
-        '<div class="neon-recent-meta">' + metaCategory + (metaCategory ? "<span>·</span>" : "") + '<span class="num">' + App.esc(metaRest) + "</span></div>" +
-      "</div>" +
-      '<span class="neon-recent-amount" style="color:' + color + '">' + sign + App.formatVnd(tx.amount) + "đ</span>" +
-    "</div>";
-  }).join("");
+  var rows = recent.map(App.neonRecentRow).join("");
 
   return '<section>' +
     '<div class="spread" style="padding:0 0.1rem 0.5rem;align-items:baseline">' +
@@ -897,9 +899,32 @@ App.renderRecurringPlan = function (data) {
     "</form></section>";
 };
 
-// Review-before-save is the whole design. The model produces candidates; this
+// Ported from FinanceImportNeon.dc.html's reading/review panels. Review-
+// before-save is the whole design: the model produces candidates, this
 // screen is where a human confirms them, and only then does anything get
 // written. Never let an image write straight into the ledger.
+//
+// The handoff's per-field confidence percentages and "possible duplicate of
+// an existing ledger row" banner are NOT reproduced - see app.css's own note
+// above the import rules for why (the backend has neither piece of data,
+// and fabricating either would look precise while being invented).
+App.renderImportProgress = function (current, total, foundSoFar) {
+  var stageKey = current === 0 ? "import.stage_upload" : (current < total ? "import.stage_read" : "import.stage_match");
+  return '<div class="neon-import-reading">' +
+    '<div class="neon-import-reading-head">' +
+      '<span class="neon-ai-badge">AI</span>' +
+      '<span class="neon-import-reading-stage">' + App.esc(App.t(stageKey)) + "</span>" +
+      '<span class="neon-import-reading-count">' + App.esc(App.t("import.progress_count", { current: current + 1, total: total })) + "</span>" +
+    "</div>" +
+    '<div style="display:flex;flex-direction:column;gap:0.5rem">' +
+      '<span class="neon-shimmer-bar" style="width:88%"></span>' +
+      '<span class="neon-shimmer-bar" style="width:64%"></span>' +
+      '<span class="neon-shimmer-bar" style="width:41%"></span>' +
+    "</div>" +
+    (foundSoFar ? '<p class="tiny muted" style="margin:0">' + App.esc(App.t("import.found_so_far", { n: foundSoFar })) + "</p>" : "") +
+  "</div>";
+};
+
 App.renderImportCandidates = function (data, candidates) {
   if (candidates.length === 0) {
     return '<p class="notice notice-info">' + App.esc(App.t("import.no_candidates")) + "</p>";
@@ -907,28 +932,35 @@ App.renderImportCandidates = function (data, candidates) {
 
   var rows = candidates.map(function (candidate, index) {
     var kind = candidate.direction === "in" ? "income" : "expense";
-    return '<div class="bar-item" data-candidate="' + index + '">' +
-      '<label class="inline" style="justify-content:space-between">' +
-        '<span class="inline"><input type="checkbox" data-cand-use checked style="width:auto;min-height:0"> ' +
-        '<b class="num ' + (candidate.direction === "in" ? "amount-in" : "amount-out") + '">' +
-        (candidate.direction === "in" ? "+" : "−") + App.formatVnd(candidate.amount) + "</b></span>" +
-        '<span class="segmented" style="grid-auto-columns:auto">' +
+    var color = candidate.direction === "in" ? "var(--neon-green)" : "var(--neon-red)";
+    var sign = candidate.direction === "in" ? "+" : "−";
+    return '<div class="neon-import-card" data-candidate="' + index + '">' +
+      '<div class="neon-import-card-head">' +
+        '<label class="neon-import-use"><input type="checkbox" data-cand-use checked>' +
+          '<span class="num" style="color:' + color + '">' + sign + App.formatVnd(candidate.amount) + "đ</span></label>" +
+        '<span class="segmented" style="grid-auto-columns:auto;flex:none;width:auto">' +
           '<input type="radio" name="dir-' + index + '" value="out" data-cand-dir id="cd-out-' + index + '"' +
           (candidate.direction === "out" ? " checked" : "") + '><label for="cd-out-' + index + '">' + App.esc(App.t("dialog.edit_tx.direction_out")) + "</label>" +
           '<input type="radio" name="dir-' + index + '" value="in" data-cand-dir id="cd-in-' + index + '"' +
           (candidate.direction === "in" ? " checked" : "") + '><label for="cd-in-' + index + '">' + App.esc(App.t("dialog.edit_tx.direction_in")) + "</label>" +
         "</span>" +
-      "</label>" +
-      '<input type="text" inputmode="numeric" data-cand-amount value="' + App.esc(App.formatVnd(candidate.amount)) + '" aria-label="' + App.esc(App.t("import.amount_aria")) + '">' +
-      '<input type="text" data-cand-note value="' + App.esc(candidate.note) + '" placeholder="' + App.esc(App.t("import.note_placeholder")) + '" aria-label="' + App.esc(App.t("import.note_aria")) + '">' +
-      '<select data-cand-account aria-label="' + App.esc(App.t("import.account_aria")) + '">' + App.accountOptions(data.accounts, null, true) + "</select>" +
-      '<select data-cand-category aria-label="' + App.esc(App.t("import.category_aria")) + '">' + App.categoryOptions(data.categories, kind, candidate.category_id) + "</select>" +
+      "</div>" +
+      '<div><span class="neon-import-field-label">' + App.esc(App.t("dialog.edit_tx.amount_label")) + "</span>" +
+        '<input type="text" inputmode="numeric" data-cand-amount value="' + App.esc(App.formatVnd(candidate.amount)) + '" aria-label="' + App.esc(App.t("import.amount_aria")) + '"></div>' +
+      '<div><span class="neon-import-field-label">' + App.esc(App.t("ledger.detail.note")) + "</span>" +
+        '<input type="text" data-cand-note value="' + App.esc(candidate.note) + '" placeholder="' + App.esc(App.t("import.note_placeholder")) + '" aria-label="' + App.esc(App.t("import.note_aria")) + '"></div>' +
+      '<div style="display:flex;gap:0.625rem">' +
+        '<div style="flex:1;min-width:0"><span class="neon-import-field-label">' + App.esc(App.t("dialog.edit_tx.account_label")) + "</span>" +
+          '<select data-cand-account aria-label="' + App.esc(App.t("import.account_aria")) + '" style="width:100%">' + App.accountOptions(data.accounts, null, true) + "</select></div>" +
+        '<div style="flex:1;min-width:0"><span class="neon-import-field-label">' + App.esc(App.t("dialog.edit_tx.category_label")) + "</span>" +
+          '<select data-cand-category aria-label="' + App.esc(App.t("import.category_aria")) + '" style="width:100%">' + App.categoryOptions(data.categories, kind, candidate.category_id) + "</select></div>" +
+      "</div>" +
       '<input type="hidden" data-cand-ref value="' + App.esc(candidate.external_ref) + '">' +
       "</div>";
   }).join("");
 
   return '<p class="small muted">' + App.t("import.summary", { n: candidates.length }) + "</p>" +
-    rows +
+    '<div style="display:flex;flex-direction:column;gap:0.625rem">' + rows + "</div>" +
     '<button type="button" id="save-import">' + App.esc(App.t("import.save_button")) + "</button>" +
     '<div id="import-save-message"></div>';
 };

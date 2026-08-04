@@ -1408,3 +1408,55 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 }
 
 #view-add .card-head h2, #view-add h1 { color: var(--neon-ink); }
+
+/* --------------------------------------------------------- import (Nhập ảnh) */
+/* Ported from FinanceImportNeon.dc.html. Lives inside #view-add's existing
+   "Nhập từ ảnh" card (it was never its own tab/screen), so the card chrome,
+   .field-label and .segmented direction toggle are already neon via the
+   rules above - only the review-list markup itself needed new classes.
+
+   Two things the handoff shows that this app's real data can't back up
+   honestly, and which are deliberately NOT reproduced: a per-field
+   confidence percentage (Code.gs's analyze_image returns amount/direction/
+   note/category_id only, no per-field score) and a "possible duplicate of
+   an existing ledger entry" banner (dedupe here is by external_ref at save
+   time, silent and after the fact - there is no live comparison against the
+   ledger during review to word a banner around). Inventing either would be
+   exactly the kind of fabricated-looking-precise data this project's own
+   "real data only" rule (see CLAUDE.md's v3.9 notes) exists to avoid. */
+#view-add select {
+  height: 2.75rem; border-radius: 0.875rem; border: 1px solid var(--neon-line); background: var(--neon-surface);
+  color: var(--neon-ink); font-size: 0.8125rem; padding: 0 0.75rem;
+}
+#view-add .notice { border-radius: 0.875rem; }
+#view-add .notice-info { background: var(--neon-surface); color: var(--neon-ink-soft); border: 1px solid var(--neon-line); }
+#view-add .notice-ok { background: rgba(63, 245, 165, 0.1); color: var(--neon-green); border: 1px solid rgba(63, 245, 165, 0.3); }
+#view-add .notice-error { background: rgba(255, 107, 122, 0.1); color: var(--neon-red); border: 1px solid rgba(255, 107, 122, 0.3); }
+
+.neon-import-reading {
+  border-radius: 1.25rem; background: var(--neon-surface); border: 1px solid var(--neon-line); padding: 0.9375rem;
+  display: flex; flex-direction: column; gap: 0.8125rem;
+}
+.neon-import-reading-head { display: flex; align-items: center; gap: 0.5625rem; }
+.neon-ai-badge {
+  flex: none; display: inline-flex; align-items: center; height: 1.25rem; padding: 0 0.5rem; border-radius: 999px;
+  background: var(--neon-green); color: var(--neon-bg); font-size: 0.625rem; font-weight: 700; letter-spacing: 0.08em;
+}
+.neon-import-reading-stage { font-size: 0.75rem; font-weight: 600; color: var(--neon-ink-2); }
+.neon-import-reading-count { margin-left: auto; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.6875rem; font-weight: 700; color: var(--neon-green); }
+.neon-shimmer-bar { height: 0.6875rem; border-radius: 0.3125rem; background: var(--neon-surface-3); animation: neon-shimmer 1.4s ease-in-out infinite; }
+@keyframes neon-shimmer { 0% { opacity: 0.35; } 50% { opacity: 0.85; } 100% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .neon-shimmer-bar { animation: none; opacity: 0.6; } }
+
+.neon-import-card {
+  border-radius: 1.125rem; background: var(--neon-surface); border: 1px solid var(--neon-line);
+  padding: 0.9375rem; display: flex; flex-direction: column; gap: 0.625rem;
+}
+/* flex-wrap because the English "Expense"/"Income" pill labels are wider
+   than "Chi"/"Thu" - at 320px the segmented control needs to drop to its
+   own line rather than push 6px past the viewport edge. */
+.neon-import-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.625rem; flex-wrap: wrap; row-gap: 0.5rem; }
+.neon-import-card-head .segmented { flex: 0 0 auto; width: auto; }
+.neon-import-use { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8125rem; font-weight: 700; }
+.neon-import-use input[type="checkbox"] { width: 1.125rem; height: 1.125rem; min-height: 0; accent-color: var(--neon-green); }
+.neon-import-field-label { font-size: 0.656rem; font-weight: 600; letter-spacing: 0.04em; color: var(--neon-ink-dim); margin-bottom: 0.25rem; display: block; }
