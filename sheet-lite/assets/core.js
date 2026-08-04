@@ -203,6 +203,30 @@ App.formatPeriodRange = function (period) {
   return App.formatDayMonth(period.start) + " – " + App.formatDayMonth(period.end);
 };
 
+// Whole calendar days between today and a "YYYY-MM-DD"-ish date string,
+// rounded rather than floored/ceiled so a due time earlier today doesn't
+// read as "-1 ngày" from a few hours of clock drift between browser and
+// server. Used for the recurring-item countdown on the Nhà dashboard.
+App.daysUntil = function (dateStr) {
+  var iso = App.dateOnly(dateStr);
+  var parts = iso.split("-");
+  if (parts.length < 3) return null;
+  var target = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  var todayParts = App.today().split("-");
+  var today = new Date(Number(todayParts[0]), Number(todayParts[1]) - 1, Number(todayParts[2]));
+  return Math.round((target - today) / 86400000);
+};
+
+// "Spotify" -> "S", "Google AI Pro" -> "GA" - a stand-in monogram tile for a
+// recurring item with no real logo. Never guesses a brand mark; see the
+// design handoff's own note that real logos are a placeholder to replace.
+App.initials = function (name) {
+  var words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+};
+
 // ------------------------------------------------------------ amount parsing
 
 // Mirrors Code.gs's parseAmountVnd_, which stays authoritative - this copy
@@ -336,6 +360,7 @@ App.ICONS = {
   gear: '<path d="M4 8h8M16 8h4M4 16h4M12 16h8"/><circle cx="14" cy="8" r="2"/><circle cx="8" cy="16" r="2"/>',
   image: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="8.5" cy="10" r="1.5"/><path d="M4 17l4.5-4.5L12 16l3-3 5 5"/>',
   back: '<path d="M19 12H5"/><path d="M11 6 5 12l6 6"/>',
+  bell: '<path d="M6 10.5a6 6 0 0 1 12 0c0 3.5 1 5 2 6.5H4c1-1.5 2-3 2-6.5Z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   // Leaf-level glyphs. Without these, drilling into a parent shows four tiles
   // wearing the same icon, which is worse than no icon at all - the row stops
   // carrying any information and only the text does any work.
@@ -775,6 +800,38 @@ App.I18N = {
     "home.first_run.cta_add": "Ghi giao dịch đầu tiên",
     "home.first_run.cta_settings": "Sửa số dư",
     "home.first_run.footnote": "Các chỉ số như số kỳ cầm cự hay tỷ lệ tiết kiệm cần ít nhất một kỳ đã khép lại mới tính được — chúng sẽ tự hiện ra, không cần làm gì thêm.",
+
+    "home.greeting_morning": "Chào buổi sáng ☀️",
+    "home.greeting_afternoon": "Chào buổi trưa",
+    "home.greeting_evening": "Chào buổi chiều",
+    "home.greeting_night": "Chào buổi tối 🌙",
+    "home.net_worth_label": "TỔNG TÀI SẢN RÒNG",
+    "home.balance_group.liquid": "TIỀN MẶT & NGÂN HÀNG",
+    "home.balance_group.ewallet": "VÍ ĐIỆN TỬ",
+    "home.balance_group.credit": "THẺ TÍN DỤNG",
+    "home.balance_group.savings": "TIẾT KIỆM",
+    "home.quick.import": "Nhập ảnh",
+    "home.quick.analyze": "Phân tích",
+    "home.subs.title": "Đăng ký định kỳ",
+    "home.subs.summary": "{{n}} khoản · {{amount}} kỳ này",
+    "home.subs.empty": "Chưa có khoản định kỳ nào.",
+    "home.subs.due_today": "Hôm nay",
+    "home.subs.due_in_days": "{{n}} ngày",
+    "home.cashflow.title": "Ngân sách kỳ này",
+    "home.cashflow.budget_label": "Ngân sách {{amount}}",
+    "home.cashflow.no_budget": "Chưa đặt ngân sách cho kỳ này",
+    "home.cashflow.spent_donut_label": "ĐÃ CHI",
+    "home.recent_title": "Giao dịch gần đây",
+    "home.recent_view_all": "Xem sổ →",
+    "home.bell_aria": "Cảnh báo",
+    "add.hero_label_out": "TIỀN RA",
+    "add.hero_label_in": "TIỀN VÀO",
+    "add.hero_label_transfer": "CHUYỂN NỘI BỘ",
+    "add.hero_hint": "Gõ nhanh {{a}} · {{b}} · {{c}}",
+    "add.source_out": "Trả từ",
+    "add.source_in": "Nhận vào",
+    "add.source_transfer": "Từ tài khoản",
+    "add.nudge_text": "Khoản này khá lớn — <b>mô phỏng tác động</b> trước khi lưu?",
 
     "home.ai_daily.eyebrow": "Nhận xét hôm nay",
     "home.ai_daily.loading": "Đang đọc số liệu…",
@@ -1278,6 +1335,38 @@ App.I18N = {
     "home.first_run.cta_add": "Log your first transaction",
     "home.first_run.cta_settings": "Edit balances",
     "home.first_run.footnote": "Metrics like runway or savings rate need at least one completed period before they can be calculated — they'll show up on their own, no extra steps needed.",
+
+    "home.greeting_morning": "Good morning ☀️",
+    "home.greeting_afternoon": "Good afternoon",
+    "home.greeting_evening": "Good evening",
+    "home.greeting_night": "Good evening 🌙",
+    "home.net_worth_label": "NET WORTH",
+    "home.balance_group.liquid": "CASH & BANK",
+    "home.balance_group.ewallet": "E-WALLETS",
+    "home.balance_group.credit": "CREDIT CARDS",
+    "home.balance_group.savings": "SAVINGS",
+    "home.quick.import": "Scan receipt",
+    "home.quick.analyze": "Analyze",
+    "home.subs.title": "Recurring",
+    "home.subs.summary": "{{n}} item(s) · {{amount}} this period",
+    "home.subs.empty": "No recurring items yet.",
+    "home.subs.due_today": "Today",
+    "home.subs.due_in_days": "{{n}} days",
+    "home.cashflow.title": "This period's budget",
+    "home.cashflow.budget_label": "Budget {{amount}}",
+    "home.cashflow.no_budget": "No budget set for this period",
+    "home.cashflow.spent_donut_label": "SPENT",
+    "home.recent_title": "Recent transactions",
+    "home.recent_view_all": "See ledger →",
+    "home.bell_aria": "Alerts",
+    "add.hero_label_out": "EXPENSE",
+    "add.hero_label_in": "INCOME",
+    "add.hero_label_transfer": "INTERNAL TRANSFER",
+    "add.hero_hint": "Quick type {{a}} · {{b}} · {{c}}",
+    "add.source_out": "Pay from",
+    "add.source_in": "Receive into",
+    "add.source_transfer": "From account",
+    "add.nudge_text": "That's a big expense — <b>simulate its impact</b> before saving?",
 
     "home.ai_daily.eyebrow": "Today's take",
     "home.ai_daily.loading": "Reading the numbers…",

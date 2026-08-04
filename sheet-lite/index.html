@@ -71,71 +71,102 @@
 
     <!-- The add form is static markup, not re-rendered: retyping an amount
          because a background refresh wiped the field is exactly the kind of
-         friction this app is supposed to remove. Only its <select> options
-         get refreshed by refreshAddForm(); its own labels only change on a
-         language switch, via applyStaticI18n(). -->
+         friction this app is supposed to remove. Only specific elements are
+         touched by refreshAddForm() (account/destination chips, category
+         grid, the hero's colour/label/hint) - never the amount, note or
+         date. Dark-neon styling per app.css's "#view-add" scope; see
+         CLAUDE.md for why it's confined to this screen and Nhà only. -->
     <section id="view-add" class="view hidden" data-i18n-aria="nav.add" aria-label="Nhập giao dịch">
-      <section class="card">
-        <h1 data-i18n="add.title">Ghi một giao dịch</h1>
-        <form id="tx-form">
-          <!-- Amount first, and the largest thing on the card: it is the one
-               field that is always filled in, and the reason the screen was
-               opened at all. -->
-          <label class="field">
-            <span class="field-label" data-i18n="add.amount_label">Số tiền</span>
-            <input type="text" inputmode="numeric" id="tx-amount" class="amount-input" data-i18n-placeholder="add.amount_placeholder" placeholder="500k, 1tr, 2tr5…" autocomplete="off">
-          </label>
-          <p class="amount-hint" id="tx-amount-hint"></p>
+      <!-- No card wrapper: the handoff's own Add screen has no enclosing
+           border, only 20px page padding and 18px gaps between elements -
+           matched here via app.css's "#view-add { gap: ... }" override. -->
+      <h1 style="padding:0 0.1rem" data-i18n="add.title">Ghi một giao dịch</h1>
+      <form id="tx-form">
+        <!-- Amount hero: colour, label and quick-type hint all follow the
+             transaction type, set by refreshAddForm() via inline custom
+             properties (--accent/--tint/...) rather than a class per type,
+             so adding a type later needs no new CSS rule. -->
+        <div class="neon-hero" id="tx-hero">
+          <span class="neon-hero-label" id="tx-hero-label">TIỀN RA</span>
+          <input type="text" inputmode="numeric" id="tx-amount" placeholder="0đ" autocomplete="off">
+          <div class="neon-hero-echo" id="tx-amount-hint"></div>
+          <p class="neon-hero-hint" id="tx-hero-hint"></p>
+        </div>
 
-          <div class="segmented">
-            <input type="radio" id="dir-out" name="direction" value="out" checked>
-            <label for="dir-out" data-i18n="add.direction_out">Chi tiền</label>
-            <input type="radio" id="dir-in" name="direction" value="in">
-            <label for="dir-in" data-i18n="add.direction_in">Thu tiền</label>
-            <input type="radio" id="dir-transfer" name="direction" value="transfer">
-            <label for="dir-transfer" data-i18n="add.direction_transfer">Chuyển khoản</label>
+        <div class="segmented">
+          <input type="radio" id="dir-out" name="direction" value="out" checked>
+          <label for="dir-out" data-i18n="add.direction_out">Chi tiền</label>
+          <input type="radio" id="dir-in" name="direction" value="in">
+          <label for="dir-in" data-i18n="add.direction_in">Thu tiền</label>
+          <input type="radio" id="dir-transfer" name="direction" value="transfer">
+          <label for="dir-transfer" data-i18n="add.direction_transfer">Chuyển khoản</label>
+        </div>
+
+        <!-- The category value lives in a hidden input; the visible control
+             is an icon grid rendered by refreshAddForm. No name attribute,
+             so it can never shadow a property on the form element. -->
+        <div class="field" id="tx-category-wrap">
+          <div class="icon-grid-head">
+            <span class="field-label" data-i18n="add.category_label">Danh mục</span>
+            <span class="picked-chip" id="tx-category-picked"></span>
           </div>
+          <input type="hidden" id="tx-category" value="">
+          <div class="icon-grid" id="tx-category-grid"></div>
+        </div>
 
-          <label class="field">
-            <!-- Its own text is overwritten reactively by refreshAddForm()
-                 (Tài khoản / Từ tài khoản depending on direction), so it does
-                 NOT carry data-i18n - that would fight with the JS on every
-                 language switch. refreshAddForm() itself calls App.t(). -->
-            <span class="field-label" id="tx-account-label">Tài khoản</span>
-            <select id="tx-account"></select>
-          </label>
+        <!-- Source/destination account: same hidden-input-plus-picker
+             pattern as the category grid above, just a horizontally
+             scrolling chip row instead of a <select> - replacing the
+             account/to-account <select> elements the app used through v3.8.
+             refreshAddForm() rebuilds the chip HTML and keeps the current
+             selection when still valid, exactly like the category grid. -->
+        <div class="field">
+          <span class="field-label" id="tx-account-label">Tài khoản</span>
+          <input type="hidden" id="tx-account" value="">
+          <div class="neon-chip-row" id="tx-account-chips"></div>
+        </div>
 
-          <label class="field hidden" id="tx-to-wrap">
-            <span class="field-label" data-i18n="add.to_account_label">Đến tài khoản</span>
-            <select id="tx-to-account"></select>
-          </label>
+        <div class="field hidden" id="tx-to-wrap">
+          <span class="field-label" data-i18n="add.to_account_label">↳ Đến tài khoản</span>
+          <input type="hidden" id="tx-to-account" value="">
+          <div class="neon-chip-row" id="tx-to-account-chips"></div>
+        </div>
 
-          <!-- The category value lives in a hidden input; the visible control
-               is an icon grid rendered by refreshAddForm. No name attribute,
-               so it can never shadow a property on the form element. -->
-          <div class="field" id="tx-category-wrap">
-            <div class="icon-grid-head">
-              <span class="field-label" data-i18n="add.category_label">Danh mục</span>
-              <span class="picked-chip" id="tx-category-picked"></span>
-            </div>
-            <input type="hidden" id="tx-category" value="">
-            <div class="icon-grid" id="tx-category-grid"></div>
-          </div>
+        <label class="field">
+          <span class="field-label" data-i18n="add.description_label">Mô tả</span>
+          <input type="text" id="tx-description" data-i18n-placeholder="add.description_placeholder" placeholder="VD: Ăn trưa Highlands" autocomplete="off">
+        </label>
 
-          <label class="field">
-            <span class="field-label" data-i18n="add.description_label">Mô tả</span>
-            <input type="text" id="tx-description" data-i18n-placeholder="add.description_placeholder" placeholder="VD: Ăn trưa Highlands" autocomplete="off">
-          </label>
-
-          <label class="field">
-            <span class="field-label" data-i18n="add.date_label">Ngày</span>
+        <div class="neon-date-row">
+          <!-- The visible date box is a <label>, not a styled <div>: tapping
+               it focuses the real (visually hidden but not display:none,
+               so showPicker() still works) date input, which is what keeps
+               backdating - editing occurred_at to a past date - reachable
+               without a second visible control the design doesn't show. -->
+          <label class="neon-date-display" for="tx-date">
+            <span data-i18n="add.date_label">Ngày</span>
+            <span id="tx-date-display" class="num"></span>
             <input type="date" id="tx-date">
           </label>
+          <button type="button" class="neon-today-btn" id="tx-today-btn" data-i18n="common.today">Hôm nay</button>
+        </div>
 
-          <button type="submit" id="tx-save" data-i18n="add.save">Lưu giao dịch</button>
-          <div id="add-message"></div>
-        </form>
-      </section>
+        <!-- A soft suggestion, not a blocking confirm() - per the app's own
+             design brief §4.3. Recomputed on every amount keystroke and
+             direction change; tapping it navigates to Kế hoạch → Mô phỏng
+             without touching this form, and NOT saving continues to work
+             normally whether or not this card is showing. -->
+        <a href="#" class="neon-nudge hidden" id="tx-nudge">
+          <span class="neon-nudge-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="M7.5 15 11 10.5l3 3L20 7"/></svg>
+          </span>
+          <span class="neon-nudge-text" id="tx-nudge-text"></span>
+          <span class="neon-nudge-arrow">→</span>
+        </a>
+
+        <button type="submit" id="tx-save" data-i18n="add.save">Lưu giao dịch</button>
+        <div id="add-message"></div>
+      </form>
 
       <section class="card">
         <div class="card-head">

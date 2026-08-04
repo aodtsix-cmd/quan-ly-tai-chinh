@@ -1008,3 +1008,331 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
   .icon-tile .glyph { width: 1.75rem; height: 1.75rem; }
   .icon-tile .tile-name { font-size: 0.625rem; }
 }
+
+/* =========================================================================
+   Dark Neon — Nhà & Nhập (Claude Design handoff, 2026-08-04)
+   -------------------------------------------------------------------------
+   A genuinely separate visual language, ported from the handoff's own
+   FinanceHomeNeon/FinanceAddNeon .dc.html + design tokens (colours copied
+   verbatim from its README). Scoped strictly to #view-home and #view-add via
+   ancestor selectors reusing the app's EXISTING classes (.card, .field,
+   .segmented, .icon-tile, button...) rather than a parallel class set - this
+   is what lets the override apply only inside these two views without a
+   single duplicated component, and without touching Sổ/Kế hoạch/Cài đặt or
+   any dialog, which all keep the v3.7 indigo system untouched.
+
+   Deliberately always-dark, ignoring the light/dark toggle - the handoff has
+   no light variant (a flat #0a0b0e background is one of its own invariants,
+   "never an aggressive full-screen gradient"), so honouring the site's theme
+   switch here would mean inventing a light palette the design never
+   specified. The shared chrome (topbar, bottom tab bar) stays on the normal
+   system since it's persistent across every tab, not owned by these two
+   views alone.
+
+   No webfonts: the handoff calls for Space Grotesk + JetBrains Mono, but
+   this project's standing rule is full Vietnamese diacritic coverage with
+   zero webfont downloads (see CLAUDE.md). Its own README explicitly allows
+   the swap ("if you keep that constraint... the layout is built to survive
+   it"), so --font-ui/--font-num are used exactly as everywhere else in the
+   app. */
+
+#view-home, #view-add {
+  --neon-bg: #0a0b0e;
+  --neon-surface: #14161c;
+  --neon-surface-2: #1a1d25;
+  --neon-surface-3: #1f2330;
+  --neon-line: #262a34;
+  --neon-line-soft: #1f2330;
+  --neon-ink: #f4f6fa;
+  --neon-ink-2: #c9d0dc;
+  --neon-ink-soft: #8b93a4;
+  --neon-ink-dim: #6c7484;
+  --neon-ink-faint: #4d5462;
+  --neon-green: #3ff5a5;
+  --neon-purple: #b18cff;
+  --neon-orange: #ff9142;
+  --neon-red: #ff6b7a;
+  --neon-gradient: linear-gradient(140deg, #3ff5a5 0%, #b18cff 55%, #ff9142 100%);
+  color-scheme: dark;
+}
+
+/* Bleed to the shared shell's own edges rather than sitting as a card on the
+   page background - main's centring/padding stays (so width still matches
+   every other tab), but the content itself reads as its own dark surface. */
+#view-home, #view-add { background: var(--neon-bg); color: var(--neon-ink); border-radius: var(--radius); margin: calc(var(--space-4) * -1); padding: var(--space-4); gap: var(--space-4) !important; }
+
+@media (max-width: 22.5rem) {
+  #view-home, #view-add { margin: calc(var(--space-3) * -1); padding: var(--space-3); }
+}
+
+#view-home .card, #view-add .card {
+  background: var(--neon-surface);
+  border-color: var(--neon-line);
+  color: var(--neon-ink);
+  box-shadow: 0 20px 40px -26px rgba(0, 0, 0, 0.9);
+}
+
+#view-home .muted, #view-add .muted { color: var(--neon-ink-soft); }
+#view-home .faint, #view-add .faint { color: var(--neon-ink-faint); }
+#view-home .eyebrow, #view-add .eyebrow { color: var(--neon-ink-soft); }
+#view-home a.link, #view-add a.link, #view-home .link, #view-add .link { color: var(--neon-purple); }
+#view-home .amount-out, #view-add .amount-out { color: var(--neon-red); }
+#view-home .amount-in, #view-add .amount-in { color: var(--neon-green); }
+#view-home .amount-transfer, #view-add .amount-transfer { color: var(--neon-ink-soft); }
+
+/* The daily AI-summary panel (#ai-daily) is the app's shared .ai-panel
+   component, unstyled here until caught live: on Nhà it kept the indigo
+   system's light lavender card, floating oddly on the dark background. */
+#view-home .ai-panel {
+  background: var(--neon-surface-2); border-color: rgba(177, 140, 255, 0.3); color: var(--neon-ink);
+}
+#view-home .ai-panel .eyebrow { color: var(--neon-purple); }
+
+/* Generic buttons (first-run card's CTAs, anything not one of the bespoke
+   neon components below) get the same opt-out-per-variant treatment as the
+   rest of the app, just re-skinned - so nothing dropped onto these two dark
+   views keeps the old indigo look by accident. Every bespoke component
+   further down (.neon-bell, .neon-eye, .neon-chip, .neon-today-btn, the two
+   flanking quickbar buttons) has to be named in this exclusion list too, or
+   an ID-scoped rule like this one beats a same-or-fewer-class override no
+   matter how it's written - found live: the quickbar's "Nhập ảnh"/"Phân
+   tích" buttons and the alert bell rendered gradient-filled before this
+   list named them explicitly. */
+#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile),
+#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile) {
+  background: var(--neon-gradient); color: var(--neon-bg); box-shadow: 0 16px 34px -14px rgba(177, 140, 255, 0.8);
+}
+#view-home button.secondary, #view-add button.secondary {
+  background: var(--neon-surface); border-color: var(--neon-line); color: var(--neon-ink); box-shadow: none;
+}
+#view-home .icon-btn, #view-add .icon-btn { background: var(--neon-surface); border-color: var(--neon-line); color: var(--neon-ink-soft); }
+
+/* Alerts keep their own semantics but sit on the dark surface instead of the
+   light tint cards - same information, recoloured to the neon system rather
+   than looking like a mistake dropped onto a dark screen. */
+#view-home .alert-danger { background: rgba(255, 107, 122, 0.12); color: var(--neon-red); border-color: rgba(255, 107, 122, 0.35); }
+#view-home .alert-warning { background: rgba(255, 145, 66, 0.12); color: var(--neon-orange); border-color: rgba(255, 145, 66, 0.35); }
+
+/* ------------------------------------------------------------- home: header */
+
+.neon-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.neon-avatar {
+  flex: none; width: 2.5rem; height: 2.5rem; border-radius: var(--radius-pill);
+  background: var(--neon-gradient); color: var(--neon-bg);
+  display: grid; place-items: center; font-weight: 700; font-size: 0.95rem;
+}
+.neon-greeting { font-size: 0.9375rem; font-weight: 700; letter-spacing: -0.01em; }
+.neon-bell {
+  position: relative; flex: none; width: 2.5rem; height: 2.5rem; border-radius: 0.875rem;
+  background: var(--neon-surface); border: 1px solid var(--neon-line); color: var(--neon-ink-soft);
+  display: grid; place-items: center; cursor: pointer; padding: 0; box-shadow: none;
+}
+.neon-bell svg { width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.neon-bell .dot {
+  position: absolute; top: 0.5rem; right: 0.55rem; width: 0.44rem; height: 0.44rem;
+  border-radius: 999px; background: var(--neon-orange); box-shadow: 0 0 8px var(--neon-orange);
+}
+
+/* --------------------------------------------------------- home: net worth */
+
+.neon-networth-label { display: flex; align-items: center; gap: 0.55rem; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; color: var(--neon-ink-soft); }
+.neon-eye {
+  width: 1.5rem; height: 1.5rem; padding: 0; border-radius: 999px; border: 1px solid var(--neon-line);
+  background: var(--neon-surface); color: var(--neon-ink-soft); font-size: 0.7rem; box-shadow: none;
+  display: grid; place-items: center; cursor: pointer; min-height: 0;
+}
+.neon-networth-row { margin-top: 0.45rem; display: flex; align-items: flex-end; gap: 0.75rem; flex-wrap: wrap; }
+.neon-networth-amount {
+  font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: clamp(1.7rem, 8vw, 2.375rem);
+  line-height: 1; font-weight: 700; letter-spacing: -0.035em; color: var(--neon-ink);
+}
+.neon-delta {
+  display: inline-flex; align-items: center; gap: 0.3rem; height: 1.625rem; padding: 0 0.65rem;
+  border-radius: 999px; background: rgba(63, 245, 165, 0.12); border: 1px solid rgba(63, 245, 165, 0.35);
+  color: var(--neon-green); font-family: var(--font-num); font-size: 0.75rem; font-weight: 700; margin-bottom: 0.15rem;
+}
+
+/* -------------------------------------------------------- home: carousel */
+
+.neon-carousel { display: flex; gap: var(--space-3); overflow-x: auto; padding: 0.15rem 0 0.25rem; scrollbar-width: none; scroll-snap-type: x mandatory; }
+.neon-carousel::-webkit-scrollbar { display: none; }
+.neon-carousel-card {
+  scroll-snap-align: start; flex: 0 0 14.5rem; border-radius: 1.25rem; padding: 1rem;
+  background: linear-gradient(160deg, var(--tint) 0%, var(--neon-surface) 70%);
+  border: 1px solid var(--tint-border); box-shadow: 0 18px 36px -22px var(--tint-shadow);
+}
+.neon-carousel-head { display: flex; align-items: center; justify-content: space-between; }
+.neon-carousel-label { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; color: var(--accent); }
+.neon-carousel-dot { width: 0.44rem; height: 0.44rem; border-radius: 999px; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.neon-carousel-total { margin-top: 0.75rem; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 1.375rem; font-weight: 700; letter-spacing: -0.02em; }
+.neon-carousel-rows { margin-top: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.neon-carousel-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.neon-carousel-row-name { display: flex; align-items: center; gap: 0.5rem; min-width: 0; font-size: 0.78rem; font-weight: 500; color: var(--neon-ink-2); }
+.neon-mono-tile {
+  flex: none; width: 1.5rem; height: 1.5rem; border-radius: 0.5rem; background: var(--tint);
+  color: var(--accent); display: grid; place-items: center; font-size: 0.6rem; font-weight: 700;
+}
+.neon-carousel-row-amount { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.78rem; font-weight: 500; color: var(--neon-ink-soft); }
+
+/* ---------------------------------------------------- home: quick actions */
+
+.neon-quickbar {
+  border-radius: 1.375rem; background: var(--neon-surface); border: 1px solid var(--neon-line);
+  padding: 0.75rem; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 0.625rem;
+  box-shadow: 0 20px 40px -26px rgba(0, 0, 0, 0.9);
+}
+.neon-quickbar button {
+  border: 0; background: transparent; box-shadow: none; padding: 0.5rem 0; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 0.4rem; min-height: 2.75rem; min-width: 0;
+  color: var(--neon-ink-2); font-size: 0.72rem; font-weight: 600;
+}
+.neon-quickbar button svg { width: 1.35rem; height: 1.35rem; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.neon-quickbar .fab {
+  width: 4rem; height: 4rem; border-radius: 999px; background: var(--neon-gradient); color: var(--neon-bg);
+  font-size: 1.9rem; font-weight: 500; display: grid; place-items: center;
+  box-shadow: 0 0 0 5px var(--neon-bg), 0 14px 30px -8px rgba(177, 140, 255, 0.75);
+}
+
+/* ------------------------------------------------------- home: subscriptions */
+
+.neon-subs-strip { display: flex; gap: 0.625rem; overflow-x: auto; padding: 0.15rem 0 0.25rem; scrollbar-width: none; }
+.neon-subs-strip::-webkit-scrollbar { display: none; }
+.neon-sub-card { flex: 0 0 8.625rem; border-radius: 1.125rem; background: var(--neon-surface); border: 1px solid var(--neon-line); padding: 0.8rem; }
+.neon-sub-due {
+  display: inline-flex; align-items: center; height: 1.25rem; padding: 0 0.45rem; border-radius: 999px;
+  font-family: var(--font-num); font-size: 0.66rem; font-weight: 700;
+}
+.neon-sub-name { margin-top: 0.7rem; font-size: 0.8125rem; font-weight: 600; }
+.neon-sub-amount { margin-top: 0.2rem; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.875rem; font-weight: 700; }
+.neon-sub-bar { margin-top: 0.55rem; height: 0.25rem; border-radius: 999px; background: var(--neon-surface-3); overflow: hidden; }
+.neon-sub-bar > div { height: 100%; border-radius: 999px; }
+
+/* --------------------------------------------------------- home: cash flow */
+
+.neon-cashflow-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.875rem; }
+.neon-cashflow-budget { margin-top: 0.25rem; font-size: 0.72rem; color: var(--neon-ink-soft); font-weight: 500; }
+.neon-cashflow-spent { margin-top: 0.75rem; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 1.25rem; font-weight: 700; }
+.neon-status-pill {
+  margin-top: 0.6rem; display: inline-flex; align-items: center; gap: 0.375rem; height: 1.625rem;
+  padding: 0 0.7rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
+}
+.neon-status-pill .dot { width: 0.375rem; height: 0.375rem; border-radius: 999px; background: currentColor; }
+.neon-donut-wrap { flex: none; position: relative; width: 6rem; height: 6rem; }
+.neon-donut-wrap svg { display: block; transform: rotate(-90deg); }
+.neon-donut-hole { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.06rem; }
+.neon-donut-pct { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 1.3125rem; font-weight: 700; }
+.neon-donut-label { font-size: 0.59rem; font-weight: 600; color: var(--neon-ink-soft); letter-spacing: 0.04em; }
+.neon-week { margin-top: 1rem; padding-top: 0.875rem; border-top: 1px solid var(--neon-line); display: flex; align-items: flex-end; justify-content: space-between; gap: 0.375rem; height: 3.5rem; }
+.neon-week-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.375rem; }
+.neon-week-bar { width: 100%; max-width: 1.375rem; border-radius: 0.3rem; }
+.neon-week-day { font-family: var(--font-num); font-size: 0.59rem; font-weight: 600; color: var(--neon-ink-soft); }
+
+/* ------------------------------------------------------------ home: recent */
+
+.neon-recent-row {
+  border-radius: 1rem; background: var(--neon-surface); border: 1px solid var(--neon-line);
+  padding: 0.75rem 0.875rem; display: flex; align-items: center; gap: 0.75rem;
+}
+.neon-recent-icon {
+  flex: none; width: 2.375rem; height: 2.375rem; border-radius: 0.75rem; background: var(--neon-surface-3);
+  color: var(--neon-ink-2); display: grid; place-items: center;
+}
+.neon-recent-icon svg { width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.neon-recent-title { font-size: 0.84rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.neon-recent-meta { margin-top: 0.15rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.6875rem; color: var(--neon-ink-soft); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.neon-recent-amount { flex: none; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.9rem; font-weight: 700; }
+
+/* ============================================================ add screen */
+
+#view-add .field-label { color: var(--neon-ink-soft); }
+
+.neon-hero {
+  border-radius: 1.5rem; padding: 1.25rem 1.125rem; display: flex; flex-direction: column; align-items: center;
+  background: linear-gradient(160deg, var(--tint) 0%, var(--neon-surface) 72%); border: 1px solid var(--tint-border);
+}
+.neon-hero-label { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; color: var(--accent); }
+.neon-hero input {
+  margin-top: 0.5rem; width: 100%; border: 0; background: transparent; text-align: center;
+  font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: clamp(1.9rem, 11vw, 2.875rem);
+  font-weight: 700; letter-spacing: -0.04em; outline: none; padding: 0; min-height: 0; color: var(--accent);
+}
+.neon-hero-echo { margin-top: 0.375rem; min-height: 1.2rem; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.875rem; font-weight: 700; color: var(--neon-ink); }
+.neon-hero-hint { margin-top: 0.375rem; font-size: 0.72rem; color: var(--neon-ink-soft); font-weight: 500; }
+.neon-hero-hint b { font-family: var(--font-num); font-weight: 600; color: var(--neon-ink-2); }
+
+/* Type pills reuse .segmented's grid but every visual is redrawn. */
+#view-add .segmented { gap: 0.5rem; }
+#view-add .segmented label {
+  height: 3.25rem; border-radius: 999px; background: var(--neon-surface); border: 1px solid var(--neon-line);
+  color: var(--neon-ink-soft); font-size: 0.906rem; font-weight: 700;
+}
+#view-add .segmented input[value="out"]:checked + label { background: rgba(255, 107, 122, 0.14); border-color: var(--neon-red); color: var(--neon-red); box-shadow: 0 10px 26px -14px rgba(255, 107, 122, 0.9); }
+#view-add .segmented input[value="in"]:checked + label { background: rgba(63, 245, 165, 0.14); border-color: var(--neon-green); color: var(--neon-green); box-shadow: 0 10px 26px -14px rgba(63, 245, 165, 0.9); }
+#view-add .segmented input[value="transfer"]:checked + label { background: rgba(177, 140, 255, 0.14); border-color: var(--neon-purple); color: var(--neon-purple); box-shadow: 0 10px 26px -14px rgba(177, 140, 255, 0.9); }
+
+/* Category grid reuses .icon-tile, recoloured; selected tile takes the
+   current transaction type's accent (set via --accent/--tint on the grid). */
+#view-add .icon-grid-head .field-label { color: var(--neon-ink); font-weight: 700; font-size: 0.844rem; text-transform: none; letter-spacing: 0; }
+#view-add .icon-tile { background: var(--neon-surface); border-color: var(--neon-line); color: var(--neon-ink-soft); }
+#view-add .icon-tile .glyph { background: var(--neon-surface-3); color: var(--neon-ink-2); }
+#view-add .icon-tile[aria-pressed="true"] { border-color: var(--accent); background: var(--tint); box-shadow: 0 10px 24px -14px var(--tint-shadow); }
+#view-add .icon-tile[aria-pressed="true"] .glyph { background: var(--tint); color: var(--accent); }
+#view-add .icon-tile[aria-pressed="true"] .tile-name { color: var(--neon-ink); }
+#view-add .picked-chip { color: var(--accent); }
+
+/* Account / destination chip rows - horizontally scrolling pills, replacing
+   the old <select>. Selected chip takes the transaction type's accent (source
+   row) or is always purple (destination row, transfer only). */
+.neon-chip-row { display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.25rem; scrollbar-width: none; }
+.neon-chip-row::-webkit-scrollbar { display: none; }
+.neon-chip {
+  flex: none; height: 2.75rem; padding: 0 1rem; border-radius: 999px; cursor: pointer;
+  font-size: 0.78rem; font-weight: 700; background: var(--neon-surface); border: 1px solid var(--neon-line);
+  color: var(--neon-ink-soft); box-shadow: none; min-height: 0;
+}
+.neon-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--tint); color: var(--accent); }
+.neon-chip.is-dest[aria-pressed="true"] { border-color: var(--neon-purple); background: rgba(177, 140, 255, 0.12); color: var(--neon-purple); }
+
+#view-add input[type="text"], #view-add input[type="date"] {
+  height: 3.25rem; border-radius: 1rem; border: 1px solid var(--neon-line); background: var(--neon-surface);
+  color: var(--neon-ink); min-height: 0;
+}
+#view-add input[type="text"]::placeholder { color: var(--neon-ink-dim); }
+
+.neon-date-row { display: flex; align-items: center; gap: 0.5rem; }
+.neon-date-display {
+  position: relative; flex: 1; height: 3.25rem; border-radius: 1rem; border: 1px solid var(--neon-line); background: var(--neon-surface);
+  padding: 0 1rem; display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+}
+.neon-date-display span:first-child { font-size: 0.75rem; font-weight: 600; color: var(--neon-ink-soft); }
+.neon-date-display span:last-child { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.844rem; font-weight: 700; }
+/* The real <input type="date"> sits invisibly over the whole label: on
+   mobile, tapping it opens the native picker directly (no showPicker() call
+   needed), and it's still a real, focusable, backdate-capable field - only
+   its own default chrome is hidden, not its function. */
+.neon-date-display input[type="date"] {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border: 0; padding: 0;
+  opacity: 0; cursor: pointer; min-height: 0;
+}
+#view-add .neon-today-btn {
+  height: 3.25rem; padding: 0 1rem; border-radius: 1rem; border: 1px solid rgba(63, 245, 165, 0.4);
+  background: rgba(63, 245, 165, 0.1); color: var(--neon-green); font-size: 0.78rem; font-weight: 700;
+  box-shadow: none; min-height: 0;
+}
+
+.neon-nudge {
+  border-radius: 1.125rem; border: 1px solid rgba(255, 145, 66, 0.4); background: rgba(255, 145, 66, 0.08);
+  padding: 0.875rem 0.94rem; display: flex; align-items: center; gap: 0.75rem; color: var(--neon-ink); cursor: pointer;
+}
+.neon-nudge-icon { flex: none; width: 2.125rem; height: 2.125rem; border-radius: 0.7rem; background: rgba(255, 145, 66, 0.16); display: grid; place-items: center; }
+.neon-nudge-icon svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: var(--neon-orange); stroke-width: 1.8; }
+.neon-nudge-text { flex: 1; font-size: 0.78rem; line-height: 1.4; color: var(--neon-ink-2); }
+.neon-nudge-text b { font-weight: 700; color: var(--neon-ink); }
+.neon-nudge-arrow { font-weight: 700; color: var(--neon-orange); }
+
+#view-add #tx-save {
+  margin-top: 0.125rem; height: 3.625rem; border-radius: 1.125rem; background: var(--neon-gradient);
+  color: var(--neon-bg); font-size: 1rem; box-shadow: 0 16px 34px -14px rgba(177, 140, 255, 0.8);
+}
+
+#view-add .card-head h2, #view-add h1 { color: var(--neon-ink); }

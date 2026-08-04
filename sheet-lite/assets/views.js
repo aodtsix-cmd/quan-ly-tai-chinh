@@ -19,23 +19,9 @@ var App = window.App;
 
 // ------------------------------------------------------------ small pieces
 
-App.healthChip = function (level) {
-  if (!level) return '<span class="chip chip-neutral"><span class="chip-dot"></span>' + App.esc(App.t("health.chip.no_data")) + "</span>";
-  return '<span class="chip chip-' + level + '"><span class="chip-dot"></span>' + App.esc(App.label("health", level)) + "</span>";
-};
-
 App.track = function (pct, modifier) {
   var width = Math.max(0, Math.min(Number(pct) || 0, 100));
   return '<div class="track"><div class="track-fill ' + (modifier || "") + '" style="width:' + width + '%"></div></div>';
-};
-
-App.metricTile = function (label, value, note, iconName) {
-  return '<div class="metric">' +
-    (iconName ? '<span class="metric-icon">' + App.icon(iconName) + "</span>" : "") +
-    '<span class="metric-label">' + App.esc(label) + "</span>" +
-    '<span class="metric-value">' + value + "</span>" +
-    (note ? '<span class="metric-note">' + App.esc(note) + "</span>" : "") +
-    "</div>";
 };
 
 App.emptyState = function (text) {
@@ -139,6 +125,21 @@ App.accountOptions = function (accounts, selectedId, withBalance) {
   }).join("");
 };
 
+// Horizontally scrolling pill row - the Nhập screen's neon redesign replaces
+// its two account <select>s with this, name-only (no balance: the carousel
+// on Nhà and Cài đặt already show balances, and a pill row reads better
+// short). `pickAttr` lets one function serve both the source row
+// (data-pick-account) and the destination row (data-pick-to-account, always
+// tinted purple regardless of transaction type) without duplicating markup.
+App.accountChips = function (accounts, selectedId, pickAttr, isDest) {
+  return accounts.map(function (account) {
+    var selected = String(selectedId || "") === String(account.id);
+    return '<button type="button" class="neon-chip' + (isDest ? " is-dest" : "") + '"' +
+      " " + pickAttr + '="' + App.esc(account.id) + '" aria-pressed="' + selected + '">' +
+      App.esc(account.name) + "</button>";
+  }).join("");
+};
+
 // ------------------------------------------------------------------ charts
 
 // Inline SVG rather than a charting library: two small shapes are all this
@@ -207,7 +208,34 @@ App.lineChart = function (labels, series) {
     ticks + "</svg>";
 };
 
+// Ring gauge for "% of this period's budget spent" - same hand-rolled-SVG
+// rule as every other chart here (App.sparkline/App.lineChart): no CDN.
+App.donut = function (pct, color) {
+  var clamped = Math.max(0, Math.min(100, Number(pct) || 0));
+  var r = 40, c = 2 * Math.PI * r;
+  var dash = (c * clamped / 100).toFixed(1) + " " + c.toFixed(1);
+  return '<svg width="96" height="96" viewBox="0 0 96 96" style="transform:rotate(-90deg)">' +
+    '<circle cx="48" cy="48" r="' + r + '" fill="none" stroke="var(--neon-surface-3)" stroke-width="11"/>' +
+    '<circle cx="48" cy="48" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="11" ' +
+    'stroke-linecap="round" stroke-dasharray="' + dash + '"/></svg>';
+};
+
 // ================================================================ dashboard
+// Dark Neon redesign of Nhà, ported from a Claude Design handoff
+// (design_handoff_finance_dark_neon, 2026-08-04). Scoped to this screen only
+// via app.css's "#view-home" ancestor overrides - Sổ/Kế hoạch/Cài đặt keep
+// the v3.7 indigo system untouched.
+//
+// The handoff's own Home screen doesn't include Goals/Events/50-30-20/
+// savings-trend - it's a different, tighter curation (net worth, balance
+// groups, recurring, this-period budget, recent activity). Recreating it
+// faithfully means those sections are no longer ON THIS SCREEN; nothing is
+// deleted, they're all still one tap away on Kế hoạch. Flagged here because
+// it's a real visibility tradeoff, not something to bury in a diff.
+//
+// Real data only: the handoff's own mock content (Timo/VCB/SSI balances,
+// Spotify/YouTube subscriptions, "tháng 8") is illustrative, not something
+// to ship literally - see each render function below for what it maps to.
 
 App.renderAlerts = function (alerts) {
   if (!alerts || alerts.length === 0) return "";
@@ -219,298 +247,238 @@ App.renderAlerts = function (alerts) {
   }).join("");
 };
 
-// The signature element. Two tracks on one scale: how much of the period has
-// gone, and how much of the money has gone. The gap between them is the
-// reading - you don't have to compare two numbers in your head.
-App.renderRibbon = function (data) {
-  var period = data.period;
-  var timePct = period.days_total > 0 ? (period.days_elapsed / period.days_total) * 100 : 0;
-
-  var moneyPct = null;
-  var moneyLabel = "";
-  if (data.metrics.burn_rate.has_data) {
-    moneyPct = data.metrics.burn_rate.pct_spent;
-    moneyLabel = App.t("home.ribbon.budget_word");
-  } else {
-    // No budget set yet: fall back to this period's spend against the recent
-    // average period spend, so the ribbon still says something true.
-    var periods = data.metrics.savings_trend.periods || [];
-    if (periods.length > 0) {
-      var avg = periods.reduce(function (sum, p) { return sum + p.expense; }, 0) / periods.length;
-      if (avg > 0) {
-        moneyPct = (data.metrics.current_savings_rate.expense / avg) * 100;
-        moneyLabel = App.t("home.ribbon.avg_period_word");
-      }
-    }
-  }
-
-  var rows =
-    '<div class="ribbon-row">' +
-      '<span class="ribbon-label">' + App.esc(App.t("home.ribbon.time_label")) + "</span>" +
-      App.track(timePct, "is-time") +
-      '<span class="ribbon-value">' + Math.round(timePct) + "%</span>" +
-    "</div>";
-
-  var note;
-  if (moneyPct === null) {
-    note = App.t("home.ribbon.no_budget_note");
-  } else {
-    var modifier = moneyPct > 100 ? "is-over" : (moneyPct > timePct + 10 ? "is-warn" : (moneyPct < timePct - 10 ? "is-good" : ""));
-    rows +=
-      '<div class="ribbon-row">' +
-        '<span class="ribbon-label">' + App.esc(App.t("home.ribbon.money_label")) + "</span>" +
-        App.track(moneyPct, modifier) +
-        '<span class="ribbon-value">' + Math.round(moneyPct) + "%</span>" +
-      "</div>";
-    // Kept strictly factual. The judgement ("đang tiêu nhanh hơn nhịp") is
-    // the health score's job, right above - saying it in both places reads
-    // as the app repeating itself.
-    note = App.t("home.ribbon.note", {
-      timePct: Math.round(timePct),
-      moneyPct: Math.round(moneyPct),
-      label: moneyLabel,
-    });
-  }
-
-  return '<div class="ribbon">' + rows + '<p class="ribbon-note">' + App.esc(note) + "</p></div>";
+App.homeGreeting = function () {
+  var h = new Date().getHours();
+  if (h < 11) return App.t("home.greeting_morning");
+  if (h < 14) return App.t("home.greeting_afternoon");
+  if (h < 18) return App.t("home.greeting_evening");
+  return App.t("home.greeting_night");
 };
 
-App.renderHero = function (data) {
-  var health = data.health;
-  var blurb = health.has_data
-    ? App.label("health_blurb", health.level)
-    : App.t("home.hero.blurb_no_data");
+App.renderHomeHeader = function (data) {
+  var hasAlerts = (data.alerts || []).length > 0;
+  return '<div class="neon-header">' +
+    '<div class="inline" style="gap:0.7rem">' +
+      '<span class="neon-avatar">đ</span>' +
+      '<span class="neon-greeting">' + App.esc(App.homeGreeting()) + "</span>" +
+    "</div>" +
+    '<button type="button" class="neon-bell" id="home-bell" aria-label="' + App.esc(App.t("home.bell_aria")) + '">' +
+      App.icon("bell") +
+      (hasAlerts ? '<span class="dot"></span>' : "") +
+    "</button>" +
+  "</div>";
+};
 
-  var reasons = (health.downgraded_reasons || []).length
-    ? '<p class="small"><b>' + App.esc(App.t("home.hero.downgraded_label")) + '</b> <span class="muted">' +
-      App.esc(health.downgraded_reasons.join(" ")) + "</span></p>"
-    : "";
+// Net worth stays exactly what it already meant elsewhere in the app
+// (data.money.net_worth, every active account + investment_assets) - this
+// screen just gives it top billing and a hide toggle, masking is a pure
+// display concern kept in localStorage, independent of everything else.
+App.NET_WORTH_HIDDEN_KEY = "sheet_lite_net_worth_hidden";
+App.netWorthHidden = function () { return localStorage.getItem(App.NET_WORTH_HIDDEN_KEY) === "1"; };
 
-  return '<section class="card hero">' +
-    '<div class="hero-top">' +
-      "<div>" +
-        '<span class="eyebrow">' + App.esc(App.t("home.hero.eyebrow")) + "</span>" +
-        '<p class="hero-balance">' + App.formatVnd(data.money.liquid_balance) + '<span class="unit">đ</span></p>' +
+App.renderHomeNetWorth = function (data) {
+  var hidden = App.netWorthHidden();
+  var amount = hidden ? "••••••••••" : App.formatVnd(data.money.net_worth) + "đ";
+  return '<div>' +
+    '<div class="neon-networth-label">' + App.esc(App.t("home.net_worth_label")) +
+      '<button type="button" class="neon-eye" id="home-networth-eye">' + (hidden ? "○" : "◉") + "</button>" +
+    "</div>" +
+    '<div class="neon-networth-row">' +
+      '<span class="neon-networth-amount">' + App.esc(amount) + "</span>" +
+    "</div>" +
+  "</div>";
+};
+
+// Grouped by real account type - the handoff's three demo cards (bank
+// balances / e-wallets / a stock portfolio) don't map onto this schema
+// (there is no investment tracking yet, see CLAUDE.md's Stage 7 note), so
+// groups are built from whatever account TYPES the user actually has,
+// dropping a card entirely when nothing of that type exists rather than
+// showing an empty stock portfolio nobody asked for.
+App.HOME_BALANCE_GROUPS = [
+  { types: ["bank", "cash"], labelKey: "home.balance_group.liquid", accent: "var(--neon-green)", tint: "rgba(63,245,165,0.14)", tintBorder: "rgba(63,245,165,0.28)", tintShadow: "rgba(63,245,165,0.45)", bgTint: "#151d1a" },
+  { types: ["ewallet"], labelKey: "home.balance_group.ewallet", accent: "var(--neon-purple)", tint: "rgba(177,140,255,0.14)", tintBorder: "rgba(177,140,255,0.28)", tintShadow: "rgba(177,140,255,0.45)", bgTint: "#1d1a22" },
+  { types: ["savings"], labelKey: "home.balance_group.savings", accent: "var(--neon-green)", tint: "rgba(63,245,165,0.14)", tintBorder: "rgba(63,245,165,0.28)", tintShadow: "rgba(63,245,165,0.45)", bgTint: "#151d1a" },
+  { types: ["credit_card"], labelKey: "home.balance_group.credit", accent: "var(--neon-orange)", tint: "rgba(255,145,66,0.14)", tintBorder: "rgba(255,145,66,0.28)", tintShadow: "rgba(255,145,66,0.45)", bgTint: "#221c16" },
+];
+
+App.renderHomeCarousel = function (data) {
+  var cards = App.HOME_BALANCE_GROUPS.map(function (group) {
+    var accounts = data.accounts.filter(function (a) { return group.types.indexOf(a.type) !== -1; });
+    if (accounts.length === 0) return "";
+    var total = accounts.reduce(function (sum, a) { return sum + a.balance; }, 0);
+    var rows = accounts.map(function (a) {
+      return '<div class="neon-carousel-row">' +
+        '<span class="neon-carousel-row-name"><span class="neon-mono-tile">' + App.esc(App.initials(a.name)) + "</span>" +
+        "<span>" + App.esc(a.name) + "</span></span>" +
+        '<span class="neon-carousel-row-amount">' + App.formatVnd(a.balance) + "</span>" +
+      "</div>";
+    }).join("");
+    return '<div class="neon-carousel-card" style="--tint:' + group.bgTint + ";--tint-border:" + group.tintBorder + ";--tint-shadow:" + group.tintShadow + ";--accent:" + group.accent + '">' +
+      '<div class="neon-carousel-head">' +
+        '<span class="neon-carousel-label">' + App.esc(App.t(group.labelKey)) + "</span>" +
+        '<span class="neon-carousel-dot"></span>' +
       "</div>" +
-      App.healthChip(health.has_data ? health.level : null) +
-    "</div>" +
-    '<div class="hero-sub small muted">' +
-      "<span>" + App.t("home.hero.net_worth", { amount: "<b class=\"num\">" + App.formatVnd(data.money.net_worth) + " đ</b>" }) + "</span>" +
-      (health.runway_months !== null
-        ? "<span>" + App.t("home.hero.runway", { months: "<b class=\"num\">" + App.formatNumber(health.runway_months) + "</b>" }) + "</span>"
-        : "") +
-    "</div>" +
-    '<p class="small muted">' + App.esc(blurb) + "</p>" + reasons +
-    App.renderRibbon(data) +
-    "</section>";
+      '<div class="neon-carousel-total">' + App.formatDong(total) + "</div>" +
+      '<div class="neon-carousel-rows">' + rows + "</div>" +
+    "</div>";
+  }).filter(Boolean);
+  if (cards.length === 0) return "";
+  return '<div class="neon-carousel">' + cards.join("") + "</div>";
 };
 
-App.renderMetrics = function (data) {
-  var money = data.money;
-  var metrics = data.metrics;
+App.renderHomeQuickBar = function () {
+  return '<div class="neon-quickbar">' +
+    '<button type="button" class="neon-quick-action" data-goto="add:import">' + App.icon("image") + "<span>" + App.esc(App.t("home.quick.import")) + "</span></button>" +
+    '<button type="button" class="fab" data-tab="add">+</button>' +
+    '<button type="button" class="neon-quick-action" data-goto="plan">' + App.icon("chart") + "<span>" + App.esc(App.t("home.quick.analyze")) + "</span></button>" +
+  "</div>";
+};
 
-  var tiles = [
-    App.metricTile(App.t("metric.survival.label"),
-      money.survival_days !== null ? App.formatNumber(money.survival_days, 0) + '<span class="u">' + App.esc(App.t("metric.survival.unit_days")) + "</span>" : "—",
-      money.survival_days !== null ? App.t("metric.survival.note_has_data") : App.t("metric.survival.note_no_data"), "clock"),
+// Recurring items ARE this app's subscriptions feature (Định kỳ) - real
+// data, no fabricated services. Countdown colour: <=3 days red, <=7 orange,
+// else neutral, exactly the handoff's own rule. The progress bar has no
+// real analogue (recurring items don't track "how much of the cycle has
+// elapsed"), so it's approximated from a typical cycle length per frequency
+// - an honest best-effort, not a fabricated precise number.
+App.HOME_SUB_CYCLE_DAYS = { weekly: 7, monthly: 30, quarterly: 90, yearly: 365 };
 
-    App.metricTile(App.t("metric.forecast.label"),
-      '<span class="' + (money.at_risk ? "amount-out" : "") + '">' + App.formatVnd(money.forecast_balance) + " đ</span>",
-      App.t("metric.forecast.note", { days: data.period.days_remaining }), "chart"),
+App.renderHomeSubs = function (data) {
+  var items = (data.recurring || []).filter(function (r) { return r.direction === "out"; });
+  if (items.length === 0) return "";
+  var total = items.reduce(function (sum, r) { return sum + r.amount; }, 0);
 
-    App.metricTile(App.t("metric.savings.label"),
-      metrics.current_savings_rate.has_data ? App.formatPct(metrics.current_savings_rate.rate) : "—",
-      metrics.current_savings_rate.has_data ? App.t("metric.savings.note_has_data") : App.t("metric.savings.note_no_data"), "bank"),
+  var cards = items.map(function (item) {
+    var days = App.daysUntil(item.next_due);
+    var color = days === null ? "var(--neon-ink-soft)" : days <= 3 ? "var(--neon-red)" : days <= 7 ? "var(--neon-orange)" : "var(--neon-ink-soft)";
+    var tint = days === null ? "rgba(139,147,164,0.16)" : days <= 3 ? "rgba(255,107,122,0.15)" : days <= 7 ? "rgba(255,145,66,0.15)" : "rgba(139,147,164,0.16)";
+    var dueText = days === null ? "—" : days <= 0 ? App.t("home.subs.due_today") : App.t("home.subs.due_in_days", { n: days });
+    var cycle = App.HOME_SUB_CYCLE_DAYS[item.frequency] || 30;
+    var pct = days === null ? 100 : Math.max(4, Math.min(100, Math.round(((cycle - days) / cycle) * 100)));
+    return '<div class="neon-sub-card">' +
+      '<div class="spread" style="align-items:center">' +
+        '<span class="neon-mono-tile" style="width:1.875rem;height:1.875rem;border-radius:0.625rem;font-size:0.8125rem;background:' + tint + ";color:" + color + '">' + App.esc(App.initials(item.name)) + "</span>" +
+        '<span class="neon-sub-due" style="background:' + tint + ";color:" + color + '">' + App.esc(dueText) + "</span>" +
+      "</div>" +
+      '<div class="neon-sub-name">' + App.esc(item.name) + "</div>" +
+      '<div class="neon-sub-amount">' + App.formatVnd(item.amount) + "đ</div>" +
+      '<div class="neon-sub-bar"><div style="width:' + pct + "%;background:" + color + '"></div></div>' +
+    "</div>";
+  }).join("");
 
-    App.metricTile(App.t("metric.concentration.label"),
-      metrics.concentration.has_data
-        ? '<span class="as-text">' + App.esc(metrics.concentration.category_name) + "</span>"
-        : "—",
-      metrics.concentration.has_data ? App.t("metric.concentration.note_has_data", { pct: App.formatPct(metrics.concentration.pct) }) : App.t("metric.concentration.note_no_data"),
-      metrics.concentration.has_data ? App.categoryIconName(metrics.concentration.category_name) : "pie"),
+  return '<section class="card">' +
+    '<div class="spread" style="align-items:baseline">' +
+      "<div><h2>" + App.esc(App.t("home.subs.title")) + "</h2>" +
+      '<p class="tiny muted" style="margin-top:0.2rem">' + App.esc(App.t("home.subs.summary", { n: items.length, amount: App.formatDong(total) })) + "</p></div>" +
+      '<button type="button" class="link" data-goto="plan:recurring">' + App.esc(App.t("common.view_all")) + "</button>" +
+    "</div>" +
+    '<div class="neon-subs-strip">' + cards + "</div>" +
+  "</section>";
+};
 
-    App.metricTile(App.t("metric.rigidity.label"),
-      metrics.rigidity.has_data ? App.formatPct(metrics.rigidity.pct) : "—",
-      metrics.rigidity.has_data ? App.t("metric.rigidity.note_has_data") : App.t("metric.rigidity.note_no_data"), "shield"),
+// "This period's budget", not the handoff's calendar-month framing - this
+// app's whole identity is the 15th-to-14th cycle (see period.py), so a
+// literal "tháng 8" port would contradict its own most-repeated invariant.
+// Figures come from data.budget_statuses, the exact aggregate already used
+// by Kế hoạch → Ngân sách - never recomputed differently in two places.
+App.renderHomeCashflow = function (data) {
+  var statuses = data.budget_statuses || [];
+  var totalBudget = statuses.reduce(function (sum, s) { return sum + s.amount; }, 0);
+  var totalSpent = statuses.reduce(function (sum, s) { return sum + s.spent; }, 0);
 
-    App.metricTile(App.t("metric.income_stability.label"),
-      metrics.income_stability.has_data ? App.formatPct(metrics.income_stability.cv_pct) : "—",
-      metrics.income_stability.has_data ? App.t("metric.income_stability.note_has_data") : App.t("metric.income_stability.note_no_data"), "scale"),
-  ];
-
-  if (data.income_sustainability.has_data) {
-    var margin = data.income_sustainability.margin;
-    tiles.push(App.metricTile(App.t("metric.reliable_income.label"),
-      '<span class="' + (margin >= 0 ? "amount-in" : "amount-out") + '">' +
-      App.formatPct(data.income_sustainability.covered_pct) + "</span>",
-      margin >= 0 ? App.t("metric.reliable_income.note_covered") : App.t("metric.reliable_income.note_not_covered"), "salary"));
+  if (totalBudget <= 0) {
+    return '<section class="card">' +
+      "<h2>" + App.esc(App.t("home.cashflow.title")) + "</h2>" +
+      '<p class="small muted">' + App.esc(App.t("home.cashflow.no_budget")) + "</p>" +
+      '<button type="button" class="secondary small" data-goto="plan:budget">' + App.esc(App.t("common.edit")) + "</button>" +
+    "</section>";
   }
 
-  return '<div class="metric-grid">' + tiles.join("") + "</div>";
-};
+  var pct = Math.round((totalSpent / totalBudget) * 100);
+  var light = pct < 60 ? "green" : pct < 85 ? "yellow" : "red";
+  var color = light === "green" ? "var(--neon-green)" : light === "yellow" ? "var(--neon-orange)" : "var(--neon-red)";
+  var tint = light === "green" ? "rgba(63,245,165,0.12)" : light === "yellow" ? "rgba(255,145,66,0.12)" : "rgba(255,107,122,0.12)";
 
-App.renderBudgetReminders = function (data) {
-  var statuses = data.budget_statuses.slice(0, 3);
-  if (statuses.length === 0) return "";
-
-  var items = statuses.map(function (status) {
-    var text = status.over_budget
-      ? App.t("home.budget_reminders.over", { amount: App.formatDong(-status.remaining) })
-      : App.t("home.budget_reminders.remaining", { amount: App.formatDong(status.remaining), days: data.period.days_remaining });
-    var modifier = status.over_budget ? "is-over" : (status.pct_used > 85 ? "is-warn" : "");
-    return '<div class="bar-item">' +
-      '<div class="bar-top"><span>' + App.esc(status.category_name) + "</span>" +
-      '<span class="bar-figures">' + App.formatVnd(status.spent) + " / " + App.formatVnd(status.amount) + "</span></div>" +
-      App.track(status.pct_used, modifier) +
-      '<p class="tiny ' + (status.over_budget ? "amount-out" : "muted") + '">' + App.esc(text) + "</p>" +
-      "</div>";
-  }).join("");
-
-  var streak = data.metrics.budget_streak > 0
-    ? '<p class="tiny muted">' + App.esc(App.t("home.budget_reminders.streak", { n: data.metrics.budget_streak })) + "</p>"
-    : "";
-
-  return '<section class="card">' +
-    '<div class="card-head"><h2>' + App.esc(App.t("home.budget_reminders.title")) + "</h2>" +
-    '<button type="button" class="link" data-goto="plan:budget">' + App.esc(App.t("common.edit")) + "</button></div>" +
-    items + streak + "</section>";
-};
-
-App.renderGoalsSummary = function (data) {
-  if (data.goals.length === 0) return "";
-  var behind = data.goals.filter(function (g) { return g.is_off_track || g.is_overdue; });
-  var perPeriod = data.goals.reduce(function (sum, g) { return g.is_overdue ? sum : sum + g.required_per_period; }, 0);
-
-  var note = behind.length === 0
-    ? App.t("home.goals_summary.all_on_track")
-    : App.t("home.goals_summary.behind", { count: behind.length, names: behind.map(function (g) { return g.name; }).join(", ") });
-
-  return '<section class="card">' +
-    '<div class="card-head"><h2>' + App.esc(App.t("home.goals_summary.title")) + "</h2>" +
-    '<button type="button" class="link" data-goto="plan:goals">' + App.esc(App.t("common.view_all")) + "</button></div>" +
-    '<dl class="stack-tight">' +
-      '<div class="kv"><dt>' + App.esc(App.t("home.goals_summary.pursuing")) + "</dt><dd>" + data.goals.length + "</dd></div>" +
-      '<div class="kv"><dt>' + App.esc(App.t("home.goals_summary.need_per_period")) + "</dt><dd>" + App.formatDong(perPeriod) + "</dd></div>" +
-    "</dl>" +
-    '<p class="small ' + (behind.length ? "amount-out" : "muted") + '">' + App.esc(note) + "</p>" +
-    "</section>";
-};
-
-App.renderEventCard = function (data) {
-  var upcoming = data.events.filter(function (event) {
-    return !event.is_past && event.remaining_total > 0;
-  })[0];
-  if (!upcoming) return "";
-
-  // Cross-referencing the forecast: can today's liquid balance absorb it?
-  var affordable = data.money.liquid_balance >= upcoming.remaining_total;
-  var when = upcoming.days_until === 0 ? App.t("home.event.today") : App.t("home.event.days_left", { days: upcoming.days_until });
-
-  return '<section class="card">' +
-    '<div class="card-head"><h2>' + App.esc(App.t("home.event.title")) + "</h2>" +
-    '<button type="button" class="link" data-goto="plan:events">' + App.esc(App.t("common.view_all")) + "</button></div>" +
-    '<div class="spread"><span>' + App.esc(upcoming.name) + '</span>' +
-    '<span class="row-amount">' + App.formatDong(upcoming.remaining_total) + "</span></div>" +
-    '<p class="small muted">' + App.esc(upcoming.event_date) + " · " + App.esc(when) + " · " + App.esc(App.t("home.event.owed_suffix")) + "</p>" +
-    '<p class="tiny ' + (affordable ? "muted" : "amount-out") + '">' +
-    App.esc(affordable ? App.t("home.event.affordable") : App.t("home.event.not_affordable")) +
-    "</p></section>";
-};
-
-// Where the money actually went this period, as proportion rather than a
-// list of numbers - the one question a list of transactions answers slowly.
-// Children roll up into their parent, so this reads at the level people
-// actually budget at.
-App.renderBreakdownCard = function (data) {
-  var concentration = data.metrics.concentration;
-  if (!concentration.has_data || !concentration.breakdown) return "";
-  var rows = concentration.breakdown.slice(0, 6);
-  if (rows.length < 2) return "";
-
-  // One stacked bar reads the split instantly; the list underneath carries
-  // the exact figures, since a bar segment can't be read to the đồng.
-  var palette = ["var(--out)", "var(--warn)", "var(--brand)", "var(--transfer)", "var(--in)", "var(--ink-faint)"];
-  var segments = rows.map(function (row, index) {
-    return '<div style="width:' + row.pct.toFixed(2) + "%;background:" + palette[index % palette.length] +
-      '" title="' + App.esc(row.category_name) + '"></div>';
-  }).join("");
-
-  var list = rows.map(function (row, index) {
-    return '<div class="kv">' +
-      '<dt><span class="legend-dot" style="background:' + palette[index % palette.length] + '"></span>' +
-      App.esc(row.category_name) + "</dt>" +
-      "<dd>" + App.formatDong(row.amount) + ' <span class="faint">· ' + App.formatPct(row.pct) + "</span></dd>" +
-      "</div>";
-  }).join("");
-
-  return '<section class="card">' +
-    '<div class="card-head"><h2>' + App.esc(App.t("home.breakdown.title")) + "</h2>" +
-    '<span class="small muted num">' + App.formatDong(concentration.total) + "</span></div>" +
-    '<div class="stackbar">' + segments + "</div>" +
-    '<dl class="stack-tight">' + list + "</dl>" +
-    "</section>";
-};
-
-App.renderTrendCard = function (data) {
-  var periods = (data.metrics.savings_trend.periods || []).filter(function (p) { return p.rate !== null; });
-  if (periods.length < 2) return "";
-
-  var trend = data.metrics.savings_trend.trend;
-
-  return '<section class="card">' +
-    '<div class="card-head"><h2>' + App.esc(App.t("home.trend.title")) + "</h2>" +
-    '<span class="small muted">' + App.esc(trend ? App.label("trend", trend) : "") + "</span></div>" +
-    App.sparkline(periods.map(function (p) { return p.rate; })) +
-    '<div class="spread tiny muted">' +
-      "<span>" + App.esc(periods[0].period_id) + " · " + App.formatPct(periods[0].rate) + "</span>" +
-      "<span>" + App.esc(periods[periods.length - 1].period_id) + " · " + App.formatPct(periods[periods.length - 1].rate) + "</span>" +
-    "</div></section>";
-};
-
-App.renderAccountsCard = function (data) {
-  var rows = data.accounts.map(function (account) {
-    return '<div class="row">' +
-      '<span class="row-icon">' + App.icon(App.ACCOUNT_ICONS[account.type] || "wallet") + "</span>" +
-      '<div class="row-main"><span class="row-title">' + App.esc(account.name) + "</span>" +
-      '<span class="row-meta">' + App.esc(App.label("account_type", account.type)) +
-      (account.is_liquid ? "" : " · " + App.esc(App.t("home.accounts.not_liquid_suffix"))) + "</span></div>" +
-      '<div class="row-end"><span class="row-amount">' + App.formatDong(account.balance) + "</span></div>" +
-      "</div>";
-  }).join("");
-
-  return '<section class="card">' +
-    '<div class="card-head"><h2>' + App.esc(App.t("home.accounts.title")) + "</h2>" +
-    '<button type="button" class="link" data-goto="settings">' + App.esc(App.t("common.manage")) + "</button></div>" +
-    '<div class="rows">' + (rows || App.emptyState(App.t("home.accounts.empty"))) + "</div></section>";
-};
-
-// THIET-KE.md 4.4's 50/30/20 split, for the current period. The reference
-// bands are shown next to the real numbers rather than as a pass/fail - the
-// rule is a rough guide, and a red "you failed" on a rule of thumb would be
-// louder than the rule deserves.
-App.renderBalanceCard = function (data) {
-  var balance = data.metrics.balance_50_30_20;
-  if (!balance.has_data) return "";
-
-  function line(label, value, pct, target, modifier) {
-    return '<div class="bar-item">' +
-      '<div class="bar-top"><span>' + App.esc(label) + "</span>" +
-      '<span class="bar-figures">' + App.formatDong(value) + " · " + App.formatPct(pct) + "</span></div>" +
-      App.track(pct, modifier) +
-      '<p class="tiny faint">' + App.esc(App.t("home.balance5030.reference", { pct: target })) + "</p></div>";
+  // Best-effort daily bars from the transactions already in this payload
+  // (no new backend call): last 7 calendar days' expense total, excluding
+  // transfers. If the loaded page doesn't reach back 7 days (a very active
+  // ledger past the default limit), older bars silently read as lower than
+  // they really are - a known approximation, not a precise report.
+  var today = App.today();
+  var todayParts = today.split("-");
+  var base = new Date(Number(todayParts[0]), Number(todayParts[1]) - 1, Number(todayParts[2]));
+  var days = [];
+  for (var i = 6; i >= 0; i--) {
+    var d = new Date(base); d.setDate(d.getDate() - i);
+    days.push({ iso: d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"), dow: d.getDay(), total: 0 });
   }
+  var byIso = {}; days.forEach(function (d) { byIso[d.iso] = d; });
+  (data.transactions || []).forEach(function (tx) {
+    if (tx.is_transfer || tx.direction !== "out") return;
+    var iso = App.dateOnly(tx.occurred_at);
+    if (byIso[iso]) byIso[iso].total += tx.amount;
+  });
+  var maxDay = Math.max.apply(null, days.map(function (d) { return d.total; }).concat([1]));
+  var dowLabels = { vi: ["CN", "T2", "T3", "T4", "T5", "T6", "T7"], en: ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] }[App.currentLang()] || ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
+  var bars = days.map(function (d) {
+    var ratio = d.total / maxDay;
+    var barColor = ratio >= 0.999 && d.total > 0 ? "var(--neon-orange)" : ratio >= 0.5 ? "var(--neon-purple)" : "#2c3140";
+    var h = Math.max(3, Math.round(ratio * 44));
+    return '<div class="neon-week-col"><div class="neon-week-bar" style="height:' + h + "px;background:" + barColor + '"></div>' +
+      '<span class="neon-week-day">' + dowLabels[d.dow] + "</span></div>";
+  }).join("");
 
   return '<section class="card">' +
-    '<div class="card-head"><h2>' + App.esc(App.t("home.balance5030.title")) + "</h2>" +
-    '<span class="small muted">' + App.esc(App.t("home.balance5030.this_period")) + "</span></div>" +
-    line(App.t("home.balance5030.essential"), balance.essential, balance.essential_pct, 50, "") +
-    line(App.t("home.balance5030.optional"), balance.optional, balance.optional_pct, 30, balance.optional_pct > 30 ? "is-warn" : "") +
-    line(App.t("home.balance5030.kept"), balance.income - balance.essential - balance.optional - balance.unclassified,
-      balance.saving_pct, 20, balance.saving_pct >= 20 ? "is-good" : "is-warn") +
-    (balance.unclassified > 0
-      ? '<p class="tiny muted">' + App.esc(App.t("home.balance5030.unclassified", { amount: App.formatDong(balance.unclassified) })) + "</p>"
-      : "") +
-    "</section>";
+    '<div class="neon-cashflow-head">' +
+      "<div><h2>" + App.esc(App.t("home.cashflow.title")) + "</h2>" +
+      '<div class="neon-cashflow-budget">' + App.esc(App.t("home.cashflow.budget_label", { amount: App.formatDong(totalBudget) })) + "</div>" +
+      '<div class="neon-cashflow-spent">' + App.formatDong(totalSpent) + "</div>" +
+      '<span class="neon-status-pill" style="background:' + tint + ";color:" + color + '"><span class="dot"></span>' + App.esc(App.label("traffic_light", light)) + "</span>" +
+      "</div>" +
+      '<div class="neon-donut-wrap">' + App.donut(pct, color) +
+        '<div class="neon-donut-hole"><span class="neon-donut-pct">' + pct + '%</span><span class="neon-donut-label">' + App.esc(App.t("home.cashflow.spent_donut_label")) + "</span></div>" +
+      "</div>" +
+    "</div>" +
+    '<div class="neon-week">' + bars + "</div>" +
+  "</section>";
+};
+
+// Each transaction is its own floating card here (the handoff's own visual
+// signature for this list), unlike Sổ's shared-card-with-dividers layout -
+// a deliberate, small duplication of App.renderTransactionRows's direction/
+// transfer/icon logic, kept because the two lists are meant to look
+// different on purpose. No edit/delete here: Nhà is a glance, not a place to
+// manage entries - "Xem sổ →" is one tap away for that.
+App.renderHomeRecent = function (data) {
+  var recent = (data.transactions || []).slice(0, 6);
+  if (recent.length === 0) return "";
+  var rows = recent.map(function (tx) {
+    var isTransfer = tx.is_transfer;
+    var color = isTransfer ? "var(--neon-ink-soft)" : (tx.direction === "in" ? "var(--neon-green)" : "var(--neon-red)");
+    var sign = isTransfer ? "" : (tx.direction === "in" ? "+" : "−");
+    var title = tx.description || tx.category_name || (isTransfer ? App.t("ledger.transfer_title") : App.t("common.no_description_row"));
+    var glyph = isTransfer ? "swap" : App.categoryIconName(tx.category_name || title);
+    var metaCategory = isTransfer
+      ? '<span style="color:var(--neon-ink-soft)">' + App.esc(App.t("ledger.transfer_title")) + "</span>"
+      : (tx.category_name ? '<span style="color:var(--neon-orange)">' + App.esc(tx.category_name) + "</span>" : "");
+    var metaRest = [tx.account_name, App.dateOnly(tx.occurred_at).slice(5)].filter(Boolean).join(" · ");
+    return '<div class="neon-recent-row">' +
+      '<span class="neon-recent-icon">' + App.icon(glyph) + "</span>" +
+      '<div style="flex:1;min-width:0">' +
+        '<div class="neon-recent-title">' + App.esc(title) + "</div>" +
+        '<div class="neon-recent-meta">' + metaCategory + (metaCategory ? "<span>·</span>" : "") + '<span class="num">' + App.esc(metaRest) + "</span></div>" +
+      "</div>" +
+      '<span class="neon-recent-amount" style="color:' + color + '">' + sign + App.formatVnd(tx.amount) + "đ</span>" +
+    "</div>";
+  }).join("");
+
+  return '<section>' +
+    '<div class="spread" style="padding:0 0.1rem 0.5rem;align-items:baseline">' +
+      "<h2>" + App.esc(App.t("home.recent_title")) + "</h2>" +
+      '<button type="button" class="link" data-tab="list">' + App.esc(App.t("home.recent_view_all")) + "</button>" +
+    "</div>" +
+    '<div class="stack-tight">' + rows + "</div>" +
+  "</section>";
 };
 
 // First run: the dashboard is a grid of dashes and says nothing useful, so
@@ -540,21 +508,35 @@ App.renderFirstRunCard = function (data) {
     "</section>";
 };
 
+App.renderAccountsCard = function (data) {
+  var rows = data.accounts.map(function (account) {
+    return '<div class="row">' +
+      '<span class="row-icon">' + App.icon(App.ACCOUNT_ICONS[account.type] || "wallet") + "</span>" +
+      '<div class="row-main"><span class="row-title">' + App.esc(account.name) + "</span>" +
+      '<span class="row-meta">' + App.esc(App.label("account_type", account.type)) + "</span></div>" +
+      '<div class="row-end"><span class="row-amount">' + App.formatDong(account.balance) + "</span></div>" +
+      "</div>";
+  }).join("");
+
+  return '<section class="card">' +
+    '<div class="card-head"><h2>' + App.esc(App.t("home.accounts.title")) + "</h2>" +
+    '<button type="button" class="link" data-goto="settings">' + App.esc(App.t("common.manage")) + "</button></div>" +
+    '<div class="rows">' + (rows || App.emptyState(App.t("home.accounts.empty"))) + "</div></section>";
+};
+
 App.renderDashboard = function (data) {
   if (data.transaction_count === 0) {
     return App.renderFirstRunCard(data) + App.renderAccountsCard(data);
   }
   return App.renderAlerts(data.alerts) +
-    App.renderHero(data) +
+    App.renderHomeHeader(data) +
+    App.renderHomeNetWorth(data) +
+    App.renderHomeCarousel(data) +
+    App.renderHomeQuickBar() +
     '<section class="ai-panel hidden" id="ai-daily"></section>' +
-    App.renderMetrics(data) +
-    App.renderBudgetReminders(data) +
-    App.renderGoalsSummary(data) +
-    App.renderEventCard(data) +
-    App.renderBalanceCard(data) +
-    App.renderBreakdownCard(data) +
-    App.renderTrendCard(data) +
-    App.renderAccountsCard(data);
+    App.renderHomeSubs(data) +
+    App.renderHomeCashflow(data) +
+    App.renderHomeRecent(data);
 };
 
 // ================================================================ sổ (list)

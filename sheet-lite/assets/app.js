@@ -334,14 +334,14 @@ App.renderCurrentTab = function () {
 App.balanceAnimatedFor = null;
 
 App.animateBalance = function () {
-  var node = App.$(".hero-balance");
+  var node = App.$(".neon-networth-amount");
   var data = App.state.data;
-  if (!node || !data) return;
-  var value = data.money.liquid_balance;
+  if (!node || !data || App.netWorthHidden()) return;
+  var value = data.money.net_worth;
   if (App.balanceAnimatedFor === value) return;
   App.balanceAnimatedFor = value;
   App.countUp(node, value, function (current) {
-    return App.formatVnd(current) + '<span class="unit">đ</span>';
+    return App.formatVnd(current) + "đ";
   });
 };
 
@@ -388,26 +388,63 @@ App.currentDirection = function () {
   return checked ? checked.value : "out";
 };
 
+// One accent per transaction type, driving the hero card, the type-coloured
+// input text and the source chip row - kept as data rather than a class per
+// type so a future type needs no new CSS rule, only a new entry here.
+App.TYPE_ACCENT = {
+  out: { accent: "var(--neon-red)", tint: "rgba(255,107,122,0.1)", border: "rgba(255,107,122,0.3)" },
+  in: { accent: "var(--neon-green)", tint: "rgba(63,245,165,0.1)", border: "rgba(63,245,165,0.3)" },
+  transfer: { accent: "var(--neon-purple)", tint: "rgba(177,140,255,0.1)", border: "rgba(177,140,255,0.3)" },
+};
+
 App.refreshAddForm = function () {
   var data = App.state.data;
   if (!data) return;
   var direction = App.currentDirection();
+  var accent = App.TYPE_ACCENT[direction];
 
-  var account = App.$("#tx-account");
-  var toAccount = App.$("#tx-to-account");
+  var accountInput = App.$("#tx-account");
+  var toAccountInput = App.$("#tx-to-account");
+  var keepAccount = accountInput.value, keepTo = toAccountInput.value;
 
-  var keepAccount = account.value, keepTo = toAccount.value;
-  account.innerHTML = App.accountOptions(data.accounts, keepAccount, true);
-  toAccount.innerHTML = App.accountOptions(data.accounts, keepTo, true);
+  function resolveSelection(kept, list) {
+    return list.some(function (a) { return String(a.id) === String(kept); }) ? kept : (list[0] ? list[0].id : "");
+  }
+  var accountId = resolveSelection(keepAccount, data.accounts);
+  var toAccountId = resolveSelection(keepTo, data.accounts);
+
+  accountInput.value = accountId;
+  App.setHtml("#tx-account-chips", App.accountChips(data.accounts, accountId, "data-pick-account", false));
+  toAccountInput.value = toAccountId;
+  App.setHtml("#tx-to-account-chips", App.accountChips(data.accounts, toAccountId, "data-pick-to-account", true));
+
   App.renderCategoryGrid();
 
   App.show("#tx-to-wrap", direction === "transfer");
   App.show("#tx-category-wrap", direction !== "transfer");
-  App.$("#tx-account-label").textContent = direction === "transfer" ? App.t("add.from_account_label") : App.t("add.account_label");
+  App.$("#tx-account-label").textContent = direction === "out" ? App.t("add.source_out")
+    : direction === "in" ? App.t("add.source_in") : App.t("add.source_transfer");
+
+  // The type's accent/tint live as custom properties on the FORM, not the
+  // hero card alone - custom properties inherit down the tree but not across
+  // siblings, and the category grid's selected-tile colour and the account
+  // chips' selected-chip colour both need to match the hero's colour too.
+  // Setting them only on #tx-hero left every other selected control reading
+  // an unset var() and falling back to no colour at all.
+  var form = App.$("#tx-form");
+  form.style.setProperty("--accent", accent.accent);
+  form.style.setProperty("--tint", accent.tint);
+  form.style.setProperty("--tint-border", accent.border);
+  App.$("#tx-hero-label").textContent = App.t(
+    direction === "out" ? "add.hero_label_out" : direction === "in" ? "add.hero_label_in" : "add.hero_label_transfer"
+  );
+  App.$("#tx-hero-hint").innerHTML = App.t("add.hero_hint", { a: "500k", b: "1tr", c: "2tr5" });
 
   var dateInput = App.$("#tx-date");
   if (!dateInput.value) dateInput.value = App.today();
+  App.updateDateDisplay();
 
+  App.updateAmountHint();
   App.setHtml("#add-recent", App.renderTransactionRows(data.transactions.slice(0, 5)));
 };
 
@@ -436,17 +473,54 @@ App.pickCategory = function (id) {
   App.renderCategoryGrid();
 };
 
+App.pickAccount = function (id) {
+  App.$("#tx-account").value = id;
+  App.$$("#tx-account-chips .neon-chip").forEach(function (chip) {
+    chip.setAttribute("aria-pressed", String(chip.getAttribute("data-pick-account") === String(id)));
+  });
+};
+
+App.pickToAccount = function (id) {
+  App.$("#tx-to-account").value = id;
+  App.$$("#tx-to-account-chips .neon-chip").forEach(function (chip) {
+    chip.setAttribute("aria-pressed", String(chip.getAttribute("data-pick-to-account") === String(id)));
+  });
+};
+
+App.updateDateDisplay = function () {
+  var iso = App.$("#tx-date").value;
+  if (!iso) return;
+  var parts = iso.split("-");
+  App.$("#tx-date-display").textContent = parts.length === 3 ? parts[2] + "/" + parts[1] + "/" + parts[0] : iso;
+};
+
+App.setTodayDate = function () {
+  App.$("#tx-date").value = App.today();
+  App.updateDateDisplay();
+};
+
 App.updateAmountHint = function () {
   var input = App.$("#tx-amount");
   var hint = App.$("#tx-amount-hint");
   var parsed = App.tryParseAmount(input.value);
   if (parsed === null) {
     hint.textContent = input.value.trim() ? App.t("add.amount_hint_invalid") : "";
-    hint.className = "amount-hint " + (input.value.trim() ? "amount-out" : "");
+    hint.className = "neon-hero-echo " + (input.value.trim() ? "amount-out" : "");
   } else {
     hint.textContent = App.t("add.amount_hint_equals", { amount: App.formatDong(parsed) });
-    hint.className = "amount-hint muted";
+    hint.className = "neon-hero-echo muted";
   }
+  App.updateNudge(parsed);
+};
+
+// A soft suggestion, not a blocking confirm() - per docs/UI-DESIGN-SPEC.md
+// §4.3's own original wording ("hiện gợi ý mềm"). Recomputed on every
+// keystroke and direction change; showing or hiding it never affects
+// whether Lưu giao dịch actually saves.
+App.updateNudge = function (parsed) {
+  var show = App.currentDirection() === "out" && parsed !== null && parsed >= 1000000;
+  App.show("#tx-nudge", show);
+  if (show) App.setHtml("#tx-nudge-text", App.t("add.nudge_text"));
 };
 
 App.submitTransaction = function () {
@@ -464,22 +538,6 @@ App.submitTransaction = function () {
   if (direction === "transfer" && App.$("#tx-account").value === App.$("#tx-to-account").value) {
     App.notice("#add-message", App.t("add.error_same_account"), "error");
     return;
-  }
-
-  // A big spend is worth a second thought before it's recorded, not after.
-  if (direction === "out" && parsed >= 1000000) {
-    if (window.confirm(App.t("add.confirm_simulate", { amount: App.formatDong(parsed) }))) {
-      App.state.planSection = "simulate";
-      App.switchTab("plan");
-      window.setTimeout(function () {
-        var amountField = App.$("#sim-amount");
-        if (amountField) {
-          amountField.value = rawAmount;
-          App.$("#sim-name").value = description;
-        }
-      }, 0);
-      return;
-    }
   }
 
   var button = App.$("#tx-save");
@@ -1045,10 +1103,12 @@ document.addEventListener("click", function (event) {
     "[data-dismiss-alert], [data-delete-tx], [data-edit-tx], [data-hide-goal], [data-hide-recurring], " +
     "[data-delete-rule], [data-edit-account], [data-apply-suggestion], [data-period-shift], [data-close-dialog], " +
     "[data-hide-income], [data-delete-event], [data-event-to-goal], [data-pick-category], [data-open-parent], " +
+    "[data-pick-account], [data-pick-to-account], " +
     "[data-set-theme], [data-set-palette], [data-set-lang], #add-event-item, #save-import, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
     "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, " +
-    "#save-connection-anyway, #device-link-btn, #copy-device-link, #theme-toggle");
+    "#save-connection-anyway, #device-link-btn, #copy-device-link, #theme-toggle, " +
+    "#tx-today-btn, #tx-nudge, #home-bell, #home-networth-eye");
   if (!target) return;
 
   var attr = function (name) { return target.getAttribute(name); };
@@ -1064,6 +1124,8 @@ document.addEventListener("click", function (event) {
     return;
   }
   if (attr("data-pick-category")) { App.pickCategory(attr("data-pick-category")); return; }
+  if (attr("data-pick-account")) { App.pickAccount(attr("data-pick-account")); return; }
+  if (attr("data-pick-to-account")) { App.pickToAccount(attr("data-pick-to-account")); return; }
 
   if (attr("data-set-theme")) { App.setTheme(attr("data-set-theme")); App.renderSettingsTab(); return; }
   if (attr("data-set-palette")) { App.setPalette(attr("data-set-palette")); App.renderSettingsTab(); return; }
@@ -1079,8 +1141,17 @@ document.addEventListener("click", function (event) {
 
   if (attr("data-goto")) {
     var parts = attr("data-goto").split(":");
-    if (parts[1]) App.state.planSection = parts[1];
+    // Only "plan:<section>" means a plan sub-section; "add:import" is the
+    // one other compound target (Nhà's "Nhập ảnh" quick action), which just
+    // switches tabs and then scrolls to the already-present import card.
+    if (parts[0] === "plan" && parts[1]) App.state.planSection = parts[1];
     App.switchTab(parts[0]);
+    if (parts[0] === "add" && parts[1] === "import") {
+      window.setTimeout(function () {
+        var importCard = App.$("#import-file");
+        if (importCard && importCard.scrollIntoView) importCard.scrollIntoView({ block: "start", behavior: "smooth" });
+      }, 0);
+    }
     return;
   }
 
@@ -1223,6 +1294,28 @@ document.addEventListener("click", function (event) {
           };
         }),
       }, "#ai-sim-panel", "#ai-simulation");
+      break;
+    case "tx-today-btn": App.setTodayDate(); break;
+    // The alert banners already render at the very top of Nhà - the bell is
+    // a shortcut to them, not a separate inbox this app doesn't have.
+    case "home-bell": window.scrollTo({ top: 0, behavior: "smooth" }); break;
+    case "home-networth-eye":
+      localStorage.setItem(App.NET_WORTH_HIDDEN_KEY, App.netWorthHidden() ? "0" : "1");
+      App.renderCurrentTab();
+      break;
+    case "tx-nudge":
+      event.preventDefault();
+      var nudgeAmount = App.$("#tx-amount").value.trim();
+      var nudgeName = App.$("#tx-description").value.trim();
+      App.state.planSection = "simulate";
+      App.switchTab("plan");
+      window.setTimeout(function () {
+        var amountField = App.$("#sim-amount");
+        if (amountField) {
+          amountField.value = nudgeAmount;
+          App.$("#sim-name").value = nudgeName;
+        }
+      }, 0);
       break;
   }
 });
@@ -1395,6 +1488,7 @@ document.addEventListener("change", function (event) {
     App.state.categoryParent = "";
     App.refreshAddForm();
   }
+  if (event.target.id === "tx-date") App.updateDateDisplay();
   if (event.target.id === "event-template") App.resetEventItems(event.target.value);
   if (event.target.id === "import-file" && event.target.files && event.target.files.length) {
     App.analyzeImages(event.target.files);
