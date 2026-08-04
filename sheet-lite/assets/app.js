@@ -584,18 +584,20 @@ App.submitTransaction = function () {
 
   request
     .then(function (result) {
+      // Re-enable and confirm the moment the WRITE lands - the bootstrap
+      // reload that follows only refreshes numbers elsewhere on the page and
+      // has no reason to keep the form locked while it's in flight.
+      button.disabled = false;
       App.$("#tx-amount").value = "";
       App.$("#tx-description").value = "";
       App.updateAmountHint();
       var extra = result.auto_categorised ? App.t("add.saved_auto_categorised") : "";
       App.notice("#add-message", App.t("add.saved", { amount: App.formatDong(result.amount || parsed) }) + extra, "ok");
-      return App.load({ quiet: true });
+      App.load({ quiet: true });
     })
     .catch(function (err) {
-      App.notice("#add-message", App.errorText(err), "error");
-    })
-    .finally(function () {
       button.disabled = false;
+      App.notice("#add-message", App.errorText(err), "error");
     });
 };
 
@@ -1406,13 +1408,14 @@ App.submitGoalTopup = function (button) {
     occurred_at: App.today(),
   })
     .then(function () {
+      if (App.$("#goal-topup-submit")) App.$("#goal-topup-submit").disabled = false;
       App.notice("#goal-topup-message", App.t("plan.goals.topup_saved"), "ok");
-      return App.load({ quiet: true });
+      App.load({ quiet: true });
     })
     .catch(function (err) {
+      if (App.$("#goal-topup-submit")) App.$("#goal-topup-submit").disabled = false;
       App.notice("#goal-topup-message", App.errorText(err), "error");
-    })
-    .finally(function () { if (App.$("#goal-topup-submit")) App.$("#goal-topup-submit").disabled = false; });
+    });
 };
 
 // Forms: also delegated, for the same re-render reason.
@@ -1434,10 +1437,13 @@ document.addEventListener("submit", function (event) {
     App.notice(messageSelector, "Đang lưu…", "info");
     App.apiPost(action, body)
       .then(function () {
+        // Confirm the moment the write itself lands - the reload that follows
+        // just refreshes the list/numbers around this form (which is its own
+        // visible confirmation), it doesn't need to gate this message too.
         form.reset();
-        return App.load({ quiet: true });
+        App.notice(messageSelector, successText, "ok");
+        App.load({ quiet: true });
       })
-      .then(function () { App.notice(messageSelector, successText, "ok"); })
       .catch(function (err) { App.notice(messageSelector, App.errorText(err), "error"); });
   }
 
@@ -1453,9 +1459,9 @@ document.addEventListener("submit", function (event) {
     App.apiPost("add_event_plan", { name: body.name, event_date: body.event_date, items: items })
       .then(function () {
         form.reset();
-        return App.load({ quiet: true });
+        App.notice("#event-message", App.t("plan.events.saved"), "ok");
+        App.load({ quiet: true });
       })
-      .then(function () { App.notice("#event-message", App.t("plan.events.saved"), "ok"); })
       .catch(function (err) { App.notice("#event-message", App.errorText(err), "error"); });
   }
   else if (formId === "goal-form") post("add_goal", "#goal-message", App.t("plan.goals.created"));
