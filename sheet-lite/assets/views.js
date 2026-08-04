@@ -172,22 +172,34 @@ App.sparkline = function (values) {
 
 // Balance-over-periods line, with a dashed zero line so "the month we run
 // out" reads without checking the axis labels.
-App.lineChart = function (labels, series) {
+// opts is optional: { altSeries: number[], color: css-color-string }. altSeries
+// draws a second, dashed, muted line on the SAME scale (used by Mô phỏng to
+// show "with this expense" against the no-purchase baseline) - min/max spans
+// both series so the two stay comparable. color overrides the primary line's
+// stroke inline (used to recolor it per scenario's own traffic light,
+// something a fixed CSS class can't do).
+App.lineChart = function (labels, series, opts) {
   if (!series || series.length < 2) return "";
+  opts = opts || {};
   var width = 320, height = 130, padL = 4, padR = 4, padT = 10, padB = 18;
   var values = series.slice();
-  var min = Math.min.apply(null, values.concat([0]));
-  var max = Math.max.apply(null, values.concat([0]));
+  var altValues = opts.altSeries || null;
+  var allValues = altValues ? values.concat(altValues) : values;
+  var min = Math.min.apply(null, allValues.concat([0]));
+  var max = Math.max.apply(null, allValues.concat([0]));
   var span = (max - min) || 1;
   var stepX = (width - padL - padR) / (values.length - 1);
 
   function yFor(value) { return padT + (1 - (value - min) / span) * (height - padT - padB); }
+  function pointsFor(vals) { return vals.map(function (value, index) { return [padL + index * stepX, yFor(value)]; }); }
+  function lineFor(pts) { return pts.map(function (p, i) { return (i === 0 ? "M" : "L") + p[0].toFixed(1) + " " + p[1].toFixed(1); }).join(" "); }
 
-  var points = values.map(function (value, index) { return [padL + index * stepX, yFor(value)]; });
-  var line = points.map(function (p, i) { return (i === 0 ? "M" : "L") + p[0].toFixed(1) + " " + p[1].toFixed(1); }).join(" ");
+  var points = pointsFor(values);
+  var line = lineFor(points);
   var baseY = yFor(Math.max(min, 0));
   var area = line + " L" + points[points.length - 1][0].toFixed(1) + " " + baseY.toFixed(1) +
     " L" + points[0][0].toFixed(1) + " " + baseY.toFixed(1) + " Z";
+  var altLine = altValues ? lineFor(pointsFor(altValues)) : "";
 
   var ticks = labels.map(function (label, index) {
     if (labels.length > 6 && index % 2 === 1) return "";
@@ -202,9 +214,10 @@ App.lineChart = function (labels, series) {
   var last = points[points.length - 1];
 
   return '<svg class="chart" viewBox="0 0 ' + width + " " + height + '" role="img">' +
-    '<path class="area" d="' + area + '"/>' + zero +
-    '<path class="series" d="' + line + '"/>' +
-    '<circle class="endpoint" cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="3"/>' +
+    '<path class="area" d="' + area + '"' + (opts.color ? ' style="fill:' + opts.color + '"' : "") + "/>" + zero +
+    (altLine ? '<path class="series-alt" d="' + altLine + '"/>' : "") +
+    '<path class="series" d="' + line + '"' + (opts.color ? ' style="stroke:' + opts.color + '"' : "") + "/>" +
+    '<circle class="endpoint" cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="3"' + (opts.color ? ' style="fill:' + opts.color + '"' : "") + "/>" +
     ticks + "</svg>";
 };
 
@@ -1593,22 +1606,49 @@ App.renderForecastResult = function (result) {
   "</div>";
 };
 
+// Ported from FinanceSimulateNeon.dc.html. All 6 real scenarios (pay now,
+// 3/6/12-installment, delay 3/6, no-purchase baseline) are kept - the
+// handoff's own mock only shows 3, but this app's richer comparison already
+// existed and works, so nothing was cut to match a smaller mock.
+// Tapping a scenario card recolors the chart to THAT scenario's own
+// trajectory against the no-purchase baseline (App.state.simSelectedScenario,
+// default "now" - "should I buy this today" is the question this form is
+// almost always answering). App.lineChart's new altSeries/color options
+// exist specifically for this - see its own comment.
 App.renderSimulationPlan = function () {
-  return '<section class="card">' +
-    "<h2>" + App.esc(App.t("plan.simulate.title")) + "</h2>" +
-    '<p class="tiny muted">' + App.esc(App.t("plan.simulate.intro")) + "</p>" +
-    '<label class="field"><span class="field-label">' + App.esc(App.t("plan.simulate.item_label")) + "</span>" +
-    '<input type="text" id="sim-name" placeholder="' + App.esc(App.t("plan.simulate.item_placeholder")) + '"></label>' +
-    '<label class="field"><span class="field-label">' + App.esc(App.t("plan.simulate.price_label")) + "</span>" +
-    '<input type="text" inputmode="numeric" id="sim-amount" class="amount-input" placeholder="' + App.esc(App.t("plan.simulate.price_placeholder")) + '"></label>' +
-    '<label class="field"><span class="field-label">' + App.esc(App.t("plan.simulate.maintenance_label")) + "</span>" +
-    '<input type="text" inputmode="numeric" id="sim-maintenance" placeholder="' + App.esc(App.t("plan.simulate.maintenance_placeholder")) + '"></label>' +
-    '<button type="button" id="run-simulation">' + App.esc(App.t("plan.simulate.run")) + "</button>" +
-    '<div id="simulation-result"></div></section>';
+  return '<div style="display:flex;flex-direction:column;gap:0.875rem">' +
+    '<div style="padding:0.125rem">' +
+      '<div style="font-size:1.0625rem;font-weight:700;letter-spacing:-0.01em">' + App.esc(App.t("plan.simulate.title")) + "</div>" +
+      '<p class="tiny muted" style="margin-top:0.25rem">' + App.esc(App.t("plan.simulate.intro")) + "</p>" +
+    "</div>" +
+    '<div class="card">' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("plan.simulate.item_label")) + "</span>" +
+      '<input type="text" id="sim-name" placeholder="' + App.esc(App.t("plan.simulate.item_placeholder")) + '"></label>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("plan.simulate.price_label")) + "</span>" +
+      '<input type="text" inputmode="numeric" id="sim-amount" class="amount-input" placeholder="' + App.esc(App.t("plan.simulate.price_placeholder")) + '"></label>' +
+      '<label class="field"><span class="field-label">' + App.esc(App.t("plan.simulate.maintenance_label")) + "</span>" +
+      '<input type="text" inputmode="numeric" id="sim-maintenance" placeholder="' + App.esc(App.t("plan.simulate.maintenance_placeholder")) + '"></label>' +
+      '<button type="button" id="run-simulation">' + App.esc(App.t("plan.simulate.run")) + "</button>" +
+    "</div>" +
+    '<div id="simulation-result"></div>' +
+  "</div>";
 };
 
+App.SIM_TRAFFIC_COLOR = { green: "var(--neon-green)", yellow: "var(--neon-orange)", red: "var(--neon-red)" };
+
 App.renderScenarios = function (result) {
-  var rows = result.scenarios.map(function (scenario) {
+  var selectedKey = App.state.simSelectedScenario || "now";
+  var selected = result.scenarios.filter(function (s) { return s.key === selectedKey; })[0] || result.scenarios[1];
+  var color = App.SIM_TRAFFIC_COLOR[selected.traffic_light];
+
+  var itemCard = result.item_name ? '<div class="card" style="border-color:rgba(255,107,122,0.28);flex-direction:row;align-items:center;gap:0.75rem">' +
+      '<span class="neon-ledger-row-icon" style="background:rgba(255,107,122,0.13);color:var(--neon-red)">' + App.icon("cash") + "</span>" +
+      '<div style="flex:1;min-width:0"><div class="tiny muted">' + App.esc(App.t("plan.simulate.item_under_review")) + "</div>" +
+        '<div style="font-size:0.8125rem;font-weight:600;margin-top:0.125rem">' + App.esc(result.item_name) + "</div></div>" +
+      '<span class="num" style="font-size:1rem;font-weight:700;color:var(--neon-red)">−' + App.formatVnd(result.total_cost) + "đ</span>" +
+    "</div>" : "";
+
+  var cards = result.scenarios.map(function (scenario) {
     var when;
     if (scenario.first_negative) {
       when = App.t("plan.simulate.negative_from", { period: scenario.period_labels[scenario.first_negative - 1], n: scenario.first_negative });
@@ -1617,27 +1657,43 @@ App.renderScenarios = function (result) {
     } else {
       when = App.t("plan.simulate.never_breaks");
     }
-    var isBaseline = scenario.key === "none";
-    return '<div class="bar-item"' + (isBaseline ? ' style="opacity:0.75"' : "") + ">" +
-      '<div class="bar-top"><span>' + App.esc(scenario.label) + (isBaseline ? App.esc(App.t("plan.simulate.compare_tag")) : "") + "</span>" +
-      '<span class="chip chip-' + (scenario.traffic_light === "green" ? "vung" : scenario.traffic_light === "yellow" ? "mong_manh" : "nguy_hiem") + '">' +
-      App.esc(App.label("traffic_light", scenario.traffic_light)) + "</span></div>" +
-      '<p class="tiny muted">' + App.esc(when) + "</p>" +
-      '<p class="tiny faint num">' + App.esc(App.t("plan.simulate.floor_label", { amount: App.formatDong(scenario.lowest_balance) })) + "</p>" +
-      "</div>";
+    var isOn = scenario.key === selectedKey;
+    var scColor = App.SIM_TRAFFIC_COLOR[scenario.traffic_light];
+    return '<button type="button" class="neon-jar-card" style="text-align:left;cursor:pointer' + (isOn ? ";border-color:" + scColor : "") + '" data-sim-scenario="' + App.esc(scenario.key) + '">' +
+      '<div style="display:flex;align-items:center;gap:0.6875rem">' +
+        '<span style="flex:none;width:0.625rem;height:0.625rem;border-radius:999px;background:' + scColor + ";box-shadow:0 0 8px " + scColor + '"></span>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:0.844rem;font-weight:700">' + App.esc(scenario.label) + (scenario.key === "none" ? App.esc(App.t("plan.simulate.compare_tag")) : "") + "</div>" +
+          '<div class="tiny muted" style="margin-top:0.125rem">' + App.esc(when) + "</div>" +
+        "</div>" +
+        '<div style="text-align:right;flex:none">' +
+          '<div class="num" style="font-size:0.844rem;font-weight:700;color:' + scColor + '">' + App.formatVnd(scenario.lowest_balance) + "đ</div>" +
+          '<div style="font-size:0.625rem;font-weight:600;color:var(--neon-ink-dim);letter-spacing:0.04em">' + App.esc(App.t("plan.simulate.floor_tag")) + "</div>" +
+        "</div>" +
+      "</div>" +
+    "</button>";
   }).join("");
 
-  return '<div class="stack">' +
+  return '<div style="display:flex;flex-direction:column;gap:0.75rem">' +
+    itemCard +
+    '<div class="stack-tight">' + cards + "</div>" +
+    '<div class="card">' +
+      '<div class="spread" style="align-items:center">' +
+        '<h2 style="margin:0">' + App.esc(App.t("plan.simulate.chart_title")) + "</h2>" +
+        '<div style="display:flex;gap:0.625rem;font-size:0.625rem;font-weight:600;color:var(--neon-ink-soft)">' +
+          '<span style="display:flex;align-items:center;gap:0.3rem"><span style="width:0.75rem;height:0.125rem;background:' + color + '"></span>' + App.esc(App.t("plan.simulate.legend_with")) + "</span>" +
+          '<span style="display:flex;align-items:center;gap:0.3rem"><span style="width:0.75rem;height:0.125rem;background:var(--neon-ink-faint)"></span>' + App.esc(App.t("plan.simulate.legend_without")) + "</span>" +
+        "</div>" +
+      "</div>" +
+      App.lineChart(result.labels, selected.series, { altSeries: result.baseline_series, color: color }) +
+    "</div>" +
     '<dl class="stack-tight">' +
       '<div class="kv"><dt>' + App.esc(App.t("plan.simulate.total_cost")) + "</dt><dd>" + App.formatDong(result.total_cost) + "</dd></div>" +
       '<div class="kv"><dt>' + App.esc(App.t("plan.simulate.current_balance")) + "</dt><dd>" + App.formatDong(result.starting_balance) + "</dd></div>" +
     "</dl>" +
-    App.lineChart(result.labels, result.baseline_series) +
-    '<p class="tiny faint">' + App.esc(App.t("plan.simulate.chart_footnote")) + "</p>" +
-    rows +
-    '<button type="button" class="secondary small" id="ai-simulation">' + App.esc(App.t("plan.simulate.ask_ai")) + "</button>" +
+    '<button type="button" class="secondary" id="ai-simulation">' + App.esc(App.t("plan.simulate.ask_ai")) + "</button>" +
     '<div class="ai-panel hidden" id="ai-sim-panel"></div>' +
-    "</div>";
+  "</div>";
 };
 
 // =============================================================== cài đặt

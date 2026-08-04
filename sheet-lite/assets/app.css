@@ -1086,10 +1086,10 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 /* The daily AI-summary panel (#ai-daily) is the app's shared .ai-panel
    component, unstyled here until caught live: on Nhà it kept the indigo
    system's light lavender card, floating oddly on the dark background. */
-#view-home .ai-panel {
+#view-home .ai-panel, .neon-plan-section .ai-panel {
   background: var(--neon-surface-2); border-color: rgba(177, 140, 255, 0.3); color: var(--neon-ink);
 }
-#view-home .ai-panel .eyebrow { color: var(--neon-purple); }
+#view-home .ai-panel .eyebrow, .neon-plan-section .ai-panel .eyebrow { color: var(--neon-purple); }
 
 /* Generic buttons (first-run card's CTAs, anything not one of the bespoke
    neon components below) get the same opt-out-per-variant treatment as the
@@ -1103,11 +1103,11 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
    twice now: the quickbar's "Nhập ảnh"/"Phân tích" buttons and the alert
    bell during v3.9, then every ledger row rendering as a solid gradient
    block during the Sổ rebuild, both before their classes were added here. */
-#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row),
-#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row),
-#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row),
-#onboarding button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row),
-.neon-plan-section button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row) {
+#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
+#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
+#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
+#onboarding button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
+.neon-plan-section button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card) {
   background: var(--neon-gradient); color: var(--neon-bg); box-shadow: 0 16px 34px -14px rgba(177, 140, 255, 0.8);
 }
 #view-home button.secondary, #view-add button.secondary, #view-list button.secondary, .neon-plan-section button.secondary {
@@ -1496,7 +1496,7 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 .neon-analytics-bar-pair { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 0.1875rem; }
 .neon-analytics-bar { width: 0.5625rem; border-radius: 0.25rem 0.25rem 0.125rem 0.125rem; }
 
-.neon-jar-card { border-radius: 1.125rem; background: var(--neon-surface); border: 1px solid var(--neon-line); padding: 0.875rem 0.9375rem; }
+.neon-jar-card { border-radius: 1.125rem; background: var(--neon-surface); color: var(--neon-ink); border: 1px solid var(--neon-line); padding: 0.875rem 0.9375rem; box-shadow: none; width: 100%; }
 .neon-jar-card.is-near { border-color: rgba(255, 145, 66, 0.3); }
 .neon-jar-card.is-over { border-color: rgba(255, 107, 122, 0.35); }
 .neon-plan-section .field-label { color: var(--neon-ink-soft); }
@@ -1507,7 +1507,7 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 .neon-plan-section .chart .grid-line { stroke: var(--neon-line); }
 .neon-plan-section .chart .zero-line { stroke: var(--neon-ink-faint); }
 .neon-plan-section .chart .series { stroke: var(--neon-purple); }
-.neon-plan-section .chart .series-alt { stroke: var(--neon-orange); }
+.neon-plan-section .chart .series-alt { stroke: var(--neon-ink-faint); stroke-dasharray: 4 4; }
 .neon-plan-section .chart .area { fill: var(--neon-purple); }
 .neon-plan-section .chart .endpoint { fill: var(--neon-purple); }
 .neon-plan-section .chart .tick { fill: var(--neon-ink-dim); }

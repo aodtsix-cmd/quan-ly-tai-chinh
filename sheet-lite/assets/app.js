@@ -22,6 +22,7 @@ App.state = {
   notificationsOpen: false, // Nhà's bell icon opens this in place of the dashboard
   notificationFilter: "all",
   readNotifications: {}, // session-only "read" flags, keyed by notification id - never persisted
+  simSelectedScenario: "now", // which Mô phỏng scenario card is highlighted on the chart
   periodId: null,
   loading: false,
   // Add-form category picker: which id is chosen, and which parent's children
@@ -377,6 +378,18 @@ App.loadDailySummary = function () {
     .then(function (result) {
       App.aiSummaryLoadedFor = today;
       if (!result.available) {
+        // "no_data" (empty ledger) is the one refusal worth naming instead of
+        // just disappearing - it's the AI declining to guess, not a generic
+        // outage, and the handoff's own AI-states gallery treats that
+        // distinction as worth surfacing. Every other reason (no_key, quota,
+        // network) still degrades silently, unchanged - those are already
+        // covered by other UI (Settings' health check names a missing key).
+        if (result.reason === "no_data") {
+          panel.innerHTML = '<span class="eyebrow">' + App.esc(App.t("home.ai_daily.eyebrow")) + "</span>" +
+            '<p class="muted">' + App.esc(App.t("home.ai_daily.no_data")) + "</p>";
+          panel.classList.remove("hidden");
+          return;
+        }
         panel.classList.add("hidden");
         return;
       }
@@ -804,7 +817,7 @@ App.PLAN_SECTIONS = [
 // dark content" pattern already proven by the topbar/tabbar on Nhà/Nhập),
 // but planHeader's own card is skipped for these since each one draws its
 // own header instead of using the generic icon+title+desc card.
-App.PLAN_NEON_SECTIONS = { analytics: true, budget: true, forecast: true, goals: true };
+App.PLAN_NEON_SECTIONS = { analytics: true, budget: true, forecast: true, goals: true, simulate: true };
 
 App.renderPlan = function () {
   var data = App.state.data;
@@ -937,6 +950,8 @@ App.runSimulation = function () {
     return;
   }
   App.simResult = App.computeScenarios(App.state.data, amount, maintenance);
+  App.simResult.item_name = App.$("#sim-name").value.trim();
+  App.state.simSelectedScenario = "now";
   App.setHtml("#simulation-result", App.renderScenarios(App.simResult));
 };
 
@@ -1069,7 +1084,7 @@ document.addEventListener("click", function (event) {
     "[data-hide-income], [data-delete-event], [data-event-to-goal], [data-pick-category], [data-open-parent], " +
     "[data-pick-account], [data-pick-to-account], [data-toggle-tx], [data-dup-tx], [data-reset-tx-filters], " +
     "[data-goal-detail], [data-goal-back], [data-goal-quick], [data-pick-topup-account], " +
-    "[data-notify-back], [data-notify-filter], [data-notify-read], " +
+    "[data-notify-back], [data-notify-filter], [data-notify-read], [data-sim-scenario], " +
     "[data-set-theme], [data-set-palette], [data-set-lang], #add-event-item, #save-import, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
     "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, #goal-topup-submit, " +
@@ -1210,6 +1225,12 @@ document.addEventListener("click", function (event) {
   if (attr("data-notify-read")) {
     App.state.readNotifications[attr("data-notify-read")] = true;
     App.renderCurrentTab();
+    return;
+  }
+
+  if (attr("data-sim-scenario")) {
+    App.state.simSelectedScenario = attr("data-sim-scenario");
+    App.setHtml("#simulation-result", App.renderScenarios(App.simResult));
     return;
   }
 

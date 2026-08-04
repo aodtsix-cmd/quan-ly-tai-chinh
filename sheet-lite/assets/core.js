@@ -837,6 +837,7 @@ App.I18N = {
 
     "home.ai_daily.eyebrow": "Nhận xét hôm nay",
     "home.ai_daily.loading": "Đang đọc số liệu…",
+    "home.ai_daily.no_data": "Chưa có gì để phân tích — ghi khoản đầu tiên đi, mình không đoán hộ bạn được.",
 
     "notify.title": "Nhắc & cảnh báo",
     "notify.unread_count": "{{n}} chưa đọc",
@@ -1148,7 +1149,12 @@ App.I18N = {
     "plan.simulate.chart_footnote": "Đường trên là quỹ đạo nếu KHÔNG mua. Bảng dưới so từng phương án.",
     "plan.simulate.ask_ai": "Hỏi AI nên chọn phương án nào",
     "plan.simulate.floor_label": "Đáy: {{amount}}",
+    "plan.simulate.floor_tag": "THẤP NHẤT",
     "plan.simulate.compare_tag": " (để so sánh)",
+    "plan.simulate.item_under_review": "Khoản đang xét",
+    "plan.simulate.chart_title": "Số dư dự báo 12 kỳ",
+    "plan.simulate.legend_with": "Có khoản này",
+    "plan.simulate.legend_without": "Không có",
     "plan.simulate.negative_from": "Âm quỹ từ kỳ {{period}} (kỳ thứ {{n}}).",
     "plan.simulate.below_threshold_from": "Tụt dưới mức an toàn từ kỳ {{period}}.",
     "plan.simulate.never_breaks": "Không chạm ngưỡng nguy hiểm trong 12 kỳ tới.",
@@ -1472,6 +1478,7 @@ App.I18N = {
 
     "home.ai_daily.eyebrow": "Today's take",
     "home.ai_daily.loading": "Reading the numbers…",
+    "home.ai_daily.no_data": "Nothing to analyze yet — log your first transaction, I can't guess for you.",
 
     "notify.title": "Reminders & alerts",
     "notify.unread_count": "{{n}} unread",
@@ -1783,7 +1790,12 @@ App.I18N = {
     "plan.simulate.chart_footnote": "The line above is the trajectory if you DON'T buy it. The table below compares each option.",
     "plan.simulate.ask_ai": "Ask AI which option to pick",
     "plan.simulate.floor_label": "Lowest: {{amount}}",
+    "plan.simulate.floor_tag": "LOWEST",
     "plan.simulate.compare_tag": " (for comparison)",
+    "plan.simulate.item_under_review": "Item under review",
+    "plan.simulate.chart_title": "Projected balance, 12 periods",
+    "plan.simulate.legend_with": "With this",
+    "plan.simulate.legend_without": "Without it",
     "plan.simulate.negative_from": "Balance goes negative from period {{period}} (period {{n}}).",
     "plan.simulate.below_threshold_from": "Drops below the safe threshold from period {{period}}.",
     "plan.simulate.never_breaks": "Doesn't hit the danger threshold within the next 12 periods.",
