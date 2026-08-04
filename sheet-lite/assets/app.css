@@ -1036,7 +1036,7 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
    it"), so --font-ui/--font-num are used exactly as everywhere else in the
    app. */
 
-#view-home, #view-add, #view-list, .neon-plan-section {
+#view-home, #view-add, #view-list, #onboarding, .neon-plan-section {
   --neon-bg: #0a0b0e;
   --neon-surface: #14161c;
   --neon-surface-2: #1a1d25;
@@ -1059,25 +1059,26 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 /* Bleed to the shared shell's own edges rather than sitting as a card on the
    page background - main's centring/padding stays (so width still matches
    every other tab), but the content itself reads as its own dark surface. */
-#view-home, #view-add, #view-list, .neon-plan-section { background: var(--neon-bg); color: var(--neon-ink); border-radius: var(--radius); padding: var(--space-4); gap: var(--space-4) !important; }
+#view-home, #view-add, #view-list, #onboarding, .neon-plan-section { background: var(--neon-bg); color: var(--neon-ink); border-radius: var(--radius); padding: var(--space-4); gap: var(--space-4) !important; }
 #view-home, #view-add, #view-list { margin: calc(var(--space-4) * -1); }
+#onboarding { min-height: 100%; }
 
 @media (max-width: 22.5rem) {
   #view-home, #view-add, #view-list { margin: calc(var(--space-3) * -1); padding: var(--space-3); }
   .neon-plan-section { padding: var(--space-3); }
 }
 
-#view-home .card, #view-add .card, #view-list .card, .neon-plan-section .card {
+#view-home .card, #view-add .card, #view-list .card, #onboarding .card, .neon-plan-section .card {
   background: var(--neon-surface);
   border-color: var(--neon-line);
   color: var(--neon-ink);
   box-shadow: 0 20px 40px -26px rgba(0, 0, 0, 0.9);
 }
 
-#view-home .muted, #view-add .muted, #view-list .muted, .neon-plan-section .muted { color: var(--neon-ink-soft); }
-#view-home .faint, #view-add .faint, #view-list .faint, .neon-plan-section .faint { color: var(--neon-ink-faint); }
-#view-home .eyebrow, #view-add .eyebrow, #view-list .eyebrow, .neon-plan-section .eyebrow { color: var(--neon-ink-soft); }
-#view-home a.link, #view-add a.link, #view-list a.link, .neon-plan-section a.link, #view-home .link, #view-add .link, #view-list .link, .neon-plan-section .link { color: var(--neon-purple); }
+#view-home .muted, #view-add .muted, #view-list .muted, #onboarding .muted, .neon-plan-section .muted { color: var(--neon-ink-soft); }
+#view-home .faint, #view-add .faint, #view-list .faint, #onboarding .faint, .neon-plan-section .faint { color: var(--neon-ink-faint); }
+#view-home .eyebrow, #view-add .eyebrow, #view-list .eyebrow, #onboarding .eyebrow, .neon-plan-section .eyebrow { color: var(--neon-ink-soft); }
+#view-home a.link, #view-add a.link, #view-list a.link, #onboarding a.link, .neon-plan-section a.link, #view-home .link, #view-add .link, #view-list .link, #onboarding .link, .neon-plan-section .link { color: var(--neon-purple); }
 #view-home .amount-out, #view-add .amount-out, #view-list .amount-out, .neon-plan-section .amount-out { color: var(--neon-red); }
 #view-home .amount-in, #view-add .amount-in, #view-list .amount-in, .neon-plan-section .amount-in { color: var(--neon-green); }
 #view-home .amount-transfer, #view-add .amount-transfer, #view-list .amount-transfer, .neon-plan-section .amount-transfer { color: var(--neon-ink-soft); }
@@ -1102,10 +1103,11 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
    twice now: the quickbar's "Nhập ảnh"/"Phân tích" buttons and the alert
    bell during v3.9, then every ledger row rendering as a solid gradient
    block during the Sổ rebuild, both before their classes were added here. */
-#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch),
-#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch),
-#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch),
-.neon-plan-section button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch) {
+#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row),
+#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row),
+#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row),
+#onboarding button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row),
+.neon-plan-section button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row) {
   background: var(--neon-gradient); color: var(--neon-bg); box-shadow: 0 16px 34px -14px rgba(177, 140, 255, 0.8);
 }
 #view-home button.secondary, #view-add button.secondary, #view-list button.secondary, .neon-plan-section button.secondary {
@@ -1533,3 +1535,32 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 .neon-plan-section .row { border-color: var(--neon-line); }
 .neon-plan-section .row-icon { background: var(--neon-surface-3); color: var(--neon-ink-2); }
 .neon-plan-section .row-meta { color: var(--neon-ink-soft); }
+
+/* ------------------------------------------------------------ onboarding */
+/* The connection-setup screen (URL + token) IS this app's real "first run" -
+   there's no separate tutorial step before it, unlike the handoff's fictional
+   4-step wallet-picker/period-day-picker/promises flow, which assumes
+   features (bank "connections", a period-day setter) this app doesn't have.
+   Reskinned as the honest substitute rather than building that fiction. */
+#onboarding .field-label { color: var(--neon-ink-soft); }
+#onboarding input[type="text"], #onboarding input[type="password"] {
+  background: var(--neon-surface-2); border: 1px solid var(--neon-line); color: var(--neon-ink);
+}
+#onboarding input::placeholder { color: var(--neon-ink-dim); }
+#onboarding h1 { color: var(--neon-ink); }
+#onboarding .notice { border-radius: 0.875rem; }
+#onboarding .notice-info { background: var(--neon-surface); color: var(--neon-ink-soft); border: 1px solid var(--neon-line); }
+#onboarding .notice-error { background: rgba(255, 107, 122, 0.1); color: var(--neon-red); border: 1px solid rgba(255, 107, 122, 0.3); }
+#onboarding .notice-ok { background: rgba(63, 245, 165, 0.1); color: var(--neon-green); border: 1px solid rgba(63, 245, 165, 0.3); }
+
+/* ------------------------------------------------------------ notifications */
+.neon-notif-row {
+  position: relative; width: 100%; text-align: left; border-radius: 1.125rem; border: 1px solid var(--neon-line);
+  background: var(--neon-surface); color: var(--neon-ink); padding: 0.8125rem 0.9375rem; display: flex; align-items: flex-start; gap: 0.75rem;
+  cursor: pointer; box-shadow: none;
+}
+.neon-notif-row.is-read { opacity: 0.55; }
+.neon-notif-dot {
+  position: absolute; top: 0.75rem; right: 0.75rem; width: 0.4375rem; height: 0.4375rem; border-radius: 999px;
+  box-shadow: 0 0 8px currentColor;
+}

@@ -526,7 +526,125 @@ App.renderAccountsCard = function (data) {
     '<div class="rows">' + (rows || App.emptyState(App.t("home.accounts.empty"))) + "</div></section>";
 };
 
+// Ported from FinanceNotifyNeon.dc.html. Opened from Nhà's bell icon, as a
+// sub-state of the Home tab (App.state.notificationsOpen) - the same
+// pattern App.state.goalDetailId already uses for a screen this app never
+// had a route for. There is no backend notifications field and none is
+// added: every item here is derived, on every render, from data already in
+// the bootstrap payload (recurring due dates, this period's budget_statuses,
+// goal deadlines) - so it can never drift from what Nhà/Kế hoạch already
+// show, and never needs its own storage or API call.
+// The handoff's 4 preference toggles are NOT built: there is nowhere to
+// persist them (no notifications settings on the backend), and a toggle
+// that resets on reload would be worse than no toggle at all.
+// "Read" is real but deliberately session-only (App.state.readNotifications,
+// never written to localStorage or the sheet) - tapping a card dims it for
+// this visit, matching how alert dismissal already works elsewhere in this
+// app (a muted look, not a permanent suppression of a still-true condition).
+App.buildNotifications = function (data) {
+  var items = [];
+
+  // The bell used to just scroll to the top, where data.alerts already
+  // renders as banners - folding them in here too (not just leaving them at
+  // the top of Nhà) means repurposing the bell for this richer screen loses
+  // nothing that already existed.
+  (data.alerts || []).forEach(function (alert) {
+    items.push({
+      id: "alert-" + alert.code, kind: "alert", glyph: "shield",
+      title: App.t(alert.level === "danger" ? "notify.alert_title_danger" : "notify.alert_title_warning"),
+      body: alert.message, tag: App.t("notify.tag_alert"), ts: data.period.today,
+    });
+  });
+
+  (data.recurring || []).forEach(function (item) {
+    if (item.direction !== "out") return;
+    var days = App.daysUntil(item.next_due);
+    if (days === null || days > 3) return;
+    items.push({
+      id: "sub-" + item.name, kind: "sub", glyph: "repeat",
+      title: item.name,
+      body: App.t(days <= 0 ? "notify.sub_due_today" : "notify.sub_due_in", { amount: App.formatVnd(item.amount), n: days }),
+      tag: App.label("frequency", item.frequency), ts: item.next_due,
+    });
+  });
+
+  (data.budget_statuses || []).forEach(function (status) {
+    if (status.pct_used < 85) return;
+    items.push({
+      id: "jar-" + status.category_id, kind: "jar", glyph: "wallet",
+      title: status.category_name,
+      body: App.t(status.over_budget ? "notify.jar_over" : "notify.jar_near", {
+        category: status.category_name, amount: App.formatVnd(Math.abs(status.remaining)), pct: Math.round(status.pct_used),
+      }),
+      tag: App.t("notify.tag_jar"), ts: data.period.today,
+    });
+  });
+
+  (data.goals || []).forEach(function (goal) {
+    if (!goal.is_overdue && !goal.is_off_track && goal.periods_remaining > 1) return;
+    items.push({
+      id: "goal-" + goal.id, kind: "goal", glyph: "target",
+      title: goal.name,
+      body: goal.is_overdue
+        ? App.t("notify.goal_overdue", { name: goal.name, amount: App.formatVnd(goal.remaining_amount) })
+        : App.t("notify.goal_off_track", { name: goal.name, amount: App.formatVnd(goal.required_per_period) }),
+      tag: App.t("notify.tag_goal"), ts: goal.deadline,
+    });
+  });
+
+  items.sort(function (a, b) { return String(a.ts) < String(b.ts) ? -1 : 1; });
+  return items;
+};
+
+App.NOTIFY_FILTERS = [["all", "notify.filter_all"], ["alert", "notify.filter_alert"], ["sub", "notify.filter_sub"], ["jar", "notify.filter_jar"], ["goal", "notify.filter_goal"]];
+
+App.renderNotifications = function (data) {
+  var all = App.buildNotifications(data);
+  var filter = App.state.notificationFilter || "all";
+  var shown = filter === "all" ? all : all.filter(function (n) { return n.kind === filter; });
+  var unreadCount = all.filter(function (n) { return !App.state.readNotifications[n.id]; }).length;
+
+  var pills = App.NOTIFY_FILTERS.map(function (pair) {
+    return '<button type="button" class="neon-filter-pill" data-notify-filter="' + pair[0] + '" aria-pressed="' +
+      (filter === pair[0]) + '">' + App.esc(App.t(pair[1])) + "</button>";
+  }).join("");
+
+  var rows = shown.length === 0
+    ? '<div class="neon-ledger-empty"><span class="neon-ledger-empty-icon">' + App.icon("bell") + "</span>" +
+      '<div style="font-size:0.844rem;font-weight:700">' + App.esc(App.t("notify.empty_title")) + "</div>" +
+      '<div class="tiny muted">' + App.esc(App.t("notify.empty_subtitle")) + "</div></div>"
+    : shown.map(function (n) {
+        var isRead = !!App.state.readNotifications[n.id];
+        var palette = {
+          alert: ["var(--neon-red)", "rgba(255,107,122,0.14)"], sub: ["var(--neon-orange)", "rgba(255,145,66,0.14)"],
+          jar: ["var(--neon-orange)", "rgba(255,145,66,0.14)"], goal: ["var(--neon-purple)", "rgba(177,140,255,0.14)"],
+        }[n.kind];
+        return '<button type="button" class="neon-notif-row' + (isRead ? " is-read" : "") + '" data-notify-read="' + App.esc(n.id) + '">' +
+          '<span class="neon-ledger-row-icon" style="' + (isRead ? "" : "background:" + palette[1] + ";color:" + palette[0]) + '">' + App.icon(n.glyph) + "</span>" +
+          (isRead ? "" : '<span class="neon-notif-dot" style="background:' + palette[0] + '"></span>') +
+          '<div style="flex:1;min-width:0;text-align:left">' +
+            '<div style="font-size:0.8125rem;font-weight:700">' + App.esc(n.title) + "</div>" +
+            '<div class="tiny" style="margin-top:0.1875rem;color:var(--neon-ink-2);line-height:1.4">' + App.esc(n.body) + "</div>" +
+            '<div class="tiny muted num" style="margin-top:0.3125rem">' + App.esc(n.tag) + " · " + App.esc(App.formatDayMonth(n.ts)) + "</div>" +
+          "</div>" +
+        "</button>";
+      }).join("");
+
+  return '<div style="display:flex;flex-direction:column;gap:0.875rem">' +
+    '<div style="display:flex;align-items:center;gap:0.75rem;padding:0.125rem">' +
+      '<button type="button" class="icon-btn" data-notify-back aria-label="' + App.esc(App.t("common.back")) + '">' + App.icon("back") + "</button>" +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:1.0625rem;font-weight:700;letter-spacing:-0.01em">' + App.esc(App.t("notify.title")) + "</div>" +
+        '<div class="tiny muted">' + App.esc(App.t("notify.unread_count", { n: unreadCount })) + "</div>" +
+      "</div>" +
+    "</div>" +
+    '<div class="neon-filter-row">' + pills + "</div>" +
+    '<div class="stack-tight">' + rows + "</div>" +
+  "</div>";
+};
+
 App.renderDashboard = function (data) {
+  if (App.state.notificationsOpen) return App.renderNotifications(data);
   if (data.transaction_count === 0) {
     return App.renderFirstRunCard(data) + App.renderAccountsCard(data);
   }

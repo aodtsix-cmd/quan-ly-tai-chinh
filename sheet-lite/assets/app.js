@@ -19,6 +19,9 @@ App.state = {
   txSort: "desc", // "desc" = server order (newest first); "asc" reverses it
   txOpenId: null, // which ledger row's inline detail is expanded
   goalDetailId: null, // which goal's detail view is open (null = the Hũ list)
+  notificationsOpen: false, // Nhà's bell icon opens this in place of the dashboard
+  notificationFilter: "all",
+  readNotifications: {}, // session-only "read" flags, keyed by notification id - never persisted
   periodId: null,
   loading: false,
   // Add-form category picker: which id is chosen, and which parent's children
@@ -1066,6 +1069,7 @@ document.addEventListener("click", function (event) {
     "[data-hide-income], [data-delete-event], [data-event-to-goal], [data-pick-category], [data-open-parent], " +
     "[data-pick-account], [data-pick-to-account], [data-toggle-tx], [data-dup-tx], [data-reset-tx-filters], " +
     "[data-goal-detail], [data-goal-back], [data-goal-quick], [data-pick-topup-account], " +
+    "[data-notify-back], [data-notify-filter], [data-notify-read], " +
     "[data-set-theme], [data-set-palette], [data-set-lang], #add-event-item, #save-import, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
     "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, #goal-topup-submit, " +
@@ -1201,6 +1205,14 @@ document.addEventListener("click", function (event) {
     return;
   }
 
+  if (target.hasAttribute("data-notify-back")) { App.state.notificationsOpen = false; App.renderCurrentTab(); return; }
+  if (attr("data-notify-filter")) { App.state.notificationFilter = attr("data-notify-filter"); App.renderCurrentTab(); return; }
+  if (attr("data-notify-read")) {
+    App.state.readNotifications[attr("data-notify-read")] = true;
+    App.renderCurrentTab();
+    return;
+  }
+
   if (attr("data-hide-recurring")) {
     if (!window.confirm(App.t("confirm.stop_recurring"))) return;
     App.apiPost("deactivate_recurring", { id: attr("data-hide-recurring") })
@@ -1317,7 +1329,7 @@ document.addEventListener("click", function (event) {
     case "tx-today-btn": App.setTodayDate(); break;
     // The alert banners already render at the very top of Nhà - the bell is
     // a shortcut to them, not a separate inbox this app doesn't have.
-    case "home-bell": window.scrollTo({ top: 0, behavior: "smooth" }); break;
+    case "home-bell": App.state.notificationsOpen = true; App.renderCurrentTab(); break;
     case "home-networth-eye":
       localStorage.setItem(App.NET_WORTH_HIDDEN_KEY, App.netWorthHidden() ? "0" : "1");
       App.renderCurrentTab();
