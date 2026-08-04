@@ -1413,6 +1413,44 @@ App.renderImportCandidates = function (data, candidates) {
     '<div id="import-save-message"></div>';
 };
 
+// Estimated vs actual: the sources card only ever shows what was DECLARED
+// (expected_amount, reliability-discounted). This answers the different
+// question of whether that estimate is actually panning out - built purely
+// from fields the bootstrap already sends (income_sources' own
+// expected_amount, metrics.current_savings_rate's real transaction-derived
+// income for the elapsed part of the period, and period.days_elapsed/total
+// for the same time-vs-money pacing already used for budget jars), so it
+// needed no backend change at all.
+App.renderIncomeActualCard = function (data) {
+  var totalExpected = data.income_sources.reduce(function (sum, s) { return sum + s.expected_amount; }, 0);
+  if (totalExpected <= 0) {
+    return '<section class="card">' +
+      '<div class="card-head"><h2>' + App.esc(App.t("plan.income.actual_title")) + "</h2></div>" +
+      '<p class="tiny muted">' + App.esc(App.t("plan.income.no_estimate_note")) + "</p>" +
+    "</section>";
+  }
+
+  var actualIncome = data.metrics.current_savings_rate.income;
+  var elapsedFraction = data.period.days_total > 0 ? data.period.days_elapsed / data.period.days_total : 0;
+  var expectedToDate = totalExpected * elapsedFraction;
+  var pct = expectedToDate > 0 ? (actualIncome / expectedToDate) * 100 : (actualIncome > 0 ? 100 : 0);
+
+  var paceKey = pct >= 105 ? "pace_ahead" : (pct >= 90 ? "pace_on_track" : (pct >= 60 ? "pace_behind" : "pace_far_behind"));
+  var paceClass = pct >= 90 ? "is-good" : (pct >= 60 ? "" : "is-warn");
+
+  return '<section class="card">' +
+      '<div class="card-head"><h2>' + App.esc(App.t("plan.income.actual_title")) + "</h2></div>" +
+      '<p class="tiny muted">' + App.esc(App.t("plan.income.actual_intro")) + "</p>" +
+      '<dl class="stack-tight">' +
+        '<div class="kv"><dt>' + App.esc(App.t("plan.income.expected_total")) + "</dt><dd>" + App.formatDong(totalExpected) + "</dd></div>" +
+        '<div class="kv"><dt>' + App.esc(App.t("plan.income.expected_to_date")) + "</dt><dd>" + App.formatDong(Math.round(expectedToDate)) + "</dd></div>" +
+        '<div class="kv"><dt>' + App.esc(App.t("plan.income.actual_income")) + '</dt><dd class="amount-in">' + App.formatDong(actualIncome) + "</dd></div>" +
+      "</dl>" +
+      App.track(pct, paceClass) +
+      '<p class="small ' + (paceClass || "muted") + '">' + App.esc(App.t("plan.income." + paceKey)) + "</p>" +
+    "</section>";
+};
+
 App.renderIncomePlan = function (data) {
   var sustainability = data.income_sustainability;
 
@@ -1442,9 +1480,10 @@ App.renderIncomePlan = function (data) {
     summary = '<p class="small muted">' + App.esc(App.t("plan.income.no_data_note")) + "</p>";
   }
 
-  return '<section class="card">' +
+  return App.renderIncomeActualCard(data) +
+    '<section class="card">' +
       '<div class="card-head"><h2>' + App.esc(App.t("plan.income.reliable_title")) + "</h2></div>" +
-      '<p class="tiny muted">' + App.esc(App.t("plan.income.reliable_intro")) + "</p>" +
+      '<p class="tiny muted">' + App.t("plan.income.reliable_intro") + "</p>" +
       summary +
     "</section>" +
     '<section class="card">' +

@@ -145,7 +145,10 @@
                without a second visible control the design doesn't show. -->
           <label class="neon-date-display" for="tx-date">
             <span data-i18n="add.date_label">Ngày</span>
-            <span id="tx-date-display" class="num"></span>
+            <span class="neon-date-value">
+              <span id="tx-date-display" class="num"></span>
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="neon-date-icon"><rect x="3.5" y="5.5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3.5v4M16 3.5v4"/></svg>
+            </span>
             <input type="date" id="tx-date">
           </label>
           <button type="button" class="neon-today-btn" id="tx-today-btn" data-i18n="common.today">Hôm nay</button>
