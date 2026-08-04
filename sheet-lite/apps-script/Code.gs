@@ -72,7 +72,7 @@
 // redeploy actually took - forgetting to pick "Phiên bản: Mới" when
 // redeploying is the single easiest mistake to make with Apps Script, and it
 // fails silently: the old code just keeps serving.
-var VERSION = "3.6";
+var VERSION = "3.7";
 
 var SHEET_ACCOUNTS = "Accounts";
 var SHEET_CATEGORIES = "Categories";
@@ -370,6 +370,21 @@ function handle_(e, method) {
       result = readActions[action](params);
     } else if (writeActions[action]) {
       result = withLock_(function () { return writeActions[action](params); });
+      // Every write used to be followed by a SEPARATE bootstrap fetch from the
+      // frontend - two full network round trips for one user action, which is
+      // most of what actually made every save feel slow. Echoing a fresh
+      // bootstrap back in the same response lets the frontend skip that
+      // second round trip entirely (see App.load's `data` option). Computed
+      // outside the lock: the write itself is already committed by this
+      // point, so there's nothing left to protect. analyze_image is excluded
+      // on purpose - it doesn't write to the ledger at all (review-before-
+      // insert, see import_transactions), and it runs once per photo in a
+      // batch before the user has confirmed anything, so computing this for
+      // every single image would be pure waste.
+      if (action !== "analyze_image") {
+        result = result || {};
+        result.bootstrap = actionBootstrap_(params);
+      }
     } else {
       throw new Error("Hanh dong khong hop le: " + action);
     }

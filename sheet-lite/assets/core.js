@@ -66,11 +66,19 @@ App.parseResponse = function (response) {
 // custom application/json content type makes the browser send one. text/plain
 // is a CORS "simple request" so no preflight happens, and Code.gs parses the
 // body as JSON regardless of the declared type.
+// Carries the period the user is currently looking at (Kế hoạch → Ngân sách
+// can browse past periods) along on every write, not just reads - so that
+// when Code.gs echoes a fresh bootstrap back in the same response (see
+// App.load's `data` option), it's built for the period actually on screen
+// rather than silently snapping back to the current one. A caller-supplied
+// period_id (set_period_budget always sends its own) is never overridden.
 App.apiPost = function (action, body) {
+  var merged = Object.assign({ action: action, token: App.config.token }, body || {});
+  if (App.state && App.state.periodId && merged.period_id === undefined) merged.period_id = App.state.periodId;
   return fetch(App.config.url, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(Object.assign({ action: action, token: App.config.token }, body || {})),
+    body: JSON.stringify(merged),
   })
     .then(App.parseResponse)
     .then(App.unwrap);
@@ -89,7 +97,7 @@ App.unwrap = function (payload) {
 // check before it can identify itself, so this is the only way to find out
 // what is actually deployed. Resolves to null when the deployment is too old
 // to answer at all - which is itself the answer.
-App.EXPECTED_VERSION = "3.6";
+App.EXPECTED_VERSION = "3.7";
 
 App.fetchVersionFor = function (url) {
   return fetch(url + "?action=version")

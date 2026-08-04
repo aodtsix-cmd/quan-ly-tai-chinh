@@ -210,12 +210,17 @@ App.showFatal = function (title, messageHtml) {
   App.switchTab("home");
 };
 
+// opts.data lets a caller that already has a fresh bootstrap payload in hand
+// (v3.7+ Code.gs echoes one back in every write response, see App.apiPost)
+// skip the network round trip entirely instead of asking for the same thing
+// twice. Falls back to a real fetch whenever it isn't supplied - a v3.6
+// backend, or the initial page load, which has nothing to echo yet.
 App.load = function (options) {
   var opts = options || {};
   App.state.loading = true;
   var params = App.state.periodId ? { period_id: App.state.periodId } : {};
 
-  return App.apiGet("bootstrap", params)
+  return (opts.data ? Promise.resolve(opts.data) : App.apiGet("bootstrap", params))
     .then(function (data) {
       App.state.loading = false;
 
@@ -593,7 +598,7 @@ App.submitTransaction = function () {
       App.updateAmountHint();
       var extra = result.auto_categorised ? App.t("add.saved_auto_categorised") : "";
       App.notice("#add-message", App.t("add.saved", { amount: App.formatDong(result.amount || parsed) }) + extra, "ok");
-      App.load({ quiet: true });
+      App.load({ quiet: true, data: result.bootstrap });
     })
     .catch(function (err) {
       button.disabled = false;
@@ -718,7 +723,7 @@ App.saveImport = function () {
       if (result.skipped_invalid) parts.push(App.t("import.skipped_invalid", { n: result.skipped_invalid }));
       App.setHtml("#import-result", '<p class="notice notice-ok">' + App.esc(parts.join(" ")) + "</p>");
       App.$("#import-file").value = "";
-      return App.load({ quiet: true });
+      return App.load({ quiet: true, data: result.bootstrap });
     })
     .catch(function (err) {
       App.notice("#import-save-message", App.errorText(err), "error");
@@ -909,21 +914,27 @@ App.saveBudgets = function () {
   App.notice("#budget-message", App.t("plan.budget.saving_n", { n: jobs.length }), "info");
 
   // Sheets writes are serialised behind the script lock anyway, so these go
-  // one at a time rather than racing a burst of parallel requests.
+  // one at a time rather than racing a burst of parallel requests. Only the
+  // LAST job's echoed bootstrap is kept - the ones in between are already
+  // stale by the time the next write lands, so there's no point reloading
+  // from any of them.
   var chain = Promise.resolve();
+  var lastResult = null;
   jobs.forEach(function (job) {
     chain = chain.then(function () {
       return App.apiPost("set_period_budget", {
         category_id: job.category_id,
         period_id: App.state.data.period.id,
         amount: job.amount,
-      });
+      }).then(function (result) { lastResult = result; });
     });
   });
 
   chain
-    .then(function () { return App.load({ quiet: true }); })
-    .then(function () { App.notice("#budget-message", App.t("plan.budget.saved"), "ok"); })
+    .then(function () {
+      App.notice("#budget-message", App.t("plan.budget.saved"), "ok");
+      App.load({ quiet: true, data: lastResult && lastResult.bootstrap });
+    })
     .catch(function (err) { App.notice("#budget-message", App.errorText(err), "error"); })
     .finally(function () { if (App.$("#save-budgets")) App.$("#save-budgets").disabled = false; });
 };
@@ -1042,7 +1053,7 @@ App.runSetup = function (seed) {
       }
       if (parts.length === 0) parts.push(App.t("settings.setup_nothing"));
       App.notice("#setup-message", parts.join(" "), "ok");
-      return App.load({ quiet: true });
+      return App.load({ quiet: true, data: result.bootstrap });
     })
     .catch(function (err) { App.notice("#setup-message", App.errorText(err), "error"); });
 };
@@ -1175,7 +1186,7 @@ document.addEventListener("click", function (event) {
       direction: srcTx.direction, account_id: srcTx.account_id, category_id: srcTx.category_id,
       amount: String(srcTx.amount), description: srcTx.description, occurred_at: App.today(),
     })
-      .then(function () { return App.load({ quiet: true }); })
+      .then(function (result) { return App.load({ quiet: true, data: result.bootstrap }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
     return;
   }
@@ -1188,7 +1199,7 @@ document.addEventListener("click", function (event) {
   if (attr("data-delete-tx")) {
     if (!window.confirm(App.t("confirm.delete_transaction"))) return;
     App.apiPost("delete_transaction", { id: attr("data-delete-tx") })
-      .then(function () { return App.load({ quiet: true }); })
+      .then(function (result) { return App.load({ quiet: true, data: result.bootstrap }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
     return;
   }
@@ -1202,7 +1213,7 @@ document.addEventListener("click", function (event) {
   if (attr("data-hide-goal")) {
     if (!window.confirm(App.t("confirm.hide_goal"))) return;
     App.apiPost("deactivate_goal", { id: attr("data-hide-goal") })
-      .then(function () { return App.load({ quiet: true }); })
+      .then(function (result) { return App.load({ quiet: true, data: result.bootstrap }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
     return;
   }
@@ -1242,7 +1253,7 @@ document.addEventListener("click", function (event) {
   if (attr("data-hide-recurring")) {
     if (!window.confirm(App.t("confirm.stop_recurring"))) return;
     App.apiPost("deactivate_recurring", { id: attr("data-hide-recurring") })
-      .then(function () { return App.load({ quiet: true }); })
+      .then(function (result) { return App.load({ quiet: true, data: result.bootstrap }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
     return;
   }
@@ -1250,7 +1261,7 @@ document.addEventListener("click", function (event) {
   if (attr("data-delete-rule")) {
     if (!window.confirm(App.t("confirm.delete_rule"))) return;
     App.apiPost("delete_rule", { id: attr("data-delete-rule") })
-      .then(function () { return App.load({ quiet: true }); })
+      .then(function (result) { return App.load({ quiet: true, data: result.bootstrap }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
     return;
   }
@@ -1260,7 +1271,7 @@ document.addEventListener("click", function (event) {
   if (attr("data-hide-income")) {
     if (!window.confirm(App.t("confirm.hide_income"))) return;
     App.apiPost("deactivate_income_source", { id: attr("data-hide-income") })
-      .then(function () { return App.load({ quiet: true }); })
+      .then(function (result) { return App.load({ quiet: true, data: result.bootstrap }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
     return;
   }
@@ -1268,7 +1279,7 @@ document.addEventListener("click", function (event) {
   if (attr("data-delete-event")) {
     if (!window.confirm(App.t("confirm.delete_event"))) return;
     App.apiPost("delete_event_plan", { id: attr("data-delete-event") })
-      .then(function () { return App.load({ quiet: true }); })
+      .then(function (result) { return App.load({ quiet: true, data: result.bootstrap }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
     return;
   }
@@ -1407,10 +1418,10 @@ App.submitGoalTopup = function (button) {
     amount: rawAmount, description: App.t("plan.goals.topup_description", { name: goal.name }),
     occurred_at: App.today(),
   })
-    .then(function () {
+    .then(function (result) {
       if (App.$("#goal-topup-submit")) App.$("#goal-topup-submit").disabled = false;
       App.notice("#goal-topup-message", App.t("plan.goals.topup_saved"), "ok");
-      App.load({ quiet: true });
+      App.load({ quiet: true, data: result.bootstrap });
     })
     .catch(function (err) {
       if (App.$("#goal-topup-submit")) App.$("#goal-topup-submit").disabled = false;
@@ -1436,13 +1447,13 @@ document.addEventListener("submit", function (event) {
     event.preventDefault();
     App.notice(messageSelector, "Đang lưu…", "info");
     App.apiPost(action, body)
-      .then(function () {
+      .then(function (result) {
         // Confirm the moment the write itself lands - the reload that follows
         // just refreshes the list/numbers around this form (which is its own
         // visible confirmation), it doesn't need to gate this message too.
         form.reset();
         App.notice(messageSelector, successText, "ok");
-        App.load({ quiet: true });
+        App.load({ quiet: true, data: result.bootstrap });
       })
       .catch(function (err) { App.notice(messageSelector, App.errorText(err), "error"); });
   }
@@ -1457,10 +1468,10 @@ document.addEventListener("submit", function (event) {
     }
     App.notice("#event-message", App.t("common.saving"), "info");
     App.apiPost("add_event_plan", { name: body.name, event_date: body.event_date, items: items })
-      .then(function () {
+      .then(function (result) {
         form.reset();
         App.notice("#event-message", App.t("plan.events.saved"), "ok");
-        App.load({ quiet: true });
+        App.load({ quiet: true, data: result.bootstrap });
       })
       .catch(function (err) { App.notice("#event-message", App.errorText(err), "error"); });
   }
@@ -1478,27 +1489,29 @@ document.addEventListener("submit", function (event) {
     delete body.learn_rule;
     delete body.learn_pattern;
 
+    var lastResult = null;
     App.apiPost("update_transaction", body)
-      .then(function () {
+      .then(function (result) {
+        lastResult = result;
         // Saving the rule is a follow-up, never a precondition: if it fails,
         // the edit the user actually asked for has already landed.
         if (!learnRule) return null;
         return App.apiPost("add_rule", {
           pattern: pattern, category_id: categoryForRule, priority: 10, created_from: "learned",
-        }).catch(function () { return null; });
+        }).then(function (result) { lastResult = result; }).catch(function () { return null; });
       })
       .then(function () {
         App.$("#tx-dialog").close();
-        return App.load({ quiet: true });
+        return App.load({ quiet: true, data: lastResult && lastResult.bootstrap });
       })
       .catch(function (err) { App.notice("#edit-message", App.errorText(err), "error"); });
   } else if (formId === "account-edit-form") {
     event.preventDefault();
     App.notice("#account-edit-message", App.t("common.saving"), "info");
     App.apiPost("update_account", body)
-      .then(function () {
+      .then(function (result) {
         App.$("#tx-dialog").close();
-        return App.load({ quiet: true });
+        return App.load({ quiet: true, data: result.bootstrap });
       })
       .catch(function (err) { App.notice("#account-edit-message", App.errorText(err), "error"); });
   } else if (formId === "event-goal-form") {
@@ -1512,9 +1525,9 @@ document.addEventListener("submit", function (event) {
         // is the suggestion showing once more - not a lost goal.
         return App.apiPost("link_event_to_goal", { id: eventId, goal_id: result.id });
       })
-      .then(function () {
+      .then(function (linkResult) {
         App.$("#tx-dialog").close();
-        return App.load({ quiet: true });
+        return App.load({ quiet: true, data: linkResult.bootstrap });
       })
       .catch(function (err) { App.notice("#event-goal-message", App.errorText(err), "error"); });
   } else if (formId === "connection-form") {
@@ -1606,7 +1619,7 @@ document.addEventListener("change", function (event) {
   if (event.target.hasAttribute && event.target.hasAttribute("data-event-item")) {
     var input = event.target;
     App.apiPost("update_event_item", { id: input.getAttribute("data-event-item"), actual_amount: input.value })
-      .then(function () { return App.load({ quiet: true }); })
+      .then(function (result) { return App.load({ quiet: true, data: result.bootstrap }); })
       .catch(function (err) { window.alert(App.errorText(err)); });
   }
 });
