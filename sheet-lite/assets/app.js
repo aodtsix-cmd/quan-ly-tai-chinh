@@ -1192,7 +1192,10 @@ document.addEventListener("click", function (event) {
   }
 
   if (attr("data-edit-tx")) { App.openEditDialog(attr("data-edit-tx")); return; }
-  if (attr("data-close-dialog")) { App.closeDialog(); return; }
+  // hasAttribute, not the value - it's a bare boolean attribute (no ="..."),
+  // so getAttribute() returns "" here, which is falsy and would silently
+  // never match. Same bug class as data-reset-tx-filters/data-open-parent.
+  if (target.hasAttribute("data-close-dialog")) { App.closeDialog(); return; }
 
   if (attr("data-hide-goal")) {
     if (!window.confirm(App.t("confirm.hide_goal"))) return;
