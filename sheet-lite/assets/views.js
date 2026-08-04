@@ -331,7 +331,7 @@ App.renderHomeQuickBar = function () {
   return '<div class="neon-quickbar">' +
     '<button type="button" class="neon-quick-action" data-goto="add:import">' + App.icon("image") + "<span>" + App.esc(App.t("home.quick.import")) + "</span></button>" +
     '<button type="button" class="fab" data-tab="add">+</button>' +
-    '<button type="button" class="neon-quick-action" data-goto="plan">' + App.icon("chart") + "<span>" + App.esc(App.t("home.quick.analyze")) + "</span></button>" +
+    '<button type="button" class="neon-quick-action" data-goto="plan:analytics">' + App.icon("chart") + "<span>" + App.esc(App.t("home.quick.analyze")) + "</span></button>" +
   "</div>";
 };
 
@@ -710,6 +710,7 @@ App.renderLedger = function (data) {
 // Values are i18n KEYS, not literal text, so a language switch just needs a
 // re-render (planHeader/renderPlanHub call App.t on these at render time).
 App.PLAN_META = {
+  analytics: ["pie", "plan.analytics.title", "plan.analytics.desc"],
   budget: ["wallet", "plan.budget.title", "plan.budget.desc"],
   goals: ["target", "plan.goals.title", "plan.goals.desc"],
   events: ["calendar", "plan.events.title", "plan.events.desc"],
@@ -752,6 +753,114 @@ App.renderPlanHub = function () {
     "</section>";
 };
 
+// Ported from FinanceAnalyticsNeon.dc.html. Two real gaps versus the
+// handoff, both left out rather than faked:
+// - No Tuần/Tháng/Năm (week/month/year) range picker. This app's one
+//   organising unit is the 15th-14th financial period, never a calendar
+//   week/month/year - adding calendar ranges here would contradict that
+//   invariant everywhere else in the app. "Kỳ này" is the only range.
+// - No "so với kỳ trước" % arrow and no "Nơi tiền đi" (merchant) card.
+//   The 6-bar trend only has COMPLETED periods (getPeriodFlows_ excludes
+//   the current one), so comparing it against the CURRENT, still-partial
+//   period would compare a full period to a partial one - misleading, not
+//   just cosmetically different. And there is no merchant/payee field
+//   distinct from free-text description to group a "Nơi tiền đi" list by.
+// - No AI insight card: no Code.gs prompt exists yet for this task.
+App.renderAnalyticsPlan = function (data) {
+  var m = data.metrics;
+  var totalOut = (m.concentration && m.concentration.has_data) ? m.concentration.total : 0;
+  var income = (m.balance_50_30_20 && m.balance_50_30_20.has_data) ? m.balance_50_30_20.income : 0;
+  var net = income - totalOut;
+
+  var hero = '<div class="neon-analytics-hero">' +
+    '<div class="neon-analytics-hero-label">' + App.esc(App.t("plan.analytics.total_out")) + "</div>" +
+    '<div class="neon-analytics-hero-amount">' + App.formatVnd(totalOut) + "đ</div>" +
+    '<div class="neon-summary-grid" style="margin-top:1rem;background:transparent;border:0;padding:0">' +
+      '<div><div class="neon-summary-label">' + App.esc(App.t("ledger.summary.in")) + '</div>' +
+        '<div class="neon-summary-value" style="color:var(--neon-green)">+' + App.formatVnd(income) + "đ</div></div>" +
+      '<div><div class="neon-summary-label">' + App.esc(App.t("ledger.summary.out")) + '</div>' +
+        '<div class="neon-summary-value" style="color:var(--neon-red)">−' + App.formatVnd(totalOut) + "đ</div></div>" +
+      '<div><div class="neon-summary-label">' + App.esc(App.t("plan.analytics.saved")) + '</div>' +
+        '<div class="neon-summary-value">' + (net >= 0 ? "+" : "−") + App.formatVnd(Math.abs(net)) + "đ</div></div>" +
+    "</div>" +
+  "</div>";
+
+  var periods = (m.savings_trend && m.savings_trend.periods) || [];
+  var maxFlow = periods.reduce(function (max, p) { return Math.max(max, p.income, p.expense); }, 0);
+  var chart = '<div class="card">' +
+    '<div class="spread" style="align-items:center">' +
+      '<h2 style="margin:0">' + App.esc(App.t("plan.analytics.chart_title")) + "</h2>" +
+      '<div style="display:flex;gap:0.75rem;font-size:0.66rem;font-weight:600;color:var(--neon-ink-soft)">' +
+        '<span style="display:flex;align-items:center;gap:0.3rem"><span style="width:0.5rem;height:0.5rem;border-radius:2px;background:var(--neon-green)"></span>' + App.esc(App.t("ledger.summary.in")) + "</span>" +
+        '<span style="display:flex;align-items:center;gap:0.3rem"><span style="width:0.5rem;height:0.5rem;border-radius:2px;background:var(--neon-red)"></span>' + App.esc(App.t("ledger.summary.out")) + "</span>" +
+      "</div>" +
+    "</div>" +
+    (periods.length === 0
+      ? '<p class="tiny muted" style="margin-top:0.75rem">' + App.esc(App.t("plan.analytics.no_history")) + "</p>"
+      : '<div class="neon-analytics-chart">' + periods.map(function (p) {
+          var inH = maxFlow > 0 ? Math.max(2, Math.round(p.income / maxFlow * 100)) : 2;
+          var outH = maxFlow > 0 ? Math.max(2, Math.round(p.expense / maxFlow * 100)) : 2;
+          return '<div class="neon-analytics-bar-col">' +
+            '<div class="neon-analytics-bar-pair">' +
+              '<span class="neon-analytics-bar" style="height:' + inH + '%;background:var(--neon-green)"></span>' +
+              '<span class="neon-analytics-bar" style="height:' + outH + '%;background:var(--neon-red)"></span>' +
+            "</div>" +
+            '<span class="num" style="font-size:0.625rem;font-weight:600;color:var(--neon-ink-dim)">' + App.esc(String(p.period_id).slice(5)) + "</span>" +
+          "</div>";
+        }).join("") + "</div>") +
+  "</div>";
+
+  var breakdown = (m.concentration && m.concentration.has_data) ? m.concentration.breakdown.slice(0, 6) : [];
+  var catColors = ["var(--neon-red)", "var(--neon-orange)", "var(--neon-purple)", "var(--neon-green)", "var(--neon-ink-soft)", "var(--neon-ink-dim)"];
+  var categories = '<div class="card">' +
+    "<h2>" + App.esc(App.t("plan.analytics.category_title")) + "</h2>" +
+    (breakdown.length === 0
+      ? '<p class="tiny muted">' + App.esc(App.t("plan.analytics.no_history")) + "</p>"
+      : '<div class="stack-tight" style="margin-top:0.5rem">' + breakdown.map(function (c, i) {
+          var glyph = App.categoryIconName(c.category_name);
+          var color = catColors[i % catColors.length];
+          return '<div style="display:flex;align-items:center;gap:0.625rem">' +
+            '<span class="neon-recent-icon">' + App.icon(glyph) + "</span>" +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:0.5rem">' +
+                '<span style="font-size:0.78rem;font-weight:600">' + App.esc(c.category_name) + "</span>" +
+                '<span class="num" style="font-size:0.78rem;font-weight:700">' + App.formatVnd(c.amount) + "đ</span>" +
+              "</div>" +
+              '<div style="margin-top:0.375rem;display:flex;align-items:center;gap:0.5rem">' +
+                '<div style="flex:1;height:0.375rem;border-radius:999px;background:var(--neon-surface-3);overflow:hidden">' +
+                  '<div style="height:100%;border-radius:999px;background:' + color + ";width:" + Math.round(c.pct) + '%"></div></div>' +
+                '<span class="num" style="flex:none;font-size:0.656rem;font-weight:600;color:var(--neon-ink-soft);width:2rem;text-align:right">' + Math.round(c.pct) + "%</span>" +
+              "</div>" +
+            "</div>" +
+          "</div>";
+        }).join("") + "</div>") +
+  "</div>";
+
+  return '<div style="display:flex;flex-direction:column;gap:0.875rem">' +
+    '<div style="padding:0.125rem">' +
+      '<div style="font-size:1.0625rem;font-weight:700;letter-spacing:-0.01em">' + App.esc(App.t("plan.analytics.title")) + "</div>" +
+      '<div class="tiny muted" style="margin-top:0.125rem">' + App.esc(App.t("ledger.period_range", { range: App.formatPeriodRange(data.period) })) + "</div>" +
+    "</div>" +
+    hero + chart + categories +
+  "</div>";
+};
+
+// Ported from FinanceBudgetNeon.dc.html. Two real gaps, left out rather
+// than faked:
+// - No per-jar source tag (THỦ CÔNG/CỐ ĐỊNH/BIẾN ĐỔI/AI NẮN). Sheet-lite's
+//   PERIOD_BUDGETS sheet only has id/category_id/period_id/amount - there is
+//   no `source` column at all (unlike the Flask app's table), so this isn't
+//   a "data exists, just not exposed" case; adding it is a real schema
+//   migration (header repair, actionSetup_, the write path), out of scope
+//   for a frontend-only pass.
+// - No "Gợi ý hạn mức" batch AI-suggest-then-confirm-each flow. The
+//   existing per-category "Dùng gợi ý này" link (already wired to
+//   data-apply-suggestion) does the same job one category at a time and is
+//   kept as-is, just reskinned - inventing the richer batch flow's own
+//   preview/confirm state machine wasn't worth the risk for a visual pass.
+// The dual-bar "dải kỳ" pace comparison only means something for the
+// CURRENT period (days-elapsed of a period you're not in is meaningless),
+// so it's gated on data.period.is_current the same way the hero card is.
 App.renderBudgetPlan = function (data) {
   var expenseCategories = data.categories.filter(function (c) { return c.kind === "expense"; });
   var budgetByCategory = {};
@@ -761,53 +870,116 @@ App.renderBudgetPlan = function (data) {
   var totalSpent = data.budget_statuses.reduce(function (sum, s) { return sum + s.spent; }, 0);
   var goalPerPeriod = data.goals.reduce(function (sum, g) { return g.is_overdue ? sum : sum + g.required_per_period; }, 0);
 
+  var periodNav = '<div class="spread" style="padding:0.125rem">' +
+    '<button type="button" class="icon-btn" data-period-shift="-1" aria-label="' + App.esc(App.t("plan.budget.prev_period")) + '">‹</button>' +
+    '<div style="text-align:center">' +
+      '<div style="font-size:1.0625rem;font-weight:700;letter-spacing:-0.01em">' + App.esc(App.t("plan.budget.title")) + "</div>" +
+      '<div class="tiny muted num">' + App.esc(App.formatPeriodRange(data.period)) +
+        (data.period.is_current ? " · " + App.esc(App.t("plan.budget.current_tag")) : "") + "</div>" +
+    "</div>" +
+    '<button type="button" class="icon-btn" data-period-shift="1" aria-label="' + App.esc(App.t("plan.budget.next_period")) + '">›</button>' +
+  "</div>";
+
+  var hero = "";
+  if (totalBudget > 0) {
+    var remaining = totalBudget - totalSpent;
+    var daysRemaining = data.period.is_current ? data.period.days_remaining : 0;
+    var perDay = daysRemaining > 0 ? Math.max(0, Math.round(remaining / daysRemaining)) : null;
+    var remColor = remaining < 0 ? "var(--neon-red)" : remaining < totalBudget * 0.15 ? "var(--neon-orange)" : "var(--neon-green)";
+
+    var pace = "";
+    if (data.period.is_current && data.period.days_total > 0) {
+      var elapsedPct = Math.round(data.period.days_elapsed / data.period.days_total * 100);
+      var spentPct = Math.round(totalSpent / totalBudget * 100);
+      var gap = elapsedPct - spentPct;
+      var under = gap >= 0;
+      var paceColor = under ? "var(--neon-green)" : "var(--neon-orange)";
+      pace = '<div style="margin-top:1rem;display:flex;flex-direction:column;gap:0.3125rem">' +
+        '<div class="spread tiny" style="font-weight:600;color:var(--neon-ink-soft)"><span>' + App.esc(App.t("plan.budget.time_elapsed")) + '</span><span class="num" style="color:var(--neon-ink-2)">' + elapsedPct + "%</span></div>" +
+        '<div style="height:0.75rem;border-radius:999px;background:var(--neon-surface-3);overflow:hidden"><div style="height:100%;border-radius:999px;background:var(--neon-ink-faint);width:' + Math.min(100, elapsedPct) + '%"></div></div>' +
+        '<div style="height:0.75rem;border-radius:999px;background:var(--neon-surface-3);overflow:hidden"><div style="height:100%;border-radius:999px;background:' + paceColor + ";width:" + Math.min(100, spentPct) + '%"></div></div>' +
+        '<div class="spread tiny" style="font-weight:600;color:var(--neon-ink-soft)"><span>' + App.esc(App.t("plan.budget.spent_so_far")) + '</span><span class="num" style="color:var(--neon-ink-2)">' + spentPct + "%</span></div>" +
+        '<div style="margin-top:0.5rem;padding-top:0.75rem;border-top:1px solid var(--neon-line);display:flex;align-items:baseline;gap:0.5rem;font-size:0.78rem">' +
+          '<b style="color:' + paceColor + '">' + App.esc(App.t(under ? "plan.budget.pace_under" : "plan.budget.pace_over", { n: Math.abs(gap) })) + "</b>" +
+          '<span style="color:var(--neon-ink-soft)">' + App.esc(App.t(under ? "plan.budget.pace_under_detail" : "plan.budget.pace_over_detail")) + "</span>" +
+        "</div>" +
+      "</div>";
+    }
+
+    hero = '<div class="card">' +
+      '<div class="spread" style="align-items:flex-end">' +
+        '<div><div class="neon-summary-label">' + App.esc(App.t("plan.budget.remaining")) + '</div>' +
+          '<div style="margin-top:0.375rem;font-family:var(--font-num);font-variant-numeric:tabular-nums;font-size:1.875rem;font-weight:700;letter-spacing:-0.02em;color:' + remColor + '">' +
+            (remaining < 0 ? "−" : "") + App.formatVnd(Math.abs(remaining)) + "đ</div></div>" +
+        (perDay !== null
+          ? '<div style="text-align:right"><div class="num" style="font-size:0.8125rem;font-weight:700">' + App.formatVnd(perDay) + "đ</div>" +
+            '<div class="tiny muted">' + App.esc(App.t("plan.budget.per_day_left")) + "</div></div>"
+          : "") +
+      "</div>" + pace +
+    "</div>";
+  }
+
   var rows = expenseCategories.map(function (category) {
     var status = budgetByCategory[category.id];
     var suggestion = data.budget_suggestions[category.id];
     var value = status ? status.amount : "";
-    var hint = status
-      ? App.t("plan.budget.spent_hint", { spent: App.formatDong(status.spent), pct: App.formatPct(status.pct_used) })
-      : (suggestion ? App.t("plan.budget.suggested_hint", { amount: App.formatDong(suggestion) }) : App.t("plan.budget.no_suggestion"));
+    var glyph = App.categoryIconName(category.name);
 
-    var bar = status
-      ? App.track(status.pct_used, status.over_budget ? "is-over" : (status.pct_used > 85 ? "is-warn" : ""))
-      : "";
-
-    return '<div class="bar-item">' +
-      '<div class="bar-top"><label class="grow" for="budget-' + App.esc(category.id) + '">' + App.esc(category.name) + "</label>" +
-      (suggestion && !status
-        ? '<button type="button" class="link" data-apply-suggestion="' + App.esc(category.id) + '" data-amount="' + App.esc(suggestion) + '">' + App.esc(App.t("common.use_suggestion")) + "</button>"
-        : "") +
-      "</div>" +
-      '<input type="text" inputmode="numeric" id="budget-' + App.esc(category.id) + '" data-budget-input="' + App.esc(category.id) + '"' +
-      ' value="' + App.esc(value === "" ? "" : App.formatVnd(value)) + '" placeholder="' + App.esc(App.t("plan.budget.blank_placeholder")) + '">' +
-      bar +
-      '<p class="tiny muted">' + App.esc(hint) + "</p>" +
+    var jarTop;
+    if (status) {
+      var over = status.over_budget;
+      var near = status.pct_used >= 85;
+      var color = over ? "var(--neon-red)" : near ? "var(--neon-orange)" : "var(--neon-green)";
+      var diff = status.amount - status.spent;
+      var leftLabel = over
+        ? App.t("plan.budget.jar_over", { amount: App.formatVnd(-diff) })
+        : App.t("plan.budget.jar_left", { amount: App.formatVnd(diff) });
+      var note = over ? App.t("plan.budget.jar_note_over") : near ? App.t("plan.budget.jar_note_near") : App.t("plan.budget.jar_note_ok");
+      jarTop = '<div style="flex:1;min-width:0">' +
+          '<div class="spread" style="align-items:baseline"><span style="font-size:0.844rem;font-weight:700">' + App.esc(category.name) + '</span>' +
+            '<span class="num" style="font-size:0.844rem;font-weight:700;color:' + color + '">' + Math.round(status.pct_used) + "%</span></div>" +
+          '<div class="tiny muted num" style="margin-top:0.125rem">' + App.esc(leftLabel) + "</div>" +
+        "</div>" +
+      '</div>' +
+      '<div style="margin-top:0.75rem;height:0.5rem;border-radius:999px;background:var(--neon-surface-3);overflow:hidden">' +
+        '<div style="height:100%;border-radius:999px;background:' + color + ";width:" + Math.min(100, status.pct_used) + '%"></div></div>' +
+      '<div class="spread" style="margin-top:0.5625rem;font-size:0.72rem;font-weight:500;color:var(--neon-ink-soft)">' +
+        '<span class="num"><b style="color:var(--neon-ink);font-weight:700">' + App.formatVnd(status.spent) + "</b> / " + App.formatVnd(status.amount) + "đ</span>" +
+        '<span class="num" style="color:' + color + '">' + App.esc(note) + "</span>" +
       "</div>";
-  }).join("");
+    } else {
+      jarTop = '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:0.844rem;font-weight:700">' + App.esc(category.name) + "</div>" +
+          '<div class="tiny muted">' + App.esc(suggestion ? App.t("plan.budget.suggested_hint", { amount: App.formatDong(suggestion) }) : App.t("plan.budget.no_suggestion")) + "</div>" +
+        "</div>" +
+        (suggestion
+          ? '<button type="button" class="link" data-apply-suggestion="' + App.esc(category.id) + '" data-amount="' + App.esc(suggestion) + '">' + App.esc(App.t("common.use_suggestion")) + "</button>"
+          : "");
+    }
 
-  // The real date range, not the raw "2026-07" id: a period id LOOKS like a
-  // calendar month and isn't one, which is exactly the confusion to avoid.
-  var periodNav = '<div class="spread">' +
-    '<button type="button" class="link" data-period-shift="-1">' + App.esc(App.t("plan.budget.prev_period")) + "</button>" +
-    '<span class="small"><b class="num">' + App.esc(App.formatPeriodRange(data.period)) + "</b>" +
-    (data.period.is_current ? ' <span class="faint">' + App.esc(App.t("plan.budget.current_period_tag")) + "</span>" : "") + "</span>" +
-    '<button type="button" class="link" data-period-shift="1">' + App.esc(App.t("plan.budget.next_period")) + "</button>" +
+    return '<div class="neon-jar-card' + (status && status.over_budget ? " is-over" : (status && status.pct_used >= 85 ? " is-near" : "")) + '">' +
+      '<div style="display:flex;align-items:center;gap:0.6875rem">' +
+        '<span class="neon-ledger-row-icon">' + App.icon(glyph) + "</span>" +
+        jarTop +
+      "</div>" +
+      '<label class="field" style="margin-top:0.75rem"><span class="field-label">' + App.esc(App.t("plan.budget.manual_amount_label")) + "</span>" +
+      '<input type="text" inputmode="numeric" id="budget-' + App.esc(category.id) + '" data-budget-input="' + App.esc(category.id) + '"' +
+      ' value="' + App.esc(value === "" ? "" : App.formatVnd(value)) + '" placeholder="' + App.esc(App.t("plan.budget.blank_placeholder")) + '"></label>' +
     "</div>";
+  }).join("");
 
   var context = goalPerPeriod > 0
     ? '<p class="tiny muted">' + App.esc(App.t("plan.budget.goal_context", { amount: App.formatDong(goalPerPeriod) })) + "</p>"
     : "";
 
-  return '<section class="card">' + periodNav +
-    '<dl class="stack-tight">' +
-      '<div class="kv"><dt>' + App.esc(App.t("plan.budget.total_budget")) + "</dt><dd>" + App.formatDong(totalBudget) + "</dd></div>" +
-      '<div class="kv"><dt>' + App.esc(App.t("plan.budget.total_spent")) + "</dt><dd>" + App.formatDong(totalSpent) + "</dd></div>" +
-    "</dl>" + context + "</section>" +
-    '<section class="card"><h2>' + App.esc(App.t("plan.budget.per_category_title")) + "</h2>" +
-    (rows || App.emptyState(App.t("plan.budget.no_categories"))) +
+  return '<div style="display:flex;flex-direction:column;gap:0.875rem">' +
+    periodNav + hero +
+    '<div class="stack-tight">' + (rows || App.emptyState(App.t("plan.budget.no_categories"))) + "</div>" +
+    context +
+    '<div class="card tiny muted">' + App.esc(App.t("plan.budget.jars_footnote")) + "</div>" +
     '<button type="button" id="save-budgets">' + App.esc(App.t("plan.budget.save_button", { period: data.period.id })) + "</button>" +
-    '<div id="budget-message"></div></section>';
+    '<div id="budget-message"></div>' +
+  "</div>";
 };
 
 App.renderGoalsPlan = function (data) {
@@ -1102,15 +1274,60 @@ App.eventItemRow = function (name, readonly) {
     "</div>";
 };
 
+// Ported from FinanceForecastNeon.dc.html's chart + verdict, minus the
+// health-score ring (already Home's own headline metric, not duplicated
+// here) and the income-sources/upcoming-events cards (those stay their own
+// separate Kế hoạch sections - Nguồn thu/Sự kiện - rather than folding into
+// Dự báo, since this app's IA never merged them and the handoff's own
+// "one screen" grouping doesn't map onto that without real duplication).
 App.renderForecastPlan = function () {
-  return '<section class="card">' +
-    "<h2>" + App.esc(App.t("plan.forecast.title")) + "</h2>" +
-    '<p class="tiny muted">' + App.esc(App.t("plan.forecast.intro")) + "</p>" +
-    '<label class="inline small"><input type="checkbox" id="forecast-goals" style="width:auto;min-height:0"> ' + App.esc(App.t("plan.forecast.include_goals")) + "</label>" +
-    '<label class="inline small"><input type="checkbox" id="forecast-reliable" style="width:auto;min-height:0"> ' + App.esc(App.t("plan.forecast.reliable_income_only")) + "</label>" +
-    '<p class="tiny faint">' + App.esc(App.t("plan.forecast.events_note")) + "</p>" +
-    '<button type="button" class="secondary" id="run-forecast">' + App.esc(App.t("plan.forecast.run")) + "</button>" +
-    '<div id="forecast-result"></div></section>';
+  return '<div style="display:flex;flex-direction:column;gap:0.875rem">' +
+    '<div style="padding:0.125rem">' +
+      '<div style="font-size:1.0625rem;font-weight:700;letter-spacing:-0.01em">' + App.esc(App.t("plan.forecast.title")) + "</div>" +
+      '<p class="tiny muted" style="margin-top:0.25rem">' + App.esc(App.t("plan.forecast.intro")) + "</p>" +
+    "</div>" +
+    '<div class="card">' +
+      '<label class="inline small"><input type="checkbox" id="forecast-goals" style="width:auto;min-height:0"> ' + App.esc(App.t("plan.forecast.include_goals")) + "</label>" +
+      '<label class="inline small"><input type="checkbox" id="forecast-reliable" style="width:auto;min-height:0"> ' + App.esc(App.t("plan.forecast.reliable_income_only")) + "</label>" +
+      '<p class="tiny faint">' + App.esc(App.t("plan.forecast.events_note")) + "</p>" +
+      '<button type="button" id="run-forecast">' + App.esc(App.t("plan.forecast.run")) + "</button>" +
+    "</div>" +
+    '<div id="forecast-result"></div>' +
+  "</div>";
+};
+
+App.renderForecastResult = function (result) {
+  if (result.periods_of_history === 0) {
+    return '<p class="notice notice-info">' + App.esc(App.t("plan.forecast.no_history")) + "</p>";
+  }
+  var balances = result.periods.map(function (p) { return p.projected_balance; });
+  var labels = result.periods.map(function (p) { return p.period_id.slice(5) + "/" + p.period_id.slice(2, 4); });
+  var worst = Math.min.apply(null, balances);
+  var verdictColor = worst < 0 ? "var(--neon-red)" : worst < result.avg_expense ? "var(--neon-orange)" : "var(--neon-green)";
+
+  var rows = result.periods.map(function (p) {
+    return '<div class="kv"><dt>' + App.esc(App.t("plan.forecast.period_row_label", { period: p.period_id })) +
+      (p.event_cost > 0 ? ' <span class="tiny" style="color:var(--neon-red)">' + App.esc(App.t("plan.forecast.event_cost_tag", { amount: App.formatVnd(p.event_cost) })) + "</span>" : "") +
+      "</dt><dd class=\"num\" style=\"color:" + (p.projected_balance < 0 ? "var(--neon-red)" : "var(--neon-ink)") + '">' +
+      App.formatDong(p.projected_balance) + "</dd></div>";
+  }).join("");
+
+  return '<div class="card">' +
+    '<div style="display:flex;align-items:baseline;gap:0.5rem"><span style="width:0.5rem;height:0.5rem;border-radius:2px;transform:rotate(45deg);background:' + verdictColor + '"></span>' +
+      '<span style="font-size:0.8125rem;font-weight:700;color:' + verdictColor + '">' + App.formatVnd(worst) + "đ</span>" +
+      '<span class="tiny muted">' + App.esc(App.t("plan.forecast.lowest_point")) + "</span></div>" +
+    App.lineChart(labels, balances) +
+    '<dl class="stack-tight">' + rows + "</dl>" +
+    '<p class="tiny faint">' + App.esc(App.t("plan.forecast.footnote", {
+      income: App.formatVnd(result.income_per_period),
+      income_basis: result.income_basis === "reliable"
+        ? App.t("plan.forecast.basis_reliable")
+        : App.t("plan.forecast.basis_average", { n: result.periods_of_history }),
+      expense: App.formatVnd(result.avg_expense),
+      goal: result.goal_contribution > 0 ? App.t("plan.forecast.goal_note", { amount: App.formatVnd(result.goal_contribution) }) : "",
+      event: result.event_total > 0 ? App.t("plan.forecast.event_note", { amount: App.formatVnd(result.event_total) }) : "",
+    })) + "</p>" +
+  "</div>";
 };
 
 App.renderSimulationPlan = function () {

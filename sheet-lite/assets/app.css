@@ -1036,7 +1036,7 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
    it"), so --font-ui/--font-num are used exactly as everywhere else in the
    app. */
 
-#view-home, #view-add, #view-list {
+#view-home, #view-add, #view-list, .neon-plan-section {
   --neon-bg: #0a0b0e;
   --neon-surface: #14161c;
   --neon-surface-2: #1a1d25;
@@ -1059,26 +1059,28 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 /* Bleed to the shared shell's own edges rather than sitting as a card on the
    page background - main's centring/padding stays (so width still matches
    every other tab), but the content itself reads as its own dark surface. */
-#view-home, #view-add, #view-list { background: var(--neon-bg); color: var(--neon-ink); border-radius: var(--radius); margin: calc(var(--space-4) * -1); padding: var(--space-4); gap: var(--space-4) !important; }
+#view-home, #view-add, #view-list, .neon-plan-section { background: var(--neon-bg); color: var(--neon-ink); border-radius: var(--radius); padding: var(--space-4); gap: var(--space-4) !important; }
+#view-home, #view-add, #view-list { margin: calc(var(--space-4) * -1); }
 
 @media (max-width: 22.5rem) {
   #view-home, #view-add, #view-list { margin: calc(var(--space-3) * -1); padding: var(--space-3); }
+  .neon-plan-section { padding: var(--space-3); }
 }
 
-#view-home .card, #view-add .card, #view-list .card {
+#view-home .card, #view-add .card, #view-list .card, .neon-plan-section .card {
   background: var(--neon-surface);
   border-color: var(--neon-line);
   color: var(--neon-ink);
   box-shadow: 0 20px 40px -26px rgba(0, 0, 0, 0.9);
 }
 
-#view-home .muted, #view-add .muted, #view-list .muted { color: var(--neon-ink-soft); }
-#view-home .faint, #view-add .faint, #view-list .faint { color: var(--neon-ink-faint); }
-#view-home .eyebrow, #view-add .eyebrow, #view-list .eyebrow { color: var(--neon-ink-soft); }
-#view-home a.link, #view-add a.link, #view-list a.link, #view-home .link, #view-add .link, #view-list .link { color: var(--neon-purple); }
-#view-home .amount-out, #view-add .amount-out, #view-list .amount-out { color: var(--neon-red); }
-#view-home .amount-in, #view-add .amount-in, #view-list .amount-in { color: var(--neon-green); }
-#view-home .amount-transfer, #view-add .amount-transfer, #view-list .amount-transfer { color: var(--neon-ink-soft); }
+#view-home .muted, #view-add .muted, #view-list .muted, .neon-plan-section .muted { color: var(--neon-ink-soft); }
+#view-home .faint, #view-add .faint, #view-list .faint, .neon-plan-section .faint { color: var(--neon-ink-faint); }
+#view-home .eyebrow, #view-add .eyebrow, #view-list .eyebrow, .neon-plan-section .eyebrow { color: var(--neon-ink-soft); }
+#view-home a.link, #view-add a.link, #view-list a.link, .neon-plan-section a.link, #view-home .link, #view-add .link, #view-list .link, .neon-plan-section .link { color: var(--neon-purple); }
+#view-home .amount-out, #view-add .amount-out, #view-list .amount-out, .neon-plan-section .amount-out { color: var(--neon-red); }
+#view-home .amount-in, #view-add .amount-in, #view-list .amount-in, .neon-plan-section .amount-in { color: var(--neon-green); }
+#view-home .amount-transfer, #view-add .amount-transfer, #view-list .amount-transfer, .neon-plan-section .amount-transfer { color: var(--neon-ink-soft); }
 
 /* The daily AI-summary panel (#ai-daily) is the app's shared .ai-panel
    component, unstyled here until caught live: on Nhà it kept the indigo
@@ -1102,13 +1104,14 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
    block during the Sổ rebuild, both before their classes were added here. */
 #view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear),
 #view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear),
-#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear) {
+#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear),
+.neon-plan-section button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear) {
   background: var(--neon-gradient); color: var(--neon-bg); box-shadow: 0 16px 34px -14px rgba(177, 140, 255, 0.8);
 }
-#view-home button.secondary, #view-add button.secondary, #view-list button.secondary {
+#view-home button.secondary, #view-add button.secondary, #view-list button.secondary, .neon-plan-section button.secondary {
   background: var(--neon-surface); border-color: var(--neon-line); color: var(--neon-ink); box-shadow: none;
 }
-#view-home .icon-btn, #view-add .icon-btn, #view-list .icon-btn { background: var(--neon-surface); border-color: var(--neon-line); color: var(--neon-ink-soft); }
+#view-home .icon-btn, #view-add .icon-btn, #view-list .icon-btn, .neon-plan-section .icon-btn { background: var(--neon-surface); border-color: var(--neon-line); color: var(--neon-ink-soft); }
 
 /* Alerts keep their own semantics but sit on the dark surface instead of the
    light tint cards - same information, recoloured to the neon system rather
@@ -1150,8 +1153,18 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 }
 .neon-filter-select.is-active { border-color: var(--neon-purple); color: var(--neon-purple); }
 .neon-summary-grid { border-radius: 1.125rem; background: var(--neon-surface); border: 1px solid var(--neon-line); padding: 0.875rem 1rem; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.625rem; }
+.neon-summary-grid > div { min-width: 0; }
 .neon-summary-label { font-size: 0.656rem; font-weight: 600; letter-spacing: 0.04em; color: var(--neon-ink-soft); }
-.neon-summary-value { margin-top: 0.25rem; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.8125rem; font-weight: 700; }
+.neon-summary-value { margin-top: 0.25rem; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.8125rem; font-weight: 700; white-space: nowrap; }
+
+/* A money figure must never wrap mid-number, so on the narrowest phones the
+   3-column grid stacks into 3 label-value rows instead of shrinking the
+   font to the point of clipping a long amount. */
+@media (max-width: 22.5rem) {
+  .neon-summary-grid { grid-template-columns: 1fr; gap: 0.5rem; }
+  .neon-summary-grid > div { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+  .neon-summary-value { margin-top: 0; }
+}
 .neon-day-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.625rem; padding: 0.125rem 0.125rem 0.5625rem; }
 .neon-day-label { font-size: 0.75rem; font-weight: 700; color: var(--neon-ink-2); }
 .neon-day-total { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.72rem; font-weight: 600; color: var(--neon-ink-dim); }
@@ -1408,6 +1421,7 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 }
 
 #view-add .card-head h2, #view-add h1 { color: var(--neon-ink); }
+.neon-plan-section .card-head h2, .neon-plan-section h1, .neon-plan-section h2 { color: var(--neon-ink); }
 
 /* --------------------------------------------------------- import (Nhập ảnh) */
 /* Ported from FinanceImportNeon.dc.html. Lives inside #view-add's existing
@@ -1460,3 +1474,40 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 .neon-import-use { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8125rem; font-weight: 700; }
 .neon-import-use input[type="checkbox"] { width: 1.125rem; height: 1.125rem; min-height: 0; accent-color: var(--neon-green); }
 .neon-import-field-label { font-size: 0.656rem; font-weight: 600; letter-spacing: 0.04em; color: var(--neon-ink-dim); margin-bottom: 0.25rem; display: block; }
+
+/* --------------------------------------------------- kế hoạch: neon sections */
+/* .neon-plan-section wraps just the section BODY (Phân tích/Ngân sách/Dự
+   báo) - the subnav chip row and planHeader stay on the original light
+   system, same "light system chrome over dark content" pattern already
+   proven by the topbar/tabbar on Nhà/Nhập. Sự kiện/Nguồn thu/Định kỳ have
+   no corresponding screen in the handoff at all, so they're genuinely never
+   converted, not just not-yet-converted - don't add them to
+   App.PLAN_NEON_SECTIONS without a real design to build from. */
+.neon-analytics-hero {
+  border-radius: 1.375rem; padding: 1.125rem; background: linear-gradient(160deg, rgba(177, 140, 255, 0.14) 0%, var(--neon-surface) 68%);
+  border: 1px solid rgba(177, 140, 255, 0.26);
+}
+.neon-analytics-hero-label { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; color: var(--neon-ink-soft); }
+.neon-analytics-hero-amount { margin-top: 0.4375rem; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; }
+.neon-analytics-chart { margin-top: 1.125rem; display: flex; align-items: flex-end; justify-content: space-between; gap: 0.5625rem; height: 8.25rem; }
+.neon-analytics-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.5rem; height: 100%; }
+.neon-analytics-bar-pair { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 0.1875rem; }
+.neon-analytics-bar { width: 0.5625rem; border-radius: 0.25rem 0.25rem 0.125rem 0.125rem; }
+
+.neon-jar-card { border-radius: 1.125rem; background: var(--neon-surface); border: 1px solid var(--neon-line); padding: 0.875rem 0.9375rem; }
+.neon-jar-card.is-near { border-color: rgba(255, 145, 66, 0.3); }
+.neon-jar-card.is-over { border-color: rgba(255, 107, 122, 0.35); }
+.neon-plan-section .field-label { color: var(--neon-ink-soft); }
+.neon-plan-section input[type="text"], .neon-plan-section input[type="date"], .neon-plan-section select {
+  background: var(--neon-surface-2); border: 1px solid var(--neon-line); color: var(--neon-ink);
+}
+.neon-plan-section input[type="text"]::placeholder { color: var(--neon-ink-dim); }
+.neon-plan-section .chart .grid-line { stroke: var(--neon-line); }
+.neon-plan-section .chart .zero-line { stroke: var(--neon-ink-faint); }
+.neon-plan-section .chart .series { stroke: var(--neon-purple); }
+.neon-plan-section .chart .series-alt { stroke: var(--neon-orange); }
+.neon-plan-section .chart .area { fill: var(--neon-purple); }
+.neon-plan-section .chart .endpoint { fill: var(--neon-purple); }
+.neon-plan-section .chart .tick { fill: var(--neon-ink-dim); }
+.neon-plan-section .kv dt { color: var(--neon-ink-soft); }
+.neon-plan-section .kv dd { color: var(--neon-ink); }

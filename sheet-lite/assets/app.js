@@ -791,8 +791,16 @@ App.openEditDialog = function (id) {
 // Just the routing keys - labels come from App.label("plan_section", key) at
 // render time, so a language switch relabels the chips without touching this.
 App.PLAN_SECTIONS = [
-  ["budget"], ["goals"], ["events"], ["income"], ["recurring"], ["forecast"], ["simulate"],
+  ["analytics"], ["budget"], ["goals"], ["events"], ["income"], ["recurring"], ["forecast"], ["simulate"],
 ];
+
+// Sections whose render function already returns a full Dark Neon screen
+// (own header, own dark surface) - the shared subnav/planHeader chrome stays
+// on the original light system either way (same "light system chrome over
+// dark content" pattern already proven by the topbar/tabbar on Nhà/Nhập),
+// but planHeader's own card is skipped for these since each one draws its
+// own header instead of using the generic icon+title+desc card.
+App.PLAN_NEON_SECTIONS = { analytics: true, budget: true, forecast: true };
 
 App.renderPlan = function () {
   var data = App.state.data;
@@ -812,7 +820,8 @@ App.renderPlan = function () {
     }).join("") + "</div>";
 
   var body;
-  if (App.state.planSection === "budget") body = App.renderBudgetPlan(data);
+  if (App.state.planSection === "analytics") body = App.renderAnalyticsPlan(data);
+  else if (App.state.planSection === "budget") body = App.renderBudgetPlan(data);
   else if (App.state.planSection === "goals") body = App.renderGoalsPlan(data);
   else if (App.state.planSection === "events") body = App.renderEventsPlan(data);
   else if (App.state.planSection === "income") body = App.renderIncomePlan(data);
@@ -820,7 +829,10 @@ App.renderPlan = function () {
   else if (App.state.planSection === "forecast") body = App.renderForecastPlan();
   else body = App.renderSimulationPlan();
 
-  App.setHtml("#view-plan", nav + App.planHeader(App.state.planSection) + body);
+  var isNeon = !!App.PLAN_NEON_SECTIONS[App.state.planSection];
+  var header = isNeon ? "" : App.planHeader(App.state.planSection);
+  var wrapped = isNeon ? '<div class="neon-plan-section">' + body + "</div>" : body;
+  App.setHtml("#view-plan", nav + header + wrapped);
   if (App.state.planSection === "events") App.resetEventItems();
 };
 
@@ -907,34 +919,7 @@ App.runForecast = function () {
     include_goals: includeGoals ? "1" : "0",
     income_basis_reliable: useReliable ? "1" : "0",
   })
-    .then(function (result) {
-      if (result.periods_of_history === 0) {
-        App.setHtml("#forecast-result",
-          '<p class="notice notice-info">' + App.esc(App.t("plan.forecast.no_history")) + "</p>");
-        return;
-      }
-      var balances = result.periods.map(function (p) { return p.projected_balance; });
-      var labels = result.periods.map(function (p) { return p.period_id.slice(5) + "/" + p.period_id.slice(2, 4); });
-      var rows = result.periods.map(function (p) {
-        return '<div class="kv"><dt>' + App.esc(App.t("plan.forecast.period_row_label", { period: p.period_id })) +
-          (p.event_cost > 0 ? ' <span class="tiny amount-out">' + App.esc(App.t("plan.forecast.event_cost_tag", { amount: App.formatVnd(p.event_cost) })) + "</span>" : "") +
-          "</dt><dd class=\"" + (p.projected_balance < 0 ? "amount-out" : "") + '">' +
-          App.formatDong(p.projected_balance) + "</dd></div>";
-      }).join("");
-
-      App.setHtml("#forecast-result",
-        App.lineChart(labels, balances) +
-        '<dl class="stack-tight">' + rows + "</dl>" +
-        '<p class="tiny faint">' + App.esc(App.t("plan.forecast.footnote", {
-          income: App.formatVnd(result.income_per_period),
-          income_basis: result.income_basis === "reliable"
-            ? App.t("plan.forecast.basis_reliable")
-            : App.t("plan.forecast.basis_average", { n: result.periods_of_history }),
-          expense: App.formatVnd(result.avg_expense),
-          goal: result.goal_contribution > 0 ? App.t("plan.forecast.goal_note", { amount: App.formatVnd(result.goal_contribution) }) : "",
-          event: result.event_total > 0 ? App.t("plan.forecast.event_note", { amount: App.formatVnd(result.event_total) }) : "",
-        })) + "</p>");
-    })
+    .then(function (result) { App.setHtml("#forecast-result", App.renderForecastResult(result)); })
     .catch(function (err) {
       App.setHtml("#forecast-result", '<p class="notice notice-error">' + App.esc(App.errorText(err)) + "</p>");
     });
