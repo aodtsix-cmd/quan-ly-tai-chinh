@@ -532,6 +532,11 @@ App.setTodayDate = function () {
   App.updateDateDisplay();
 };
 
+App.setYesterdayDate = function () {
+  App.$("#tx-date").value = App.yesterday();
+  App.updateDateDisplay();
+};
+
 App.updateAmountHint = function () {
   var input = App.$("#tx-amount");
   var hint = App.$("#tx-amount-hint");
@@ -1158,7 +1163,7 @@ document.addEventListener("click", function (event) {
     "#reveal-health-token, #copy-health-token, " +
     "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, #goal-topup-submit, " +
     "#save-connection-anyway, #device-link-btn, #copy-device-link, #theme-toggle, " +
-    "#tx-today-btn, #tx-nudge, #home-bell, #home-networth-eye, #tx-sort-toggle, #tx-search-clear");
+    "#tx-today-btn, #tx-yesterday-btn, #tx-nudge, #home-bell, #home-networth-eye, #tx-sort-toggle, #tx-search-clear");
   if (!target) return;
 
   var attr = function (name) { return target.getAttribute(name); };
@@ -1433,6 +1438,7 @@ document.addEventListener("click", function (event) {
       }, "#ai-sim-panel", "#ai-simulation");
       break;
     case "tx-today-btn": App.setTodayDate(); break;
+    case "tx-yesterday-btn": App.setYesterdayDate(); break;
     // The alert banners already render at the very top of Nhà - the bell is
     // a shortcut to them, not a separate inbox this app doesn't have.
     case "home-bell": App.state.notificationsOpen = true; App.renderCurrentTab(); break;

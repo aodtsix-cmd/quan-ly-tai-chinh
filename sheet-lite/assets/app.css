@@ -1107,19 +1107,20 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
    neon components below) get the same opt-out-per-variant treatment as the
    rest of the app, just re-skinned - so nothing dropped onto these dark
    views keeps the old indigo look by accident. Every bespoke component
-   further down (.neon-bell, .neon-eye, .neon-chip, .neon-today-btn, the two
-   flanking quickbar buttons, and - added for Sổ - .neon-filter-pill,
+   further down (.neon-bell, .neon-eye, .neon-chip, .neon-today-btn,
+   .neon-yesterday-btn, the two flanking quickbar buttons, and - added for
+   Sổ - .neon-filter-pill,
    .neon-action-btn, .neon-ledger-row, .neon-search-clear) has to be named in
    this exclusion list too, or an ID-scoped rule like this one beats a
    same-or-fewer-class override no matter how it's written - found live
    twice now: the quickbar's "Nhập ảnh"/"Phân tích" buttons and the alert
    bell during v3.9, then every ledger row rendering as a solid gradient
    block during the Sổ rebuild, both before their classes were added here. */
-#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
-#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
-#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
-#onboarding button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
-.neon-plan-section button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card) {
+#view-home button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-yesterday-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
+#view-add button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-yesterday-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
+#view-list button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-yesterday-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
+#onboarding button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-yesterday-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card),
+.neon-plan-section button:not(.secondary):not(.link):not(.icon-btn):not(.neon-bell):not(.neon-eye):not(.neon-chip):not(.neon-today-btn):not(.neon-yesterday-btn):not(.neon-quick-action):not(.icon-tile):not(.hub-tile):not(.neon-filter-pill):not(.neon-action-btn):not(.neon-ledger-row):not(.neon-search-clear):not(.swatch):not(.neon-notif-row):not(.neon-jar-card) {
   background: var(--neon-gradient); color: var(--neon-bg); box-shadow: 0 16px 34px -14px rgba(177, 140, 255, 0.8);
 }
 #view-home button.secondary, #view-add button.secondary, #view-list button.secondary, .neon-plan-section button.secondary {
@@ -1398,9 +1399,14 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 }
 #view-add input[type="text"]::placeholder { color: var(--neon-ink-dim); }
 
-.neon-date-row { display: flex; align-items: center; gap: 0.5rem; }
+/* Wraps to two rows once three items - the date box plus both quick-date
+   buttons - no longer fit on one line (320px). The date box takes the full
+   first row on its own (flex-basis 100%) rather than shrinking to whatever
+   is left, which is what caused it to visibly collide with the "Hôm nay"
+   button's text at narrow widths. */
+.neon-date-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .neon-date-display {
-  position: relative; flex: 1; height: 3.25rem; border-radius: 1rem; border: 1px solid var(--neon-line); background: var(--neon-surface);
+  position: relative; flex: 1 1 100%; height: 3.25rem; border-radius: 1rem; border: 1px solid var(--neon-line); background: var(--neon-surface);
   padding: 0 1rem; display: flex; align-items: center; justify-content: space-between; cursor: pointer;
 }
 .neon-date-display span:first-child { font-size: 0.75rem; font-weight: 600; color: var(--neon-ink-soft); }
@@ -1418,11 +1424,15 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
   position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border: 0; padding: 0;
   opacity: 0; cursor: pointer; min-height: 0;
 }
-#view-add .neon-today-btn {
-  height: 3.25rem; padding: 0 1rem; border-radius: 1rem; border: 1px solid rgba(63, 245, 165, 0.4);
-  background: rgba(63, 245, 165, 0.1); color: var(--neon-green); font-size: 0.78rem; font-weight: 700;
-  box-shadow: none; min-height: 0;
+#view-add .neon-today-btn, #view-add .neon-yesterday-btn {
+  height: 3.25rem; padding: 0 0.75rem; border-radius: 1rem; font-size: 0.78rem; font-weight: 700;
+  box-shadow: none; min-height: 0; flex: 1;
 }
+#view-add .neon-today-btn { border: 1px solid rgba(63, 245, 165, 0.4); background: rgba(63, 245, 165, 0.1); color: var(--neon-green); }
+/* Muted, not green - it's the secondary shortcut. Exists because "quên ghi
+   hôm qua, hôm nay mới note bù" is the single most common backdate: faster
+   and more reliable to tap than fighting the native date picker for it. */
+#view-add .neon-yesterday-btn { border: 1px solid var(--neon-line); background: var(--neon-surface); color: var(--neon-ink-soft); }
 
 .neon-nudge {
   border-radius: 1.125rem; border: 1px solid rgba(255, 145, 66, 0.4); background: rgba(255, 145, 66, 0.08);

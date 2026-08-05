@@ -172,6 +172,15 @@ App.today = function () {
   return now.getFullYear() + "-" + pad2(now.getMonth() + 1) + "-" + pad2(now.getDate());
 };
 
+// The literal scenario this exists for: forgetting to log something and
+// noting it a day later. A dedicated shortcut is faster and more reliable
+// than the date picker for the single most common backdate - one day back.
+App.yesterday = function () {
+  var d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+};
+
 function pad2(n) { return n < 10 ? "0" + n : String(n); }
 
 App.dateOnly = function (timestamp) {
@@ -671,6 +680,7 @@ App.I18N = {
     "error.unknown_server": "Máy chủ trả về lỗi không rõ.",
 
     "common.today": "Hôm nay",
+    "common.yesterday": "Hôm qua",
     "common.edit": "Sửa",
     "common.delete": "Xóa",
     "common.hide": "Ẩn",
@@ -1332,6 +1342,7 @@ App.I18N = {
     "error.unknown_server": "The server returned an unknown error.",
 
     "common.today": "Today",
+    "common.yesterday": "Yesterday",
     "common.edit": "Edit",
     "common.delete": "Delete",
     "common.hide": "Hide",
