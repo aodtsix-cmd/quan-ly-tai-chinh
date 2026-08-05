@@ -97,7 +97,7 @@ App.unwrap = function (payload) {
 // check before it can identify itself, so this is the only way to find out
 // what is actually deployed. Resolves to null when the deployment is too old
 // to answer at all - which is itself the answer.
-App.EXPECTED_VERSION = "3.7";
+App.EXPECTED_VERSION = "3.8";
 
 App.fetchVersionFor = function (url) {
   return fetch(url + "?action=version")
@@ -1240,6 +1240,16 @@ App.I18N = {
     "settings.health_check_ok_headline": "Mọi thứ đã sẵn sàng.",
     "settings.health_check_fail_headline": "Có mục cần xử lý — xem danh sách bên dưới.",
     "settings.health_check_ok_detail": "ổn",
+    "settings.health_check_connection_title": "Thông tin kết nối",
+    "settings.health_check_url_label": "Địa chỉ kết nối (API)",
+    "settings.health_check_token_label": "Mã kết nối",
+    "settings.health_check_token_reveal": "Hiện",
+    "settings.health_check_token_hide": "Ẩn",
+    "settings.health_check_token_copy": "Sao chép",
+    "settings.health_check_token_copied": "Đã sao chép",
+    "settings.health_check_spreadsheet_label": "Địa chỉ bảng tính",
+    "settings.health_check_spreadsheet_link": "Mở bảng tính Google Sheet ↗",
+    "settings.health_check_spreadsheet_unavailable": "cần cập nhật Code.gs lên bản mới hơn để hiện được",
     "settings.version_notice": "Bảng tính đang chạy <b>v{{deployed}}</b>, bản mới nhất là <b>v{{expected}}</b>. Mọi thứ bạn đang dùng vẫn chạy bình thường — chỉ những tính năng mới nhất là chưa có. Muốn cập nhật thì dán lại <code>Code.gs</code> rồi <b>Triển khai → Quản lý bản triển khai → ✏ → Phiên bản: Mới</b>.",
 
     "dialog.edit_tx.title": "Sửa giao dịch",
@@ -1891,6 +1901,16 @@ App.I18N = {
     "settings.health_check_ok_headline": "Everything's ready.",
     "settings.health_check_fail_headline": "Some items need attention — see the list below.",
     "settings.health_check_ok_detail": "ok",
+    "settings.health_check_connection_title": "Connection info",
+    "settings.health_check_url_label": "Connection address (API)",
+    "settings.health_check_token_label": "Connection code",
+    "settings.health_check_token_reveal": "Show",
+    "settings.health_check_token_hide": "Hide",
+    "settings.health_check_token_copy": "Copy",
+    "settings.health_check_token_copied": "Copied",
+    "settings.health_check_spreadsheet_label": "Spreadsheet address",
+    "settings.health_check_spreadsheet_link": "Open the Google Sheet ↗",
+    "settings.health_check_spreadsheet_unavailable": "needs a newer Code.gs to show this",
     "settings.version_notice": "The spreadsheet is running <b>v{{deployed}}</b>; the latest is <b>v{{expected}}</b>. Everything you're using still works fine — only the newest features are missing. To update, paste <code>Code.gs</code> again and <b>Deploy → Manage deployments → ✏ → New version</b>.",
 
     "dialog.edit_tx.title": "Edit transaction",

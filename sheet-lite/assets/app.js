@@ -1000,23 +1000,72 @@ App.checkForUpdate = function () {
   }) + "</p>";
 };
 
+// The token is the same thing as a password (it's all that guards writes to
+// the sheet), so it stays masked by default even though it's already sitting
+// in this browser's own localStorage - a shoulder-surfer shouldn't get it for
+// free just because Settings is open.
+App.maskToken = function (token) {
+  var visible = token.length > 4 ? token.slice(0, 4) : "";
+  var dots = "";
+  for (var i = 0; i < Math.max(token.length - visible.length, 4); i++) dots += "\u2022";
+  return visible + dots;
+};
+
+App.renderHealthConnectionInfo = function (result) {
+  var url = (App.config && App.config.url) || "";
+  var token = (App.config && App.config.token) || "";
+  var revealed = !!App.state.healthTokenRevealed;
+
+  var spreadsheetRow = "";
+  if (result.spreadsheet_url) {
+    spreadsheetRow = '<div class="health-connection-row"><span class="tiny muted">' +
+      App.esc(App.t("settings.health_check_spreadsheet_label")) + '</span>' +
+      '<a class="tiny" href="' + App.esc(result.spreadsheet_url) + '" target="_blank" rel="noopener">' +
+      App.esc(App.t("settings.health_check_spreadsheet_link")) + "</a></div>";
+  } else {
+    spreadsheetRow = '<div class="health-connection-row"><span class="tiny muted">' +
+      App.esc(App.t("settings.health_check_spreadsheet_label")) + '</span>' +
+      '<span class="tiny faint">' + App.esc(App.t("settings.health_check_spreadsheet_unavailable")) + "</span></div>";
+  }
+
+  return '<div class="health-connection">' +
+    '<p class="tiny muted" style="margin:0;font-weight:600">' + App.esc(App.t("settings.health_check_connection_title")) + "</p>" +
+    '<div class="health-connection-row"><span class="tiny muted">' + App.esc(App.t("settings.health_check_url_label")) + "</span>" +
+    '<span class="tiny num" style="word-break:break-all;text-align:right">' + App.esc(url) + "</span></div>" +
+    spreadsheetRow +
+    '<div class="health-connection-row"><span class="tiny muted">' + App.esc(App.t("settings.health_check_token_label")) + "</span>" +
+    '<span class="tiny num" id="health-token-value">' + App.esc(revealed ? token : App.maskToken(token)) + "</span></div>" +
+    '<div class="health-connection-actions" style="justify-content:flex-end;align-items:center">' +
+    '<span class="tiny faint" id="health-token-copy-hint"></span>' +
+    '<button type="button" class="secondary small" id="reveal-health-token">' +
+    App.esc(revealed ? App.t("settings.health_check_token_hide") : App.t("settings.health_check_token_reveal")) + "</button>" +
+    '<button type="button" class="secondary small" id="copy-health-token">' + App.esc(App.t("settings.health_check_token_copy")) + "</button>" +
+    "</div></div>";
+};
+
+App.renderHealthCheckResult = function (result) {
+  var rows = result.checks.map(function (check) {
+    var mark = check.ok ? "\u2713" : (check.key === "gemini" ? "\u25cb" : "\u2717");
+    var tone = check.ok ? "muted" : (check.key === "gemini" ? "faint" : "amount-out");
+    return '<div class="kv kv-detail"><dt class="' + tone + '">' + mark + " " + App.esc(check.label) + "</dt>" +
+      '<dd class="tiny ' + tone + '" style="font-family:var(--font-ui);font-weight:400">' +
+      App.esc(check.detail || (check.ok ? App.t("settings.health_check_ok_detail") : "")) + "</dd></div>";
+  }).join("");
+  var headline = result.ok
+    ? App.t("settings.health_check_ok_headline")
+    : App.t("settings.health_check_fail_headline");
+  return App.renderHealthConnectionInfo(result) +
+    '<p class="notice notice-' + (result.ok ? "ok" : "info") + '">' + App.esc(headline) + "</p>" +
+    '<dl class="stack-tight" style="margin-top:0.5rem">' + rows + "</dl>";
+};
+
 App.runHealthCheck = function () {
   App.notice("#setup-message", App.t("common.checking"), "info");
   App.apiGet("health_check")
     .then(function (result) {
-      var rows = result.checks.map(function (check) {
-        var mark = check.ok ? "\u2713" : (check.key === "gemini" ? "\u25cb" : "\u2717");
-        var tone = check.ok ? "muted" : (check.key === "gemini" ? "faint" : "amount-out");
-        return '<div class="kv"><dt class="' + tone + '">' + mark + " " + App.esc(check.label) + "</dt>" +
-          '<dd class="tiny ' + tone + '" style="font-family:var(--font-ui);font-weight:400">' +
-          App.esc(check.detail || (check.ok ? App.t("settings.health_check_ok_detail") : "")) + "</dd></div>";
-      }).join("");
-      var headline = result.ok
-        ? App.t("settings.health_check_ok_headline")
-        : App.t("settings.health_check_fail_headline");
-      App.setHtml("#setup-message",
-        '<p class="notice notice-' + (result.ok ? "ok" : "info") + '">' + App.esc(headline) + "</p>" +
-        '<dl class="stack-tight" style="margin-top:0.5rem">' + rows + "</dl>");
+      App.state.lastHealthCheck = result;
+      App.state.healthTokenRevealed = false;
+      App.setHtml("#setup-message", App.renderHealthCheckResult(result));
     })
     .catch(function (err) { App.notice("#setup-message", App.errorText(err), "error"); });
 };
@@ -1100,6 +1149,7 @@ document.addEventListener("click", function (event) {
     "[data-notify-back], [data-notify-filter], [data-notify-read], [data-sim-scenario], " +
     "[data-set-theme], [data-set-palette], [data-set-lang], #add-event-item, #save-import, " +
     "#show-more, #save-budgets, #run-forecast, #run-simulation, #export-csv, #run-health-check, #run-setup-seed, " +
+    "#reveal-health-token, #copy-health-token, " +
     "#reset-connection, #show-connection, #retry-load, #ai-goal-priority, #ai-simulation, #goal-topup-submit, " +
     "#save-connection-anyway, #device-link-btn, #copy-device-link, #theme-toggle, " +
     "#tx-today-btn, #tx-nudge, #home-bell, #home-networth-eye, #tx-sort-toggle, #tx-search-clear");
@@ -1317,6 +1367,19 @@ document.addEventListener("click", function (event) {
     case "run-simulation": App.runSimulation(); break;
     case "export-csv": App.downloadCsv(); break;
     case "run-health-check": App.runHealthCheck(); break;
+    case "reveal-health-token":
+      if (!App.state.lastHealthCheck) break;
+      App.state.healthTokenRevealed = !App.state.healthTokenRevealed;
+      App.setHtml("#setup-message", App.renderHealthCheckResult(App.state.lastHealthCheck));
+      break;
+    case "copy-health-token":
+      navigator.clipboard.writeText((App.config && App.config.token) || "").then(function () {
+        var hint = App.$("#health-token-copy-hint");
+        if (!hint) return;
+        hint.textContent = App.t("settings.health_check_token_copied");
+        setTimeout(function () { if (hint) hint.textContent = ""; }, 1500);
+      }).catch(function () {});
+      break;
     case "run-setup-seed": App.runSetup(true); break;
     case "save-connection-anyway":
       App.saveConfig(App.pendingConfig);

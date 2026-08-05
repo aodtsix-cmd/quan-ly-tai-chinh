@@ -944,6 +944,18 @@ button.small { font-size: var(--step--1); padding: 0.45rem 0.75rem; min-height: 
 .kv dt { color: var(--ink-soft); min-width: 0; overflow-wrap: anywhere; }
 .kv dd { margin: 0; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 600; min-width: 0; text-align: right; white-space: nowrap; }
 
+/* Free-text detail (health check reasons, not money) must wrap - "white-space:
+   nowrap" on plain .kv dd is right for amounts but forces long sentences to
+   overflow the card horizontally instead of wrapping. */
+.kv-detail { flex-direction: column; align-items: flex-start; gap: 0.15rem; }
+.kv-detail dd { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+
+.health-connection { border: 1px solid var(--hairline); border-radius: var(--radius-sm); padding: 0.625rem 0.75rem; margin-bottom: 0.625rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.health-connection-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
+.health-connection-row .tiny { min-width: 0; overflow-wrap: anywhere; }
+.health-connection-actions { display: flex; gap: 0.375rem; flex: none; }
+.health-connection-actions button { padding: 0.15rem 0.5rem; font-size: var(--step--2); }
+
 .scroll-x { overflow-x: auto; }
 
 /* ------------------------------------------------------------------ charts */
@@ -1518,6 +1530,7 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
 .neon-plan-section .chart .tick { fill: var(--neon-ink-dim); }
 .neon-plan-section .kv dt { color: var(--neon-ink-soft); }
 .neon-plan-section .kv dd { color: var(--neon-ink); }
+.neon-plan-section .health-connection { border-color: var(--neon-line); background: var(--neon-surface); }
 .neon-plan-section .notice { border-radius: 0.875rem; }
 .neon-plan-section .notice-info { background: var(--neon-surface); color: var(--neon-ink-soft); border: 1px solid var(--neon-line); }
 .neon-plan-section .notice-ok { background: rgba(63, 245, 165, 0.1); color: var(--neon-green); border: 1px solid rgba(63, 245, 165, 0.3); }

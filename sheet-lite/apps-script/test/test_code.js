@@ -86,6 +86,7 @@ global.SpreadsheetApp = {
     getSheets: () => Object.keys(sheets).map(makeSheetObj),
     getSpreadsheetTimeZone: () => spreadsheetTimeZone,
     setSpreadsheetTimeZone: (tz) => { spreadsheetTimeZone = tz; },
+    getUrl: () => "https://docs.google.com/spreadsheets/d/FAKE_SPREADSHEET_ID/edit",
   }),
   getUi: () => ({
     createMenu: () => { const m = { addItem: () => m, addToUi: () => {} }; return m; },

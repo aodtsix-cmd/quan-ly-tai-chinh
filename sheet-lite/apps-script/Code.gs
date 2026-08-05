@@ -72,7 +72,7 @@
 // redeploy actually took - forgetting to pick "Phiên bản: Mới" when
 // redeploying is the single easiest mistake to make with Apps Script, and it
 // fails silently: the old code just keeps serving.
-var VERSION = "3.7";
+var VERSION = "3.8";
 
 var SHEET_ACCOUNTS = "Accounts";
 var SHEET_CATEGORIES = "Categories";
@@ -291,10 +291,19 @@ function actionHealthCheck_(params) {
     detail: "tùy chọn — chỉ ảnh hưởng phần nhận xét AI",
   });
 
+  var spreadsheetUrl = "";
+  try {
+    spreadsheetUrl = ss.getUrl();
+  } catch (err) {
+    // No access to the URL in this execution context - leave it blank,
+    // the frontend already treats an empty value as "not available".
+  }
+
   return {
     version: VERSION,
     ok: checks.every(function (c) { return c.ok; }),
     checks: checks,
+    spreadsheet_url: spreadsheetUrl,
   };
 }
 
