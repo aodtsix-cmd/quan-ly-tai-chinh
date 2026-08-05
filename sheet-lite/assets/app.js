@@ -303,7 +303,13 @@ App.switchTab = function (tab, options) {
   App.state.tab = tab;
   App.TABS.forEach(function (name) {
     App.show("#view-" + name, name === tab);
-    var button = App.$('[data-tab="' + name + '"]');
+    // Scoped to .tabbar deliberately: Home reuses data-tab="list"/"add" for its
+    // own "Xem tất cả" link and "+" quick action as plain navigation shortcuts,
+    // and those elements stay in the DOM (just hidden) once Home isn't the
+    // active tab. An unscoped selector grabbed whichever matched first - the
+    // Home shortcut, not the real tab bar button - so the actual "Sổ"/"Nhập"
+    // tab never received aria-selected="true" and never lit up.
+    var button = App.$('.tabbar [data-tab="' + name + '"]');
     if (button) button.setAttribute("aria-selected", String(name === tab));
   });
   // Only jump to the top when the tab actually changes. Re-rendering in place
