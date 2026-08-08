@@ -138,21 +138,17 @@
         </label>
 
         <div class="neon-date-row">
-          <!-- The visible date box is a <label>, not a styled <div>: tapping
-               it focuses the real (visually hidden but not display:none,
-               so showPicker() still works) date input, which is what keeps
-               backdating - editing occurred_at to a past date - reachable
-               without a second visible control the design doesn't show. -->
-          <label class="neon-date-display" for="tx-date">
-            <span data-i18n="add.date_label">Ngày</span>
-            <span class="neon-date-value">
-              <span id="tx-date-display" class="num"></span>
-              <svg viewBox="0 0 24 24" aria-hidden="true" class="neon-date-icon"><rect x="3.5" y="5.5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3.5v4M16 3.5v4"/></svg>
-            </span>
+          <!-- A real, VISIBLE native date input - not an invisible overlay
+               anymore. Typing a receipt's exact date (tab through
+               day/month/year, or tap the browser's own calendar icon) is
+               more direct than a custom picker, and it removes any doubt
+               about whether a tap actually lands on the input. -->
+          <label class="neon-date-field" for="tx-date">
+            <span class="neon-date-field-label" data-i18n="add.date_label">Ngày</span>
             <input type="date" id="tx-date">
           </label>
-          <button type="button" class="neon-yesterday-btn" id="tx-yesterday-btn" data-i18n="common.yesterday">Hôm qua</button>
-          <button type="button" class="neon-today-btn" id="tx-today-btn" data-i18n="common.today">Hôm nay</button>
+          <button type="button" class="neon-yesterday-btn" id="tx-yesterday-btn" data-i18n="common.yesterday" aria-pressed="false">Hôm qua</button>
+          <button type="button" class="neon-today-btn" id="tx-today-btn" data-i18n="common.today" aria-pressed="false">Hôm nay</button>
         </div>
 
         <!-- A soft suggestion, not a blocking confirm() - per the app's own

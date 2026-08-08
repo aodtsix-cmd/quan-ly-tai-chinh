@@ -520,11 +520,18 @@ App.pickToAccount = function (id) {
   });
 };
 
+// The date field is a real, visible native input now (it displays its own
+// value) - all this does is light up whichever of "Hôm qua"/"Hôm nay"
+// matches the field's current value, or neither once a different date has
+// been typed or picked. Previously "Hôm nay" was hardcoded green regardless
+// of the actual selected date, which read as if today stayed selected even
+// after choosing something else.
 App.updateDateDisplay = function () {
   var iso = App.$("#tx-date").value;
-  if (!iso) return;
-  var parts = iso.split("-");
-  App.$("#tx-date-display").textContent = parts.length === 3 ? parts[2] + "/" + parts[1] + "/" + parts[0] : iso;
+  var todayBtn = App.$("#tx-today-btn");
+  var yesterdayBtn = App.$("#tx-yesterday-btn");
+  if (todayBtn) todayBtn.setAttribute("aria-pressed", String(iso === App.today()));
+  if (yesterdayBtn) yesterdayBtn.setAttribute("aria-pressed", String(iso === App.yesterday()));
 };
 
 App.setTodayDate = function () {

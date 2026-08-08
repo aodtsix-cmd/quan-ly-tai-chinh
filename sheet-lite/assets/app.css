@@ -1405,34 +1405,38 @@ dialog::backdrop { background: rgba(10, 12, 15, 0.5); }
    is left, which is what caused it to visibly collide with the "Hôm nay"
    button's text at narrow widths. */
 .neon-date-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
-.neon-date-display {
-  position: relative; flex: 1 1 100%; height: 3.25rem; border-radius: 1rem; border: 1px solid var(--neon-line); background: var(--neon-surface);
-  padding: 0 1rem; display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+.neon-date-field {
+  flex: 1 1 100%; height: 3.25rem; border-radius: 1rem; border: 1px solid var(--neon-line); background: var(--neon-surface);
+  padding: 0 1rem; display: flex; align-items: center; gap: 0.5rem;
 }
-.neon-date-display span:first-child { font-size: 0.75rem; font-weight: 600; color: var(--neon-ink-soft); }
-.neon-date-value { display: flex; align-items: center; gap: 0.375rem; }
-.neon-date-value .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.844rem; font-weight: 700; }
-/* Without this, the box reads as plain static text - nothing on screen hints
-   that tapping it opens a picker, which is exactly the friction reported live:
-   backdating exists and works, but nobody could tell the box was tappable. */
-.neon-date-icon { width: 1rem; height: 1rem; flex: none; fill: none; stroke: var(--neon-ink-soft); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-/* The real <input type="date"> sits invisibly over the whole label: on
-   mobile, tapping it opens the native picker directly (no showPicker() call
-   needed), and it's still a real, focusable, backdate-capable field - only
-   its own default chrome is hidden, not its function. */
-.neon-date-display input[type="date"] {
-  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border: 0; padding: 0;
-  opacity: 0; cursor: pointer; min-height: 0;
+.neon-date-field-label { font-size: 0.75rem; font-weight: 600; color: var(--neon-ink-soft); flex: none; }
+/* #view-add's generic input[type="date"] rule (above) already draws its own
+   border/background/height - both would nest visibly ("box in a box") if
+   this weren't scoped specifically enough to win. Needs to match that rule's
+   #view-add + type-selector specificity, so it's written with the same
+   #view-add prefix rather than as a bare descendant selector. */
+#view-add .neon-date-field input[type="date"] {
+  flex: 1; height: auto; border: 0; background: transparent; padding: 0; margin: 0; min-height: 0;
+  font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 0.844rem; font-weight: 700;
+  color: var(--neon-ink); text-align: right;
 }
+/* WebKit's default calendar-icon indicator renders near-black, invisible on
+   this dark surface - inverting it keeps the browser's OWN native picker
+   trigger as the tap target, guaranteed interactive, rather than a
+   custom-drawn icon sitting over a separately hit-tested invisible input
+   (the previous design, which is what a real device reported trouble with). */
+.neon-date-field input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacity(0.6); cursor: pointer; }
 #view-add .neon-today-btn, #view-add .neon-yesterday-btn {
   height: 3.25rem; padding: 0 0.75rem; border-radius: 1rem; font-size: 0.78rem; font-weight: 700;
-  box-shadow: none; min-height: 0; flex: 1;
+  box-shadow: none; min-height: 0; flex: 1; border: 1px solid var(--neon-line); background: var(--neon-surface); color: var(--neon-ink-soft);
 }
-#view-add .neon-today-btn { border: 1px solid rgba(63, 245, 165, 0.4); background: rgba(63, 245, 165, 0.1); color: var(--neon-green); }
-/* Muted, not green - it's the secondary shortcut. Exists because "quên ghi
-   hôm qua, hôm nay mới note bù" is the single most common backdate: faster
-   and more reliable to tap than fighting the native date picker for it. */
-#view-add .neon-yesterday-btn { border: 1px solid var(--neon-line); background: var(--neon-surface); color: var(--neon-ink-soft); }
+/* Whichever one matches the field's current value lights up green - neither
+   is hardcoded "always on". Previously "Hôm nay" was always green regardless
+   of the actual selected date, which read as if today were permanently
+   selected even after picking "Hôm qua" or a date from the calendar. */
+#view-add .neon-today-btn[aria-pressed="true"], #view-add .neon-yesterday-btn[aria-pressed="true"] {
+  border-color: rgba(63, 245, 165, 0.4); background: rgba(63, 245, 165, 0.1); color: var(--neon-green);
+}
 
 .neon-nudge {
   border-radius: 1.125rem; border: 1px solid rgba(255, 145, 66, 0.4); background: rgba(255, 145, 66, 0.08);
